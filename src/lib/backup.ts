@@ -188,9 +188,24 @@ function getExportRowSets(db: Database.Database) {
 			rows: rowsForQuery(
 				db,
 				`
-        select id, handle, display_name, bio, followers_count, following_count, avatar_hue, avatar_url, created_at
+        select id, handle, display_name, bio, followers_count, following_count,
+          avatar_hue, avatar_url, location, url, verified_type, entities_json,
+          raw_json, created_at
         from profiles
         order by id
+        `,
+			),
+		},
+		{
+			logicalName: "profile_affiliations",
+			rows: rowsForQuery(
+				db,
+				`
+        select subject_profile_id, organization_profile_id, organization_name,
+          organization_handle, badge_url, url, label, source, is_active,
+          first_seen_at, last_seen_at, raw_json, updated_at
+        from profile_affiliations
+        order by subject_profile_id, organization_profile_id
         `,
 			),
 		},
@@ -314,6 +329,9 @@ function buildShards(db: Database.Database) {
 				break;
 			case "profiles":
 				addRows(shards, "data/profiles.jsonl", rowSet.rows);
+				break;
+			case "profile_affiliations":
+				addRows(shards, "data/profile_affiliations.jsonl", rowSet.rows);
 				break;
 			case "tweets":
 				for (const row of rowSet.rows) {
@@ -473,6 +491,7 @@ Private text backup for Birdclaw data. The committed files are canonical JSONL s
 manifest.json
 data/accounts.jsonl
 data/profiles.jsonl
+data/profile_affiliations.jsonl
 data/tweets/YYYY.jsonl
 data/tweets/unknown.jsonl
 data/collections/likes.jsonl
@@ -904,6 +923,7 @@ function clearBackupImportData(db: Database.Database) {
     delete from dm_messages;
     delete from dm_conversations;
     delete from tweets;
+    delete from profile_affiliations;
     delete from profiles;
     delete from accounts;
     delete from sync_cache;
@@ -938,6 +958,7 @@ export async function importBackup({
 	const [
 		accounts,
 		profiles,
+		profileAffiliations,
 		tweets,
 		collections,
 		conversations,
@@ -949,6 +970,7 @@ export async function importBackup({
 	] = await Promise.all([
 		readRows((file) => file === "data/accounts.jsonl"),
 		readRows((file) => file === "data/profiles.jsonl"),
+		readRows((file) => file === "data/profile_affiliations.jsonl"),
 		readRows((file) => file.startsWith("data/tweets/")),
 		readRows((file) => file.startsWith("data/collections/")),
 		readRows((file) => file === "data/dms/conversations.jsonl"),
@@ -1002,8 +1024,10 @@ export async function importBackup({
 			db,
 			`
       insert into profiles (
-        id, handle, display_name, bio, followers_count, following_count, avatar_hue, avatar_url, created_at
-      ) values (?, ?, ?, ?, ?, coalesce(?, 0), ?, ?, ?)
+        id, handle, display_name, bio, followers_count, following_count,
+        avatar_hue, avatar_url, location, url, verified_type, entities_json,
+        raw_json, created_at
+      ) values (?, ?, ?, ?, ?, coalesce(?, 0), ?, ?, ?, ?, ?, coalesce(?, '{}'), coalesce(?, '{}'), ?)
       on conflict(id) do update set
         handle = coalesce(nullif(excluded.handle, ''), profiles.handle),
         display_name = coalesce(nullif(excluded.display_name, ''), profiles.display_name),
@@ -1012,6 +1036,17 @@ export async function importBackup({
         following_count = max(profiles.following_count, excluded.following_count),
         avatar_hue = case when profiles.avatar_hue = 0 then excluded.avatar_hue else profiles.avatar_hue end,
         avatar_url = coalesce(excluded.avatar_url, profiles.avatar_url),
+        location = coalesce(excluded.location, profiles.location),
+        url = coalesce(excluded.url, profiles.url),
+        verified_type = coalesce(excluded.verified_type, profiles.verified_type),
+        entities_json = case
+          when excluded.entities_json not in ('', '{}', 'null') then excluded.entities_json
+          else profiles.entities_json
+        end,
+        raw_json = case
+          when excluded.raw_json not in ('', '{}', 'null') then excluded.raw_json
+          else profiles.raw_json
+        end,
         created_at = min(profiles.created_at, excluded.created_at)
       `,
 			profiles,
@@ -1024,7 +1059,52 @@ export async function importBackup({
 				"following_count",
 				"avatar_hue",
 				"avatar_url",
+				"location",
+				"url",
+				"verified_type",
+				"entities_json",
+				"raw_json",
 				"created_at",
+			],
+		);
+		insertRows(
+			db,
+			`
+      insert into profile_affiliations (
+        subject_profile_id, organization_profile_id, organization_name,
+        organization_handle, badge_url, url, label, source, is_active,
+        first_seen_at, last_seen_at, raw_json, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, coalesce(?, 'backup'), coalesce(?, 1), ?, ?, coalesce(?, '{}'), ?)
+      on conflict(subject_profile_id, organization_profile_id) do update set
+        organization_name = coalesce(excluded.organization_name, profile_affiliations.organization_name),
+        organization_handle = coalesce(excluded.organization_handle, profile_affiliations.organization_handle),
+        badge_url = coalesce(excluded.badge_url, profile_affiliations.badge_url),
+        url = coalesce(excluded.url, profile_affiliations.url),
+        label = coalesce(excluded.label, profile_affiliations.label),
+        source = excluded.source,
+        is_active = excluded.is_active,
+        last_seen_at = max(profile_affiliations.last_seen_at, excluded.last_seen_at),
+        raw_json = case
+          when excluded.raw_json not in ('', '{}', 'null') then excluded.raw_json
+          else profile_affiliations.raw_json
+        end,
+        updated_at = excluded.updated_at
+      `,
+			profileAffiliations,
+			[
+				"subject_profile_id",
+				"organization_profile_id",
+				"organization_name",
+				"organization_handle",
+				"badge_url",
+				"url",
+				"label",
+				"source",
+				"is_active",
+				"first_seen_at",
+				"last_seen_at",
+				"raw_json",
+				"updated_at",
 			],
 		);
 		insertRows(

@@ -23,7 +23,26 @@ export interface ProfileRecord {
 	followingCount?: number;
 	avatarHue: number;
 	avatarUrl?: string;
+	location?: string;
+	url?: string;
+	verifiedType?: string;
+	entities?: Record<string, unknown>;
+	affiliations?: ProfileAffiliation[];
+	primaryAffiliation?: ProfileAffiliation;
 	createdAt: string;
+}
+
+export interface ProfileAffiliation {
+	organizationProfileId: string;
+	organizationName?: string;
+	organizationHandle?: string;
+	badgeUrl?: string | null;
+	url?: string | null;
+	label?: string | null;
+	source: string;
+	firstSeenAt: string;
+	lastSeenAt: string;
+	isActive: boolean;
 }
 
 export interface TweetMentionEntity {
@@ -287,7 +306,13 @@ export interface XurlMentionUser {
 	name: string;
 	username: string;
 	description?: string;
+	location?: string;
+	url?: string;
+	verified?: boolean;
+	verified_type?: string;
 	profile_image_url?: string;
+	entities?: Record<string, unknown>;
+	affiliation?: Record<string, unknown>;
 	public_metrics?: XurlPublicMetrics;
 	created_at?: string;
 }

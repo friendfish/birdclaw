@@ -90,9 +90,26 @@ function toBirdLookupUser(payload: Record<string, unknown>): XurlMentionUser {
 		username,
 		description:
 			typeof user.description === "string" ? user.description : undefined,
+		location: typeof user.location === "string" ? user.location : undefined,
+		url: typeof user.url === "string" ? user.url : undefined,
+		verified: typeof user.verified === "boolean" ? user.verified : undefined,
+		verified_type:
+			typeof user.verifiedType === "string"
+				? user.verifiedType
+				: typeof user.verified_type === "string"
+					? user.verified_type
+					: undefined,
 		profile_image_url:
 			typeof user.profileImageUrl === "string"
 				? user.profileImageUrl
+				: undefined,
+		entities:
+			user.entities && typeof user.entities === "object"
+				? (user.entities as Record<string, unknown>)
+				: undefined,
+		affiliation:
+			user.affiliation && typeof user.affiliation === "object"
+				? (user.affiliation as Record<string, unknown>)
 				: undefined,
 		public_metrics: {
 			followers_count: Number.isFinite(followersCount) ? followersCount : 0,

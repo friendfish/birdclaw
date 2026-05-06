@@ -31,7 +31,7 @@ Repo: `steipete/birdclaw`
 - local blocklist and mutelist maintenance for multiple accounts
 - clean minimal UI that keeps focus on tweet/message content
 - system/light/dark theme switcher with persisted local preference and smooth transition
-- DMs surface sender bio and influence context without extra hunting
+- DMs surface sender bio, profile URL, affiliation badges, and influence context without extra hunting
 - block/mute actions should be local-first and transport-aware
 - easy agent access to archive and live data via filters and structured output
 - reuse proven pieces from `sweetistics`, `bird`, and `xurl`

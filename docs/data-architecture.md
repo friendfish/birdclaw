@@ -103,8 +103,11 @@ SQLite only. Kysely schema in code, migrations checked into repo.
   - sync defaults
 - `profiles`
   - Twitter users/authors/participants
-  - keep bio, follower/following counts, and lightweight influence fields queryable in canonical columns
+  - keep bio, follower/following counts, profile URL, location, verification type, structured URL entities, raw profile JSON, and lightweight influence fields queryable in canonical columns
   - DM surfaces should render sender bio and influence context from here without needing raw payload lookups
+- `profile_affiliations`
+  - active subject-to-organization affiliation edges from X profile badges / highlighted labels
+  - stores organization id or deterministic synthetic id, label, handle, badge URL, URL, source, and first/last-seen timestamps
 - `blocks`
   - account-scoped local blocklist
   - canonical local state for blocklist UI and CLI

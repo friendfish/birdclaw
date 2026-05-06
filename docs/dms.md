@@ -59,7 +59,10 @@ Same FTS5 backbone as tweet search, with the DM-specific filters layered on top.
 
 For identity lookups, `whois` clusters matching conversations, includes nearby DM
 context, resolves numeric archive profiles through cache-backed `bird`/`xurl`
-lookups, and expands URLs through the persistent cache.
+lookups, preserves richer profile metadata, checks first-class affiliations, and
+expands URLs through the persistent cache. JSON candidates include
+`profileEvidence` so agents can separate bio/profile URL/affiliation evidence
+from plain DM keyword matches.
 
 ## Influence score
 

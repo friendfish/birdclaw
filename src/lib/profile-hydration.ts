@@ -5,6 +5,7 @@ import {
 	lookupAuthenticatedUser,
 	lookupUsersByIds,
 } from "./xurl";
+import { upsertProfileFromXUser } from "./x-profile";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
 	return value && typeof value === "object" && !Array.isArray(value)
@@ -45,17 +46,6 @@ export async function hydrateProfilesFromX() {
 		.map((row) => row.id.replace(/^profile_user_/, ""))
 		.filter((id) => id.length > 0);
 
-	const updateProfile = db.prepare(`
-    update profiles
-    set handle = ?,
-        display_name = ?,
-        bio = ?,
-        followers_count = ?,
-        following_count = coalesce(?, following_count),
-        avatar_url = coalesce(?, avatar_url),
-        created_at = coalesce(?, created_at)
-    where id = ?
-  `);
 	const updateConversationTitle = db.prepare(`
     update dm_conversations
     set title = ?
@@ -88,27 +78,13 @@ export async function hydrateProfilesFromX() {
 
 		db.transaction(() => {
 			for (const user of users) {
-				const metrics = asRecord(user.public_metrics);
 				const profileId = `profile_user_${String(user.id ?? "")}`;
 				if (profileId === "profile_user_") continue;
 
-				const username = String(user.username ?? "").replace(/^@/, "");
-				const displayName = String(user.name ?? username);
-				updateProfile.run(
-					username || profileId,
-					displayName || username || profileId,
-					String(user.description ?? ""),
-					toInt(metrics?.followers_count),
-					metrics && "following_count" in metrics
-						? toInt(metrics.following_count)
-						: null,
-					normalizeAvatarUrl(user.profile_image_url),
-					typeof user.created_at === "string" ? user.created_at : null,
-					profileId,
-				);
+				const resolved = upsertProfileFromXUser(db, user);
 				updateConversationTitle.run(
-					displayName || username || profileId,
-					profileId,
+					resolved.profile.displayName || resolved.profile.handle,
+					resolved.profile.id,
 				);
 				hydratedProfiles += 1;
 			}

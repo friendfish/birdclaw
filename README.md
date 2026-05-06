@@ -283,8 +283,12 @@ pnpm cli dms list --unreplied --min-followers 500 --min-influence-score 90 --sor
 ```
 
 `--resolve-profiles` fills archive-imported numeric DM profiles through the local
-cache first, then `bird`, then `xurl` unless `--no-xurl-fallback` is set. URL
-expansion also uses the persistent cache before touching the network.
+cache first, then `bird`, then `xurl` unless `--no-xurl-fallback` is set.
+Resolved profiles keep bio, location, profile URL, verification type, structured
+URL entities, raw profile JSON, and any X affiliation badge metadata Birdclaw can
+see. `whois` uses that profile context plus DM context and cached URL expansion
+to return typed evidence such as `profile_bio`, `profile_url`, `profile_bio_url`,
+`affiliation`, `dm_context`, and `expanded_url`.
 
 ### AI inbox
 
@@ -383,6 +387,7 @@ Layout:
 manifest.json
 data/accounts.jsonl
 data/profiles.jsonl
+data/profile_affiliations.jsonl
 data/tweets/YYYY.jsonl
 data/tweets/unknown.jsonl
 data/collections/likes.jsonl

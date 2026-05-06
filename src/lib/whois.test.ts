@@ -23,6 +23,7 @@ describe("whois", () => {
       delete from dm_messages;
       delete from dm_conversations;
       delete from tweets;
+      delete from profile_affiliations;
       delete from profiles;
       delete from accounts;
       delete from sync_cache;
@@ -34,7 +35,32 @@ describe("whois", () => {
 			"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, created_at) values ('profile_me', 'steipete', 'Peter', '', 1000, 18, '2009-03-19T22:54:05.000Z')",
 		).run();
 		db.prepare(
-			"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, created_at) values ('profile_user_42', 'aditya', 'Aditya', 'Blacksmith cofounder', 5000, 210, '2020-01-01T00:00:00.000Z')",
+			`
+      insert into profiles (
+        id, handle, display_name, bio, followers_count, avatar_hue,
+        location, url, verified_type, entities_json, created_at
+      ) values (
+        'profile_user_42', 'aditya', 'Aditya', 'Blacksmith cofounder', 5000, 210,
+        'San Francisco', 'https://www.blacksmith.sh/team', 'business',
+        '{"description":{"urls":[{"url":"https://t.co/bio","expanded_url":"https://www.blacksmith.sh"}]}}',
+        '2020-01-01T00:00:00.000Z'
+      )
+      `,
+		).run();
+		db.prepare(
+			`
+      insert into profile_affiliations (
+        subject_profile_id, organization_profile_id, organization_name,
+        organization_handle, badge_url, url, label, source, is_active,
+        first_seen_at, last_seen_at, raw_json, updated_at
+      ) values (
+        'profile_user_42', 'profile_org_blacksmith', 'Blacksmith',
+        'blacksmith', 'https://cdn.example/blacksmith.png',
+        'https://www.blacksmith.sh', 'Blacksmith', 'fixture', 1,
+        '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z',
+        '{"label":"Blacksmith"}', '2026-05-01T00:00:00.000Z'
+      )
+      `,
 		).run();
 		db.prepare(
 			"insert into dm_conversations (id, account_id, participant_profile_id, title, last_message_at, unread_count, needs_reply) values ('dm_blacksmith', 'acct_primary', 'profile_user_42', 'Aditya', '2026-05-01T00:00:00.000Z', 0, 1)",
@@ -141,6 +167,8 @@ describe("whois", () => {
 			confidence: expect.any(Number),
 			reasons: expect.arrayContaining([
 				"resolved profile",
+				"profile URL matches query",
+				"affiliation matches query",
 				"cofounder language",
 				"message text matches query",
 			]),
@@ -154,6 +182,16 @@ describe("whois", () => {
 					text: expect.stringContaining("Blacksmith cofounders"),
 				}),
 			],
+			profileEvidence: expect.arrayContaining([
+				expect.objectContaining({
+					kind: "profile_url",
+					value: "https://www.blacksmith.sh/team",
+				}),
+				expect.objectContaining({
+					kind: "affiliation",
+					value: "Blacksmith",
+				}),
+			]),
 		});
 		expect(result.candidates[0]?.confidence).toBeGreaterThanOrEqual(80);
 		expect(result.candidates[1]).toMatchObject({

@@ -151,7 +151,8 @@ Shard contract:
 
 - tweets: `data/tweets/YYYY.jsonl`
 - unknown tweet dates: `data/tweets/unknown.jsonl`
-- profiles: `data/profiles.jsonl` includes bio plus follower/following counts
+- profiles: `data/profiles.jsonl` includes bio, follower/following counts, profile URL, location, verification type, structured URL entities, and raw profile JSON
+- affiliations: `data/profile_affiliations.jsonl` includes X badge/highlighted-label organization edges
 - collections: `data/collections/likes.jsonl`, `data/collections/bookmarks.jsonl`
 - DMs: `data/dms/conversations.jsonl` plus `data/dms/YYYY.jsonl`
 - moderation: `data/moderation/blocks.jsonl`, `data/moderation/mutes.jsonl`
@@ -319,10 +320,16 @@ Flags:
 Profile resolution reads the local profile row first, then the persistent lookup
 cache, then `bird user`, then `xurl` unless `--no-xurl-fallback` is set. Failed
 lookups are cached briefly so repeated searches do not keep spending live calls.
+Resolved profile rows store bio, profile URL, location, verification type,
+structured X URL entities, raw profile JSON, and affiliation badge metadata when
+the live transport exposes it.
 
 ### `whois <query>`
 
 Find likely people or orgs from local DM and optional tweet evidence.
+Candidates include structured `profileEvidence` entries for profile bio, profile
+URL, bio URLs, location, verified type, first-class affiliations, DM context, and
+expanded URLs.
 
 Flags:
 

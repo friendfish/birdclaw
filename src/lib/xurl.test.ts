@@ -11,6 +11,9 @@ vi.mock("node:child_process", () => ({
 	execFile,
 }));
 
+const RICH_USER_FIELDS =
+	"description%2Centities%2Clocation%2Cpublic_metrics%2Cprofile_image_url%2Curl%2Ccreated_at%2Cverified%2Cverified_type";
+
 describe("xurl transport wrapper", () => {
 	beforeEach(() => {
 		vi.resetModules();
@@ -154,7 +157,7 @@ describe("xurl transport wrapper", () => {
 			meta: { result_count: 1 },
 		});
 		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
-			"/2/users/25401953/mentions?max_results=5&expansions=author_id&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics&user.fields=description%2Cpublic_metrics%2Cprofile_image_url%2Ccreated_at%2Cverified",
+			`/2/users/25401953/mentions?max_results=5&expansions=author_id&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics&user.fields=${RICH_USER_FIELDS}`,
 		]);
 	});
 
@@ -179,7 +182,7 @@ describe("xurl transport wrapper", () => {
 			meta: { next_token: "next-page" },
 		});
 		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
-			"/2/users/25401953/mentions?max_results=100&expansions=author_id&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics&user.fields=description%2Cpublic_metrics%2Cprofile_image_url%2Ccreated_at%2Cverified&pagination_token=next-page",
+			`/2/users/25401953/mentions?max_results=100&expansions=author_id&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics&user.fields=${RICH_USER_FIELDS}&pagination_token=next-page`,
 		]);
 	});
 
@@ -235,7 +238,7 @@ describe("xurl transport wrapper", () => {
 			nextToken: "next",
 		});
 		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
-			"/2/users/1/blocking?max_results=100&user.fields=description%2Cpublic_metrics%2Cprofile_image_url%2Ccreated_at",
+			`/2/users/1/blocking?max_results=100&user.fields=${RICH_USER_FIELDS}`,
 		]);
 	});
 
@@ -312,7 +315,7 @@ describe("xurl transport wrapper", () => {
 			meta: { result_count: 1 },
 		});
 		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
-			"/2/tweets?ids=tweet_1&expansions=author_id&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics%2Creferenced_tweets&user.fields=description%2Cpublic_metrics%2Cprofile_image_url%2Ccreated_at%2Cverified",
+			`/2/tweets?ids=tweet_1&expansions=author_id&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics%2Creferenced_tweets&user.fields=${RICH_USER_FIELDS}`,
 		]);
 	});
 
@@ -363,12 +366,12 @@ describe("xurl transport wrapper", () => {
 		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
 			"--auth",
 			"oauth2",
-			"/2/users/25401953/liked_tweets?max_results=5&expansions=author_id&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics%2Creferenced_tweets&user.fields=description%2Cpublic_metrics%2Cprofile_image_url%2Ccreated_at%2Cverified",
+			`/2/users/25401953/liked_tweets?max_results=5&expansions=author_id&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics%2Creferenced_tweets&user.fields=${RICH_USER_FIELDS}`,
 		]);
 		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
 			"--auth",
 			"oauth2",
-			"/2/users/25401953/bookmarks?max_results=100&expansions=author_id&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics%2Creferenced_tweets&user.fields=description%2Cpublic_metrics%2Cprofile_image_url%2Ccreated_at%2Cverified&pagination_token=next",
+			`/2/users/25401953/bookmarks?max_results=100&expansions=author_id&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics%2Creferenced_tweets&user.fields=${RICH_USER_FIELDS}&pagination_token=next`,
 		]);
 	});
 
@@ -406,7 +409,7 @@ describe("xurl transport wrapper", () => {
 			nextToken: null,
 		});
 		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
-			"/2/users/1/blocking?max_results=100&user.fields=description%2Cpublic_metrics%2Cprofile_image_url%2Ccreated_at&pagination_token=next-page",
+			`/2/users/1/blocking?max_results=100&user.fields=${RICH_USER_FIELDS}&pagination_token=next-page`,
 		]);
 	});
 

@@ -31,6 +31,7 @@ function resetStore() {
     delete from dm_messages;
     delete from dm_conversations;
     delete from tweets;
+    delete from profile_affiliations;
     delete from profiles;
     delete from accounts;
     delete from sync_cache;
@@ -70,6 +71,26 @@ describe("profile resolver", () => {
 			username: "sam",
 			name: "Sam Altman",
 			description: "Working on AGI",
+			location: "San Francisco",
+			url: "https://openai.com",
+			verified: true,
+			verified_type: "blue",
+			entities: {
+				url: {
+					urls: [
+						{
+							url: "https://t.co/openai",
+							expanded_url: "https://openai.com",
+						},
+					],
+				},
+			},
+			affiliation: {
+				organizationIds: ["profile_org_openai"],
+				description: "OpenAI",
+				url: "https://x.com/OpenAI",
+				badgeUrl: "https://cdn.example/openai.png",
+			},
 			profile_image_url:
 				"https://pbs.twimg.com/profile_images/42/avatar_normal.jpg",
 			public_metrics: { followers_count: 123, following_count: 45 },
@@ -80,7 +101,12 @@ describe("profile resolver", () => {
 			expect.objectContaining({
 				status: "hit",
 				source: "bird",
-				profile: expect.objectContaining({ handle: "sam" }),
+				profile: expect.objectContaining({
+					handle: "sam",
+					location: "San Francisco",
+					url: "https://openai.com",
+					verifiedType: "blue",
+				}),
 			}),
 		]);
 		expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
@@ -97,6 +123,18 @@ describe("profile resolver", () => {
 			}),
 		]);
 		expect(mocks.lookupProfileViaBird).toHaveBeenCalledTimes(1);
+		expect(
+			db
+				.prepare(
+					"select organization_profile_id, organization_name, organization_handle, url from profile_affiliations where subject_profile_id = 'profile_user_42'",
+				)
+				.get(),
+		).toEqual({
+			organization_profile_id: "profile_org_openai",
+			organization_name: "OpenAI",
+			organization_handle: "OpenAI",
+			url: "https://x.com/OpenAI",
+		});
 	});
 
 	it("negative-caches failed lookups", async () => {

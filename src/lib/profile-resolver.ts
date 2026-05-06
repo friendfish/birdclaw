@@ -36,6 +36,17 @@ export interface ProfileResolveResult {
 
 function toProfile(row: Record<string, unknown>): ProfileRecord {
 	const followingCount = Number(row.following_count ?? 0);
+	let entities: Record<string, unknown> | undefined;
+	if (typeof row.entities_json === "string" && row.entities_json.length > 0) {
+		try {
+			const parsed = JSON.parse(row.entities_json) as unknown;
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+				entities = parsed as Record<string, unknown>;
+			}
+		} catch {
+			entities = undefined;
+		}
+	}
 	return {
 		id: String(row.id),
 		handle: String(row.handle),
@@ -46,6 +57,16 @@ function toProfile(row: Record<string, unknown>): ProfileRecord {
 		avatarHue: Number(row.avatar_hue),
 		avatarUrl:
 			typeof row.avatar_url === "string" ? String(row.avatar_url) : undefined,
+		...(typeof row.location === "string" && row.location.length > 0
+			? { location: row.location }
+			: {}),
+		...(typeof row.url === "string" && row.url.length > 0
+			? { url: row.url }
+			: {}),
+		...(typeof row.verified_type === "string" && row.verified_type.length > 0
+			? { verifiedType: row.verified_type }
+			: {}),
+		...(entities ? { entities } : {}),
 		createdAt: String(row.created_at),
 	};
 }
@@ -54,7 +75,8 @@ function getProfile(profileId: string) {
 	const row = getNativeDb()
 		.prepare(
 			`
-      select id, handle, display_name, bio, followers_count, following_count, avatar_hue, avatar_url, created_at
+      select id, handle, display_name, bio, followers_count, following_count,
+        avatar_hue, avatar_url, location, url, verified_type, entities_json, created_at
       from profiles
       where id = ?
       `,

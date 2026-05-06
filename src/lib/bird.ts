@@ -79,10 +79,17 @@ interface BirdUserOverviewPayload {
 		username?: string;
 		name?: string;
 		description?: string;
+		location?: string;
+		url?: string;
+		verified?: boolean;
+		verifiedType?: string;
+		verified_type?: string;
 		followersCount?: number;
 		followingCount?: number;
 		profileImageUrl?: string;
 		createdAt?: string;
+		entities?: Record<string, unknown>;
+		affiliation?: Record<string, unknown>;
 	};
 }
 
@@ -487,9 +494,26 @@ export async function lookupProfileViaBird(
 		name: String(user.name ?? user.username),
 		description:
 			typeof user.description === "string" ? user.description : undefined,
+		location: typeof user.location === "string" ? user.location : undefined,
+		url: typeof user.url === "string" ? user.url : undefined,
+		verified: typeof user.verified === "boolean" ? user.verified : undefined,
+		verified_type:
+			typeof user.verifiedType === "string"
+				? user.verifiedType
+				: typeof user.verified_type === "string"
+					? user.verified_type
+					: undefined,
 		profile_image_url:
 			typeof user.profileImageUrl === "string"
 				? user.profileImageUrl
+				: undefined,
+		entities:
+			user.entities && typeof user.entities === "object"
+				? user.entities
+				: undefined,
+		affiliation:
+			user.affiliation && typeof user.affiliation === "object"
+				? user.affiliation
 				: undefined,
 		created_at: typeof user.createdAt === "string" ? user.createdAt : undefined,
 		public_metrics: {

@@ -55,6 +55,15 @@ Caching model:
 - `xurl` is the last fallback; pass `--no-xurl-fallback` when avoiding X API spend matters
 - failed profile lookups are cached briefly to avoid repeated live calls
 - URL expansion reads `sync_cache` first; use `--refresh-url-cache` only when stale links matter
+- resolved profiles preserve bio, profile URL, location, verification type, structured URL entities, raw profile JSON, and X affiliation badge metadata when available
+- inspect `profileEvidence` in `whois --json` to separate `affiliation`, `profile_url`, `profile_bio_url`, `dm_context`, and `expanded_url` matches
+
+How the richer identity evidence works:
+
+- `bird user --json` is the preferred profile hydrator because it can expose X GraphQL profile URL entities and highlighted-label affiliations without using the paid X API.
+- Birdclaw stores profile metadata on `profiles` and active organization/badge edges in `profile_affiliations`; backups include `data/profile_affiliations.jsonl`.
+- `whois` scores profile bio/name/handle matches, profile URL and bio URL matches, affiliation matches, DM context, and expanded `t.co` URLs separately. Prefer the typed `profileEvidence` array over reading the free-form `reasons` text when an agent needs to explain why someone matched.
+- A cached rerun should show profile resolution from `local`/`sync_cache` and URL expansions from `cache`; use refresh flags only when current profile/bio/link evidence matters.
 
 Use `--expand-urls` when `t.co` links are evidence. It may touch the network on cache miss, but it is not an X API call.
 

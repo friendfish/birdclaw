@@ -44,6 +44,7 @@ function clearData() {
     delete from dm_messages;
     delete from dm_conversations;
     delete from tweets;
+    delete from profile_affiliations;
     delete from profiles;
     delete from accounts;
     delete from sync_cache;
@@ -74,10 +75,22 @@ function seedBackupFixture() {
     );
 
     insert into profiles (
-      id, handle, display_name, bio, followers_count, avatar_hue, avatar_url, created_at
+      id, handle, display_name, bio, followers_count, avatar_hue, avatar_url,
+      location, url, verified_type, entities_json, raw_json, created_at
     ) values
-      ('profile_me', 'steipete', 'Peter Steinberger', 'Local-first builder', 1000, 42, 'https://img.example/me.jpg', '2009-03-19T22:54:05.000Z'),
-      ('profile_friend', 'friend', 'Friend', 'Sends useful DMs', 50, 210, null, '2025-01-01T00:00:00.000Z');
+      ('profile_me', 'steipete', 'Peter Steinberger', 'Local-first builder', 1000, 42, 'https://img.example/me.jpg', 'Vienna', 'https://steipete.me', 'blue', '{"url":{"urls":[{"url":"https://t.co/me","expanded_url":"https://steipete.me"}]}}', '{"id":"profile_me"}', '2009-03-19T22:54:05.000Z'),
+      ('profile_friend', 'friend', 'Friend', 'Sends useful DMs', 50, 210, null, null, 'https://friend.example', null, '{}', '{}', '2025-01-01T00:00:00.000Z');
+
+    insert into profile_affiliations (
+      subject_profile_id, organization_profile_id, organization_name,
+      organization_handle, badge_url, url, label, source, is_active,
+      first_seen_at, last_seen_at, raw_json, updated_at
+    ) values (
+      'profile_friend', 'profile_org_blacksmith', 'Blacksmith', 'blacksmith',
+      'https://cdn.example/badge.png', 'https://www.blacksmith.sh', 'Blacksmith',
+      'fixture', 1, '2025-01-01T00:00:00.000Z', '2025-01-02T00:00:00.000Z',
+      '{"label":"Blacksmith"}', '2025-01-02T00:00:00.000Z'
+    );
 
     insert into tweets (
       id, account_id, author_profile_id, kind, text, created_at, is_replied,
@@ -179,6 +192,7 @@ describe("text backup", () => {
 		expect(exported.manifest.counts).toMatchObject({
 			accounts: 1,
 			profiles: 2,
+			profile_affiliations: 1,
 			tweets: 3,
 			collections_bookmarks: 1,
 			collections_likes: 2,
@@ -298,6 +312,7 @@ describe("text backup", () => {
 		expect(second.exportResult.manifest.counts).toMatchObject({
 			accounts: 1,
 			profiles: 2,
+			profile_affiliations: 1,
 			tweets: 3,
 			collections_bookmarks: 1,
 			collections_likes: 2,

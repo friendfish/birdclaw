@@ -240,7 +240,7 @@ export async function lookupUsersByIds(ids: string[]) {
 	const query = new URLSearchParams({
 		ids: ids.join(","),
 		"user.fields":
-			"description,public_metrics,profile_image_url,created_at,verified",
+			"description,entities,location,public_metrics,profile_image_url,url,created_at,verified,verified_type",
 	});
 	const payload = await runJsonCommand([`/2/users?${query.toString()}`]);
 	const data = payload.data;
@@ -255,7 +255,7 @@ export async function lookupUsersByHandles(handles: string[]) {
 	const query = new URLSearchParams({
 		usernames: handles.map((item) => item.replace(/^@/, "")).join(","),
 		"user.fields":
-			"description,public_metrics,profile_image_url,created_at,verified",
+			"description,entities,location,public_metrics,profile_image_url,url,created_at,verified,verified_type",
 	});
 	const payload = await runJsonCommand([`/2/users/by?${query.toString()}`]);
 	const data = payload.data;
@@ -335,7 +335,7 @@ export async function listMentionsViaXurl({
 		expansions: "author_id",
 		"tweet.fields": "created_at,conversation_id,entities,public_metrics",
 		"user.fields":
-			"description,public_metrics,profile_image_url,created_at,verified",
+			"description,entities,location,public_metrics,profile_image_url,url,created_at,verified,verified_type",
 	});
 	if (paginationToken) {
 		query.set("pagination_token", paginationToken);
@@ -395,7 +395,7 @@ async function listTimelineCollectionViaXurl({
 		"tweet.fields":
 			"created_at,conversation_id,entities,public_metrics,referenced_tweets",
 		"user.fields":
-			"description,public_metrics,profile_image_url,created_at,verified",
+			"description,entities,location,public_metrics,profile_image_url,url,created_at,verified,verified_type",
 	});
 	if (paginationToken) {
 		query.set("pagination_token", paginationToken);
@@ -451,7 +451,8 @@ export async function listBlockedUsers(
 ) {
 	const query = new URLSearchParams({
 		max_results: "100",
-		"user.fields": "description,public_metrics,profile_image_url,created_at",
+		"user.fields":
+			"description,entities,location,public_metrics,profile_image_url,url,created_at,verified,verified_type",
 	});
 	if (paginationToken) {
 		query.set("pagination_token", paginationToken);
@@ -528,7 +529,7 @@ export async function lookupTweetsByIds(
 		"tweet.fields":
 			"created_at,conversation_id,entities,public_metrics,referenced_tweets",
 		"user.fields":
-			"description,public_metrics,profile_image_url,created_at,verified",
+			"description,entities,location,public_metrics,profile_image_url,url,created_at,verified,verified_type",
 	});
 
 	const payload = await runJsonCommand([`/2/tweets?${query.toString()}`]);

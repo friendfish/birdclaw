@@ -13,6 +13,7 @@ birdclaw can write the canonical SQLite store as deterministic JSONL shards that
 manifest.json
 data/accounts.jsonl
 data/profiles.jsonl
+data/profile_affiliations.jsonl
 data/tweets/YYYY.jsonl
 data/tweets/unknown.jsonl
 data/collections/likes.jsonl
@@ -29,7 +30,8 @@ Design rules:
 - **DMs** are sharded by year with `conversation_id` in each row, so Git stays fast while preserving conversation membership
 - **collection-only tweets** with unknown timestamps go to `data/tweets/unknown.jsonl` instead of pretending they belong to 1970
 - **likes** and **bookmarks** are stored as collection edges and mirrored into the timeline rows so existing queries keep working
-- **profiles** include bio plus follower/following counts so the snapshot is meaningful on its own
+- **profiles** include bio, follower/following counts, profile URL, location, verification type, structured URL entities, and raw profile JSON so the snapshot is meaningful on its own
+- **profile affiliations** preserve X badge/highlighted-label organization edges separately from profile rows
 - **no SQLite WAL/SHM, FTS shadow tables, or transient live cache rows** ever land in the backup
 
 The manifest pins per-shard byte counts, row counts, and SHA hashes. Validation walks every shard and verifies they line up.

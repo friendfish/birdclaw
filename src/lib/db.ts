@@ -22,7 +22,28 @@ export interface ProfilesTable {
 	following_count: number;
 	avatar_hue: number;
 	avatar_url: string | null;
+	location: string | null;
+	url: string | null;
+	verified_type: string | null;
+	entities_json: string;
+	raw_json: string;
 	created_at: string;
+}
+
+export interface ProfileAffiliationsTable {
+	subject_profile_id: string;
+	organization_profile_id: string;
+	organization_name: string | null;
+	organization_handle: string | null;
+	badge_url: string | null;
+	url: string | null;
+	label: string | null;
+	source: string;
+	is_active: number;
+	first_seen_at: string;
+	last_seen_at: string;
+	raw_json: string;
+	updated_at: string;
 }
 
 export interface TweetsTable {
@@ -116,6 +137,7 @@ export interface SyncCacheTable {
 export interface BirdclawDatabase {
 	accounts: AccountsTable;
 	profiles: ProfilesTable;
+	profile_affiliations: ProfileAffiliationsTable;
 	tweets: TweetsTable;
 	tweet_collections: TweetCollectionsTable;
 	dm_conversations: DmConversationsTable;
@@ -158,7 +180,29 @@ const BASE_SCHEMA_SQL = `
     following_count integer not null default 0,
     avatar_hue integer not null default 0,
     avatar_url text,
+    location text,
+    url text,
+    verified_type text,
+    entities_json text not null default '{}',
+    raw_json text not null default '{}',
     created_at text not null
+  );
+
+  create table if not exists profile_affiliations (
+    subject_profile_id text not null,
+    organization_profile_id text not null,
+    organization_name text,
+    organization_handle text,
+    badge_url text,
+    url text,
+    label text,
+    source text not null,
+    is_active integer not null default 1,
+    first_seen_at text not null,
+    last_seen_at text not null,
+    raw_json text not null default '{}',
+    updated_at text not null,
+    primary key (subject_profile_id, organization_profile_id)
   );
 
   create table if not exists tweets (
@@ -274,6 +318,8 @@ const INDEX_SQL = `
   create index if not exists idx_dm_messages_conversation on dm_messages(conversation_id, created_at asc);
   create index if not exists idx_profiles_followers on profiles(followers_count desc);
   create index if not exists idx_profiles_following on profiles(following_count desc);
+  create index if not exists idx_profile_affiliations_subject on profile_affiliations(subject_profile_id, is_active, last_seen_at desc);
+  create index if not exists idx_profile_affiliations_org on profile_affiliations(organization_profile_id, is_active, last_seen_at desc);
   create index if not exists idx_blocks_account_created on blocks(account_id, created_at desc);
   create index if not exists idx_mutes_account_created on mutes(account_id, created_at desc);
   create index if not exists idx_ai_scores_updated on ai_scores(updated_at desc);
@@ -317,6 +363,25 @@ function ensureProfileAvatarColumns(db: BetterSqlite3.Database) {
 	if (!columnNames.has("avatar_url")) {
 		db.exec("alter table profiles add column avatar_url text");
 	}
+	if (!columnNames.has("location")) {
+		db.exec("alter table profiles add column location text");
+	}
+	if (!columnNames.has("url")) {
+		db.exec("alter table profiles add column url text");
+	}
+	if (!columnNames.has("verified_type")) {
+		db.exec("alter table profiles add column verified_type text");
+	}
+	if (!columnNames.has("entities_json")) {
+		db.exec(
+			"alter table profiles add column entities_json text not null default '{}'",
+		);
+	}
+	if (!columnNames.has("raw_json")) {
+		db.exec(
+			"alter table profiles add column raw_json text not null default '{}'",
+		);
+	}
 }
 
 function ensureAccountExternalUserIdColumn(db: BetterSqlite3.Database) {
@@ -337,6 +402,27 @@ function ensureTweetCollectionsTable(db: BetterSqlite3.Database) {
       raw_json text not null default '{}',
       updated_at text not null,
       primary key (account_id, tweet_id, kind)
+    );
+  `);
+}
+
+function ensureProfileAffiliationsTable(db: BetterSqlite3.Database) {
+	db.exec(`
+    create table if not exists profile_affiliations (
+      subject_profile_id text not null,
+      organization_profile_id text not null,
+      organization_name text,
+      organization_handle text,
+      badge_url text,
+      url text,
+      label text,
+      source text not null,
+      is_active integer not null default 1,
+      first_seen_at text not null,
+      last_seen_at text not null,
+      raw_json text not null default '{}',
+      updated_at text not null,
+      primary key (subject_profile_id, organization_profile_id)
     );
   `);
 }
@@ -377,6 +463,7 @@ function initDatabase(options: InitDatabaseOptions = {}) {
 		ensureTweetMetadataColumns(nativeDb);
 		ensureProfileAvatarColumns(nativeDb);
 		ensureTweetCollectionsTable(nativeDb);
+		ensureProfileAffiliationsTable(nativeDb);
 		ensureSchemaIndexes(nativeDb);
 		if (options.seedDemoData !== false) {
 			seedDemoData(nativeDb);

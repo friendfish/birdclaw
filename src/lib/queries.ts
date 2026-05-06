@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { findArchives } from "./archive-finder";
 import { getDb, getNativeDb } from "./db";
+import { fetchProfileAffiliations } from "./profile-affiliations";
 import type {
 	AccountRecord,
 	DmConversationItem,
@@ -38,6 +39,10 @@ function getInfluenceLabel(score: number) {
 
 function toProfile(row: Record<string, unknown>): ProfileRecord {
 	const followingCount = Number(row.following_count ?? 0);
+	const entities = parseJsonField<Record<string, unknown> | undefined>(
+		row.entities_json,
+		undefined,
+	);
 	return {
 		id: String(row.id),
 		handle: String(row.handle),
@@ -48,6 +53,16 @@ function toProfile(row: Record<string, unknown>): ProfileRecord {
 		avatarHue: Number(row.avatar_hue),
 		avatarUrl:
 			typeof row.avatar_url === "string" ? String(row.avatar_url) : undefined,
+		...(typeof row.location === "string" && row.location.length > 0
+			? { location: row.location }
+			: {}),
+		...(typeof row.url === "string" && row.url.length > 0
+			? { url: row.url }
+			: {}),
+		...(typeof row.verified_type === "string" && row.verified_type.length > 0
+			? { verifiedType: row.verified_type }
+			: {}),
+		...(entities ? { entities } : {}),
 		createdAt: String(row.created_at),
 	};
 }
@@ -368,6 +383,10 @@ export function listTimelineItems({
         p.following_count,
         p.avatar_hue,
         p.avatar_url,
+        p.location as profile_location,
+        p.url as profile_url,
+        p.verified_type as profile_verified_type,
+        p.entities_json as profile_entities_json,
         p.created_at as profile_created_at,
         rt.id as reply_id,
         rt.text as reply_text,
@@ -593,6 +612,10 @@ export function listDmConversations({
         p.following_count,
         p.avatar_hue,
         p.avatar_url,
+        p.location as profile_location,
+        p.url as profile_url,
+        p.verified_type as profile_verified_type,
+        p.entities_json as profile_entities_json,
         p.created_at as profile_created_at,
         (
           select text
@@ -614,9 +637,29 @@ export function listDmConversations({
 		)
 		.all(...joinParams, ...params) as Array<Record<string, unknown>>;
 
+	const affiliationsByProfile = fetchProfileAffiliations(
+		db,
+		rows.map((row) => String(row.profile_id)),
+	);
 	const items: DmConversationItem[] = rows.map((row) => {
 		const followersCount = Number(row.followers_count);
 		const influenceScore = getInfluenceScore(followersCount);
+		const participant = toProfile({
+			id: row.profile_id,
+			handle: row.handle,
+			display_name: row.display_name,
+			bio: row.bio,
+			followers_count: row.followers_count,
+			following_count: row.following_count,
+			avatar_hue: row.avatar_hue,
+			avatar_url: row.avatar_url,
+			location: row.profile_location,
+			url: row.profile_url,
+			verified_type: row.profile_verified_type,
+			entities_json: row.profile_entities_json,
+			created_at: row.profile_created_at,
+		});
+		const affiliations = affiliationsByProfile.get(participant.id) ?? [];
 		return {
 			id: String(row.id),
 			accountId: String(row.account_id),
@@ -632,18 +675,13 @@ export function listDmConversations({
 			influenceScore,
 			influenceLabel: getInfluenceLabel(influenceScore),
 			participant: {
-				id: String(row.profile_id),
-				handle: String(row.handle),
-				displayName: String(row.display_name),
-				bio: String(row.bio),
-				followersCount,
-				followingCount: Number(row.following_count ?? 0),
-				avatarHue: Number(row.avatar_hue),
-				avatarUrl:
-					typeof row.avatar_url === "string"
-						? String(row.avatar_url)
-						: undefined,
-				createdAt: String(row.profile_created_at),
+				...participant,
+				...(affiliations.length > 0
+					? {
+							affiliations,
+							primaryAffiliation: affiliations[0],
+						}
+					: {}),
 			},
 		};
 	});
