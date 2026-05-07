@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { lookupProfileViaBird } from "./bird";
+import { syncIdentitySearchIndexForProfileIds } from "./identity-search-index";
 import { syncProfileBioEntitiesForProfileId } from "./profile-bio-entities";
 import { recordProfileSnapshot } from "./profile-history";
 import { upsertProfileFromXUser } from "./x-profile";
@@ -181,6 +182,7 @@ export async function hydrateProfileAffiliationOrganizations(
 	if (result.hydrated > 0) {
 		recordProfileSnapshot(db, subjectProfileId, "affiliation_hydration");
 		syncProfileBioEntitiesForProfileId(db, subjectProfileId);
+		syncIdentitySearchIndexForProfileIds(db, [subjectProfileId]);
 	}
 
 	return result;

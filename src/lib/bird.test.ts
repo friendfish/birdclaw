@@ -552,6 +552,68 @@ describe("bird transport wrapper", () => {
 		);
 	});
 
+	it("uses bird profiles for batch profile hydration", async () => {
+		process.env.BIRDCLAW_BIRD_COMMAND = "/tmp/bird";
+		mockBirdStdoutOnce(
+			JSON.stringify({
+				users: [
+					{
+						id: "13334762",
+						username: "github",
+						name: "GitHub",
+						description: "How people build software.",
+						followersCount: 1,
+						followingCount: 2,
+						affiliation: { description: "GitHub" },
+					},
+				],
+				errors: [{ target: "missing", error: "not found" }],
+			}),
+		);
+
+		const { lookupProfilesViaBird } = await import("./bird");
+		const results = await lookupProfilesViaBird(["@github", "missing"]);
+
+		expectBirdCommandCall(1, ["profiles", "github", "missing", "--json"]);
+		expect(results).toEqual([
+			expect.objectContaining({
+				target: "github",
+				user: expect.objectContaining({
+					id: "13334762",
+					username: "github",
+					description: "How people build software.",
+					affiliation: { description: "GitHub" },
+				}),
+			}),
+			{ target: "missing", user: null, error: "not found" },
+		]);
+	});
+
+	it("falls back to individual bird user lookups when profiles is unavailable", async () => {
+		process.env.BIRDCLAW_BIRD_COMMAND = "/tmp/bird";
+		mockBirdRejectOnce(
+			Object.assign(new Error("unknown command profiles"), {
+				stderr: "error: unknown command profiles",
+			}),
+		);
+		mockBirdStdoutOnce(
+			JSON.stringify({
+				user: {
+					id: "13334762",
+					username: "github",
+					name: "GitHub",
+				},
+			}),
+		);
+
+		const { lookupProfilesViaBird } = await import("./bird");
+		const results = await lookupProfilesViaBird(["github"]);
+
+		expectBirdCommandCall(1, ["profiles", "github", "--json"]);
+		expectBirdCommandCall(2, ["user", "github", "--json", "--profile-only"]);
+		expect(results[0]?.user?.username).toBe("github");
+	});
+
 	it("normalizes bird helper edge cases", async () => {
 		const { __test__ } = await import("./bird");
 		const enoent = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });

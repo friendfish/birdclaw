@@ -883,6 +883,11 @@ describe("cli", () => {
 			"--tweets",
 			"--context",
 			"3",
+			"--affiliation",
+			"github",
+			"--current-affiliation",
+			"github",
+			"--exclude-domain-only",
 			"--no-xurl-fallback",
 		]);
 
@@ -915,6 +920,9 @@ describe("cli", () => {
 			refreshProfileCache: false,
 			refreshUrlCache: false,
 			xurlFallback: false,
+			affiliation: "github",
+			currentAffiliation: "github",
+			excludeDomainOnly: true,
 			context: 3,
 			limit: 10,
 		});

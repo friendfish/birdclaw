@@ -239,6 +239,64 @@ describe("live timeline collection sync", () => {
 		});
 	});
 
+	it("keeps live saved-state scoped to the syncing account", async () => {
+		setupTempHome();
+		mocks.listLikedTweetsViaBird.mockResolvedValue({
+			data: [
+				{
+					id: "tweet_003",
+					author_id: "46",
+					text: "other account liked this canonical tweet",
+					created_at: "2026-04-26T13:43:34.000Z",
+					public_metrics: { like_count: 7 },
+				},
+			],
+			includes: {
+				users: [{ id: "46", username: "mira", name: "Mira" }],
+			},
+			meta: { result_count: 1 },
+		});
+		const { syncTimelineCollection } =
+			await import("./timeline-collections-live");
+
+		await syncTimelineCollection({
+			kind: "likes",
+			account: "acct_studio",
+			mode: "bird",
+			limit: 10,
+			refresh: true,
+		});
+
+		const primaryItems = listTimelineItems({
+			resource: "home",
+			account: "acct_primary",
+			limit: 20,
+		});
+		const studioLiked = listTimelineItems({
+			resource: "home",
+			account: "acct_studio",
+			likedOnly: true,
+			limit: 5,
+		});
+
+		expect(primaryItems.find((item) => item.id === "tweet_003")).toMatchObject({
+			accountId: "acct_primary",
+			liked: false,
+		});
+		expect(studioLiked.find((item) => item.id === "tweet_003")).toMatchObject({
+			accountId: "acct_studio",
+			liked: true,
+		});
+		expect(
+			getNativeDb()
+				.prepare("select account_id, liked from tweets where id = ?")
+				.get("tweet_003"),
+		).toEqual({
+			account_id: "acct_primary",
+			liked: 0,
+		});
+	});
+
 	it("uses bird directly for liked collections and caches the payload", async () => {
 		setupTempHome();
 		mocks.listLikedTweetsViaBird.mockResolvedValue({

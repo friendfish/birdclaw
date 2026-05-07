@@ -378,6 +378,18 @@ program
 		"--no-xurl-fallback",
 		"Do not fall back to xurl after bird profile lookup",
 	)
+	.option(
+		"--affiliation <query>",
+		"Require affiliation, bio, or history evidence",
+	)
+	.option(
+		"--current-affiliation <query>",
+		"Require an active affiliation badge",
+	)
+	.option(
+		"--exclude-domain-only",
+		"Drop candidates that only match domains/URLs",
+	)
 	.option("--context <n>", "DM messages before and after each match", "4")
 	.option("--limit <n>", "Limit candidates", "10")
 	.action(async (query, options) => {
@@ -395,6 +407,9 @@ program
 			refreshProfileCache: Boolean(options.refreshProfileCache),
 			refreshUrlCache: Boolean(options.refreshUrlCache),
 			xurlFallback: options.xurlFallback,
+			affiliation: options.affiliation,
+			currentAffiliation: options.currentAffiliation,
+			excludeDomainOnly: Boolean(options.excludeDomainOnly),
 			context,
 			limit: Number(options.limit),
 		});

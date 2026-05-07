@@ -170,7 +170,7 @@ function mergeTimelineCollectionIntoLocalStore(
       entities_json, media_json, quoted_tweet_id
     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?)
     on conflict(id) do update set
-      account_id = excluded.account_id,
+      account_id = tweets.account_id,
       author_profile_id = excluded.author_profile_id,
       kind = case
         when tweets.kind in ('home', 'mention') then tweets.kind
@@ -185,8 +185,8 @@ function mergeTimelineCollectionIntoLocalStore(
       is_replied = max(tweets.is_replied, excluded.is_replied),
       reply_to_id = coalesce(excluded.reply_to_id, tweets.reply_to_id),
       quoted_tweet_id = coalesce(excluded.quoted_tweet_id, tweets.quoted_tweet_id),
-      bookmarked = max(tweets.bookmarked, excluded.bookmarked),
-      liked = max(tweets.liked, excluded.liked)
+      bookmarked = tweets.bookmarked,
+      liked = tweets.liked
     `,
 	);
 	const upsertCollection = db.prepare(`

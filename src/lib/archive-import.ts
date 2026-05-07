@@ -286,6 +286,7 @@ function clearImportedData() {
 	db.exec(`
     delete from ai_scores;
     delete from tweet_actions;
+    delete from tweet_account_edges;
     delete from tweet_collections;
     delete from dm_fts;
     delete from tweets_fts;
@@ -776,6 +777,16 @@ export async function importArchive(
 	const insertTweetFts = db.prepare(
 		"insert into tweets_fts (tweet_id, text) values (?, ?)",
 	);
+	const insertTimelineEdge = db.prepare(`
+    insert into tweet_account_edges (
+      account_id, tweet_id, kind, first_seen_at, last_seen_at, seen_count, source,
+      raw_json, updated_at
+    ) values (?, ?, ?, ?, ?, 1, 'archive', '{}', ?)
+    on conflict(account_id, tweet_id, kind) do update set
+      first_seen_at = min(tweet_account_edges.first_seen_at, excluded.first_seen_at),
+      last_seen_at = max(tweet_account_edges.last_seen_at, excluded.last_seen_at),
+      updated_at = max(tweet_account_edges.updated_at, excluded.updated_at)
+  `);
 	const insertCollection = db.prepare(`
     insert into tweet_collections (
       account_id, tweet_id, kind, collected_at, source, raw_json, updated_at
@@ -842,6 +853,16 @@ export async function importArchive(
 				tweet.mediaJson,
 				tweet.quotedTweetId,
 			);
+			if (tweet.kind === "home") {
+				insertTimelineEdge.run(
+					"acct_primary",
+					tweet.id,
+					tweet.kind,
+					tweet.createdAt,
+					tweet.createdAt,
+					new Date().toISOString(),
+				);
+			}
 			insertTweetFts.run(tweet.id, tweet.text);
 		}
 

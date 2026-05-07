@@ -101,6 +101,42 @@ describe("database init", () => {
 			]),
 		);
 
+		const timelineEdgeColumnNames = db
+			.prepare("pragma table_info(tweet_account_edges)")
+			.all() as Array<{
+			name: string;
+		}>;
+		expect(timelineEdgeColumnNames.map((column) => column.name)).toEqual(
+			expect.arrayContaining([
+				"account_id",
+				"tweet_id",
+				"kind",
+				"first_seen_at",
+				"last_seen_at",
+				"seen_count",
+				"source",
+				"raw_json",
+				"updated_at",
+			]),
+		);
+
+		const identityIndexColumnNames = db
+			.prepare("pragma table_info(identity_search_index)")
+			.all() as Array<{
+			name: string;
+		}>;
+		expect(identityIndexColumnNames.map((column) => column.name)).toEqual(
+			expect.arrayContaining([
+				"profile_id",
+				"kind",
+				"value",
+				"normalized_value",
+				"source",
+				"weight",
+				"updated_at",
+			]),
+		);
+
 		const accountColumnNames = db
 			.prepare("pragma table_info(accounts)")
 			.all() as Array<{

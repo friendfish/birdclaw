@@ -8,11 +8,13 @@ import { getNativeDb, resetDatabaseForTests } from "./db";
 
 const mocks = vi.hoisted(() => ({
 	lookupProfileViaBird: vi.fn(),
+	lookupProfilesViaBird: vi.fn(),
 	lookupUsersByIds: vi.fn(),
 }));
 
 vi.mock("./bird", () => ({
 	lookupProfileViaBird: mocks.lookupProfileViaBird,
+	lookupProfilesViaBird: mocks.lookupProfilesViaBird,
 }));
 
 vi.mock("./xurl", () => ({
@@ -56,7 +58,16 @@ describe("profile resolver", () => {
 		resetBirdclawPathsForTests();
 		resetDatabaseForTests();
 		mocks.lookupProfileViaBird.mockReset();
+		mocks.lookupProfilesViaBird.mockReset();
 		mocks.lookupUsersByIds.mockReset();
+		mocks.lookupProfilesViaBird.mockImplementation(async (targets: string[]) =>
+			Promise.all(
+				targets.map(async (target) => ({
+					target,
+					user: await mocks.lookupProfileViaBird(target),
+				})),
+			),
+		);
 		resetStore();
 	});
 
@@ -167,38 +178,45 @@ describe("profile resolver", () => {
 		db.prepare(
 			"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, created_at) values ('profile_user_43', 'id43', 'id43', 'Imported from archive user 43', 0, 211, '2009-03-19T22:54:05.000Z')",
 		).run();
-		mocks.lookupProfileViaBird
-			.mockResolvedValueOnce({
-				id: "42",
-				username: "rauchg",
-				name: "Guillermo Rauch",
-				description: "CEO at Vercel",
-				affiliation: {
-					description: "Vercel",
-					url: "https://x.com/vercel",
-					badgeUrl: "https://cdn.example/vercel.png",
+		mocks.lookupProfilesViaBird.mockResolvedValueOnce([
+			{
+				target: "42",
+				user: {
+					id: "42",
+					username: "rauchg",
+					name: "Guillermo Rauch",
+					description: "CEO at Vercel",
+					affiliation: {
+						description: "Vercel",
+						url: "https://x.com/vercel",
+						badgeUrl: "https://cdn.example/vercel.png",
+					},
+					public_metrics: { followers_count: 999, following_count: 50 },
 				},
-				public_metrics: { followers_count: 999, following_count: 50 },
-			})
-			.mockResolvedValueOnce({
-				id: "999",
-				username: "vercel",
-				name: "Vercel",
-				description: "The frontend cloud",
-				public_metrics: { followers_count: 1000, following_count: 10 },
-			})
-			.mockResolvedValueOnce({
-				id: "43",
-				username: "othervercel",
-				name: "Other Vercel",
-				description: "Also at Vercel",
-				affiliation: {
-					description: "Vercel",
-					url: "https://x.com/vercel",
-					badgeUrl: "https://cdn.example/vercel.png",
+			},
+			{
+				target: "43",
+				user: {
+					id: "43",
+					username: "othervercel",
+					name: "Other Vercel",
+					description: "Also at Vercel",
+					affiliation: {
+						description: "Vercel",
+						url: "https://x.com/vercel",
+						badgeUrl: "https://cdn.example/vercel.png",
+					},
+					public_metrics: { followers_count: 100, following_count: 50 },
 				},
-				public_metrics: { followers_count: 100, following_count: 50 },
-			});
+			},
+		]);
+		mocks.lookupProfileViaBird.mockResolvedValueOnce({
+			id: "999",
+			username: "vercel",
+			name: "Vercel",
+			description: "The frontend cloud",
+			public_metrics: { followers_count: 1000, following_count: 10 },
+		});
 		const { resolveProfilesForIds } = await import("./profile-resolver");
 
 		await expect(
@@ -222,9 +240,8 @@ describe("profile resolver", () => {
 			}),
 		]);
 
-		expect(mocks.lookupProfileViaBird).toHaveBeenCalledWith("42");
 		expect(mocks.lookupProfileViaBird).toHaveBeenCalledWith("vercel");
-		expect(mocks.lookupProfileViaBird).toHaveBeenCalledWith("43");
+		expect(mocks.lookupProfilesViaBird).toHaveBeenCalledWith(["42", "43"]);
 		expect(
 			mocks.lookupProfileViaBird.mock.calls.filter(
 				([target]) => target === "vercel",
@@ -337,6 +354,103 @@ describe("profile resolver", () => {
 			}),
 		]);
 		expect(mocks.lookupUsersByIds).toHaveBeenCalledWith(["42"]);
+
+		mocks.lookupProfileViaBird.mockResolvedValueOnce(null);
+		await expect(
+			resolveProfilesForIds(["profile_user_42"], {
+				xurlFallback: false,
+				refresh: true,
+			}),
+		).resolves.toEqual([
+			expect.objectContaining({
+				status: "miss",
+				source: "bird",
+			}),
+		]);
+	});
+
+	it("handles batch bird errors and unresolved users", async () => {
+		const db = getNativeDb();
+		db.prepare(
+			"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, created_at) values ('profile_user_43', 'id43', 'id43', 'Imported from archive user 43', 0, 211, '2009-03-19T22:54:05.000Z')",
+		).run();
+		const { resolveProfilesForIds } = await import("./profile-resolver");
+
+		mocks.lookupProfilesViaBird.mockRejectedValueOnce(new Error("bird down"));
+		await expect(
+			resolveProfilesForIds(["profile_user_42", "profile_user_43"], {
+				xurlFallback: false,
+				refresh: true,
+			}),
+		).resolves.toEqual([
+			expect.objectContaining({
+				status: "error",
+				source: "bird",
+				error: "bird down",
+			}),
+			expect.objectContaining({
+				status: "error",
+				source: "bird",
+				error: "bird down",
+			}),
+		]);
+
+		mocks.lookupProfilesViaBird.mockResolvedValueOnce([
+			{ target: "42", error: "not found" },
+			{ target: "43" },
+		]);
+		await expect(
+			resolveProfilesForIds(["profile_user_42", "profile_user_43"], {
+				xurlFallback: false,
+				refresh: true,
+			}),
+		).resolves.toEqual([
+			expect.objectContaining({
+				status: "error",
+				source: "bird",
+				error: "not found",
+			}),
+			expect.objectContaining({
+				status: "miss",
+				source: "bird",
+			}),
+		]);
+
+		mocks.lookupProfilesViaBird.mockResolvedValueOnce([{ target: "42" }]);
+		mocks.lookupUsersByIds.mockRejectedValueOnce(new Error("xurl down"));
+		await expect(
+			resolveProfilesForIds(["profile_user_42", "profile_user_43"], {
+				refresh: true,
+			}),
+		).resolves.toEqual([
+			expect.objectContaining({
+				status: "error",
+				source: "xurl",
+				error: "xurl down",
+			}),
+			expect.objectContaining({
+				status: "error",
+				source: "xurl",
+				error: "xurl down",
+			}),
+		]);
+
+		mocks.lookupProfilesViaBird.mockResolvedValueOnce([{ target: "42" }]);
+		mocks.lookupUsersByIds.mockResolvedValueOnce([]);
+		await expect(
+			resolveProfilesForIds(["profile_user_42", "profile_user_43"], {
+				refresh: true,
+			}),
+		).resolves.toEqual([
+			expect.objectContaining({
+				status: "miss",
+				source: "xurl",
+			}),
+			expect.objectContaining({
+				status: "miss",
+				source: "xurl",
+			}),
+		]);
 	});
 
 	it("summarizes placeholder hydration batches", async () => {

@@ -141,6 +141,17 @@ describe("cached live mentions", () => {
 				id: "42",
 			}),
 		]);
+		expect(
+			getNativeDb()
+				.prepare(
+					"select account_id, kind, source from tweet_account_edges where tweet_id = ?",
+				)
+				.get("tweet_live_1"),
+		).toEqual({
+			account_id: "acct_primary",
+			kind: "mention",
+			source: "xurl",
+		});
 	});
 
 	it("creates stub authors and counts media urls when includes are missing", async () => {

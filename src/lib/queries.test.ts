@@ -322,6 +322,47 @@ describe("birdclaw queries", () => {
 		expect(items[0]?.searchSnippet).toContain("<mark>Agents</mark>");
 	});
 
+	it("keeps timeline membership account-scoped for the same canonical tweet", () => {
+		setupTempHome();
+		const db = getNativeDb();
+		db.prepare(
+			`
+      insert into tweet_account_edges (
+        account_id, tweet_id, kind, first_seen_at, last_seen_at, seen_count,
+        source, raw_json, updated_at
+      ) values (
+        'acct_studio', 'tweet_001', 'home', '2026-03-08T12:00:00.000Z',
+        '2026-03-08T12:00:00.000Z', 1, 'test', '{}',
+        '2026-03-08T12:00:00.000Z'
+      )
+      `,
+		).run();
+
+		const allItems = listTimelineItems({
+			resource: "home",
+			since: "2000-01-01T00:00:00.000Z",
+			limit: 20,
+		});
+		const sharedItems = allItems.filter((item) => item.id === "tweet_001");
+		const studioItems = listTimelineItems({
+			resource: "home",
+			account: "acct_studio",
+			since: "2000-01-01T00:00:00.000Z",
+			limit: 20,
+		});
+
+		expect(sharedItems.map((item) => item.accountId).sort()).toEqual([
+			"acct_primary",
+			"acct_studio",
+		]);
+		expect(studioItems.find((item) => item.id === "tweet_001")).toMatchObject({
+			accountId: "acct_studio",
+			accountHandle: "@birdclaw_lab",
+			bookmarked: false,
+			liked: false,
+		});
+	});
+
 	it("omits timeline search snippets when no query is provided", () => {
 		setupTempHome();
 
@@ -562,6 +603,43 @@ describe("birdclaw queries", () => {
 		]);
 		expect(envelope.archives).toHaveLength(1);
 		expect(envelope.transport.availableTransport).toBe("xurl");
+	});
+
+	it("counts envelope timeline stats from account edges", async () => {
+		setupTempHome();
+		const db = getNativeDb();
+		db.prepare(
+			`
+      insert into tweet_account_edges (
+        account_id, tweet_id, kind, first_seen_at, last_seen_at, seen_count,
+        source, raw_json, updated_at
+      ) values
+        (
+          'acct_studio', 'tweet_001', 'home', '2026-03-08T12:00:00.000Z',
+          '2026-03-08T12:00:00.000Z', 1, 'test', '{}',
+          '2026-03-08T12:00:00.000Z'
+        ),
+        (
+          'acct_studio', 'tweet_001', 'mention', '2026-03-08T12:01:00.000Z',
+          '2026-03-08T12:01:00.000Z', 1, 'test', '{}',
+          '2026-03-08T12:01:00.000Z'
+        )
+      `,
+		).run();
+
+		const envelope = await getQueryEnvelope();
+
+		expect(envelope.stats.home).toBe(
+			listTimelineItems({ resource: "home", limit: 20 }).length,
+		);
+		expect(envelope.stats.mentions).toBe(
+			listTimelineItems({ resource: "mentions", limit: 20 }).length,
+		);
+		expect(envelope.stats).toMatchObject({
+			home: 5,
+			mentions: 3,
+			inbox: 5,
+		});
 	});
 
 	it("hydrates selected dms inside queryResource", () => {

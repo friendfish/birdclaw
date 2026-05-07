@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { normalizeAvatarUrl } from "./avatar-cache";
+import { syncIdentitySearchIndexForProfileIds } from "./identity-search-index";
 import { syncProfileBioEntitiesForProfileId } from "./profile-bio-entities";
 import { syncProfileAffiliationsFromUser } from "./profile-affiliations";
 import { recordProfileSnapshot } from "./profile-history";
@@ -178,6 +179,7 @@ function updateExistingProfileFromUser(
 	syncProfileAffiliationsFromUser(db, profileId, user);
 	recordProfileSnapshot(db, profileId, "x_profile");
 	syncProfileBioEntitiesForProfileId(db, profileId);
+	syncIdentitySearchIndexForProfileIds(db, [profileId]);
 
 	const row = db
 		.prepare(
@@ -284,6 +286,7 @@ export function upsertProfileFromXUser(
 	syncProfileAffiliationsFromUser(db, profileId, user);
 	recordProfileSnapshot(db, profileId, "x_profile");
 	syncProfileBioEntitiesForProfileId(db, profileId);
+	syncIdentitySearchIndexForProfileIds(db, [profileId]);
 
 	return {
 		profile: {

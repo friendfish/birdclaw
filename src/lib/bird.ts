@@ -93,6 +93,11 @@ interface BirdUserOverviewPayload {
 	};
 }
 
+interface BirdProfilesPayload {
+	users?: NonNullable<BirdUserOverviewPayload["user"]>[];
+	errors?: Array<{ target?: string; error?: string }>;
+}
+
 function toIsoTimestamp(value: string) {
 	const parsed = new Date(value);
 	if (Number.isNaN(parsed.getTime())) {
@@ -508,7 +513,12 @@ export async function lookupProfileViaBird(
 		]);
 	}
 	const payload = parseBirdJson(stdout) as BirdUserOverviewPayload;
-	const user = payload.user;
+	return toXurlMentionUser(payload.user);
+}
+
+function toXurlMentionUser(
+	user: BirdUserOverviewPayload["user"],
+): XurlMentionUser | null {
 	if (!user?.id || !user.username) {
 		return null;
 	}
@@ -546,6 +556,71 @@ export async function lookupProfileViaBird(
 			following_count: Number(user.followingCount ?? 0),
 		},
 	};
+}
+
+export async function lookupProfilesViaBird(
+	usernameOrIds: string[],
+): Promise<
+	Array<{ target: string; user: XurlMentionUser | null; error?: string }>
+> {
+	const targets = Array.from(
+		new Set(
+			usernameOrIds
+				.map((target) => target.trim().replace(/^@/, ""))
+				.filter((target) => target.length > 0),
+		),
+	);
+	if (targets.length === 0) {
+		return [];
+	}
+
+	try {
+		const stdout = await runBirdJsonCommand(["profiles", ...targets, "--json"]);
+		const payload = parseBirdJson(stdout) as BirdProfilesPayload;
+		const users = (payload.users ?? [])
+			.map(toXurlMentionUser)
+			.filter((user): user is XurlMentionUser => Boolean(user));
+		const byTarget = new Map<string, XurlMentionUser>();
+		for (const user of users) {
+			byTarget.set(String(user.id), user);
+			byTarget.set(user.username.toLowerCase(), user);
+		}
+		const errors = new Map(
+			(payload.errors ?? []).map((item) => [
+				String(item.target ?? "")
+					.replace(/^@/, "")
+					.toLowerCase(),
+				item.error ?? "Unknown error",
+			]),
+		);
+		return targets.map((target) => ({
+			target,
+			user: byTarget.get(target.toLowerCase()) ?? null,
+			...(errors.has(target.toLowerCase())
+				? { error: errors.get(target.toLowerCase()) }
+				: {}),
+		}));
+	} catch (error) {
+		if (!isUnsupportedBirdOptionError(error, "profiles")) {
+			throw error;
+		}
+		return Promise.all(
+			targets.map(async (target) => {
+				try {
+					return { target, user: await lookupProfileViaBird(target) };
+				} catch (lookupError) {
+					return {
+						target,
+						user: null,
+						error:
+							lookupError instanceof Error
+								? lookupError.message
+								: String(lookupError),
+					};
+				}
+			}),
+		);
+	}
 }
 
 export const __test__ = {

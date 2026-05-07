@@ -1,5 +1,5 @@
 import { getNativeDb } from "./db";
-import { lookupProfileViaBird } from "./bird";
+import { lookupProfileViaBird, lookupProfilesViaBird } from "./bird";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
 import {
 	hydrateProfileAffiliationOrganizations,
@@ -176,6 +176,81 @@ async function fetchProfileUser(
 	}
 }
 
+async function fetchProfileUsers(
+	externalUserIds: string[],
+	xurlFallback: boolean,
+) {
+	const uniqueIds = Array.from(new Set(externalUserIds));
+	const results = new Map<string, CachedProfileLookup>();
+	let unresolved = uniqueIds;
+
+	try {
+		const birdResults = await lookupProfilesViaBird(uniqueIds);
+		for (const result of birdResults) {
+			const externalUserId = result.target;
+			if (result.user) {
+				results.set(externalUserId, {
+					status: "hit",
+					source: "bird",
+					user: result.user,
+				});
+			} else if (result.error && !xurlFallback) {
+				results.set(externalUserId, {
+					status: "error",
+					source: "bird",
+					error: result.error,
+				});
+			}
+		}
+		unresolved = uniqueIds.filter((id) => !results.has(id));
+	} catch (error) {
+		if (!xurlFallback) {
+			for (const externalUserId of uniqueIds) {
+				results.set(externalUserId, {
+					status: "error",
+					source: "bird",
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+			return results;
+		}
+	}
+
+	if (unresolved.length === 0) {
+		return results;
+	}
+	if (!xurlFallback) {
+		for (const externalUserId of unresolved) {
+			results.set(externalUserId, { status: "miss", source: "bird" });
+		}
+		return results;
+	}
+
+	try {
+		const xurlUsers = await lookupUsersByIds(unresolved);
+		const usersById = new Map(xurlUsers.map((user) => [String(user.id), user]));
+		for (const externalUserId of unresolved) {
+			const user = usersById.get(externalUserId);
+			results.set(
+				externalUserId,
+				user
+					? { status: "hit", source: "xurl", user }
+					: { status: "miss", source: "xurl" },
+			);
+		}
+	} catch (error) {
+		for (const externalUserId of unresolved) {
+			results.set(externalUserId, {
+				status: "error",
+				source: "xurl",
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	return results;
+}
+
 export async function resolveProfilesForIds(
 	profileIds: string[],
 	options: ResolveProfilesOptions = {},
@@ -184,16 +259,22 @@ export async function resolveProfilesForIds(
 	const negativeMaxAgeMs =
 		options.negativeMaxAgeMs ?? PROFILE_NEGATIVE_CACHE_TTL_MS;
 	const xurlFallback = options.xurlFallback ?? true;
-	const results: ProfileResolveResult[] = [];
+	const ordered: Array<
+		| { kind: "ready"; result: ProfileResolveResult }
+		| { kind: "pending"; profileId: string; externalUserId: string }
+	> = [];
 
 	for (const profileId of Array.from(new Set(profileIds))) {
 		const externalUserId = getExternalUserId(profileId);
 		if (!externalUserId) {
-			results.push({
-				profileId,
-				externalUserId: null,
-				status: "miss",
-				source: "local",
+			ordered.push({
+				kind: "ready",
+				result: {
+					profileId,
+					externalUserId: null,
+					status: "miss",
+					source: "local",
+				},
 			});
 			continue;
 		}
@@ -204,12 +285,15 @@ export async function resolveProfilesForIds(
 			!options.refresh &&
 			!isPlaceholderProfile(localProfile)
 		) {
-			results.push({
-				profileId,
-				externalUserId,
-				status: "hit",
-				source: "local",
-				profile: localProfile,
+			ordered.push({
+				kind: "ready",
+				result: {
+					profileId,
+					externalUserId,
+					status: "hit",
+					source: "local",
+					profile: localProfile,
+				},
 			});
 			continue;
 		}
@@ -227,28 +311,53 @@ export async function resolveProfilesForIds(
 						cached.value.user,
 					);
 					updateConversationTitles(resolved.profile);
-					results.push({
-						profileId: resolved.profile.id,
-						externalUserId,
-						status: "hit",
-						source: "cache",
-						profile: resolved.profile,
+					ordered.push({
+						kind: "ready",
+						result: {
+							profileId: resolved.profile.id,
+							externalUserId,
+							status: "hit",
+							source: "cache",
+							profile: resolved.profile,
+						},
 					});
 					continue;
 				}
-				results.push({
-					profileId,
-					externalUserId,
-					status: cached.value.status,
-					source: "negative-cache",
-					error: cached.value.error,
+				ordered.push({
+					kind: "ready",
+					result: {
+						profileId,
+						externalUserId,
+						status: cached.value.status,
+						source: "negative-cache",
+						error: cached.value.error,
+					},
 				});
 				continue;
 			}
 		}
 
-		const fetched = await fetchProfileUser(externalUserId, xurlFallback);
-		writeProfileLookupCache(externalUserId, fetched);
+		ordered.push({ kind: "pending", profileId, externalUserId });
+	}
+
+	const pendingExternalIds = ordered.flatMap((item) =>
+		item.kind === "pending" ? [item.externalUserId] : [],
+	);
+	const fetchedByExternalId =
+		pendingExternalIds.length > 1
+			? await fetchProfileUsers(pendingExternalIds, xurlFallback)
+			: new Map<string, CachedProfileLookup>();
+
+	const results: ProfileResolveResult[] = [];
+	for (const item of ordered) {
+		if (item.kind === "ready") {
+			results.push(item.result);
+			continue;
+		}
+		const fetched =
+			fetchedByExternalId.get(item.externalUserId) ??
+			(await fetchProfileUser(item.externalUserId, xurlFallback));
+		writeProfileLookupCache(item.externalUserId, fetched);
 		if (fetched.status === "hit" && fetched.user) {
 			const resolved = upsertProfileFromXUser(getNativeDb(), fetched.user);
 			const affiliationHydration = await hydrateProfileAffiliationOrganizations(
@@ -258,7 +367,7 @@ export async function resolveProfilesForIds(
 			updateConversationTitles(resolved.profile);
 			results.push({
 				profileId: resolved.profile.id,
-				externalUserId,
+				externalUserId: item.externalUserId,
 				status: "hit",
 				source: fetched.source,
 				profile: resolved.profile,
@@ -267,8 +376,8 @@ export async function resolveProfilesForIds(
 			continue;
 		}
 		results.push({
-			profileId,
-			externalUserId,
+			profileId: item.profileId,
+			externalUserId: item.externalUserId,
 			status: fetched.status,
 			source: fetched.source,
 			error: fetched.error,

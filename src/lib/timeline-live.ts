@@ -3,6 +3,7 @@ import { listHomeTimelineViaBird } from "./bird";
 import { getNativeDb } from "./db";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
 import type { XurlMentionData, XurlMentionsResponse } from "./types";
+import { upsertTweetAccountEdge } from "./tweet-account-edges";
 import { ensureStubProfileForXUser, upsertProfileFromXUser } from "./x-profile";
 
 const DEFAULT_TIMELINE_CACHE_TTL_MS = 2 * 60_000;
@@ -77,12 +78,9 @@ function mergeHomeTimelineIntoLocalStore(
       entities_json, media_json, quoted_tweet_id
     ) values (?, ?, ?, 'home', ?, ?, 0, null, ?, ?, 0, 0, ?, '[]', null)
     on conflict(id) do update set
-      account_id = excluded.account_id,
+      account_id = tweets.account_id,
       author_profile_id = excluded.author_profile_id,
-      kind = case
-        when tweets.kind = 'mention' then tweets.kind
-        else 'home'
-      end,
+      kind = tweets.kind,
       text = excluded.text,
       created_at = excluded.created_at,
       like_count = excluded.like_count,
@@ -95,6 +93,7 @@ function mergeHomeTimelineIntoLocalStore(
 	);
 
 	db.transaction(() => {
+		const seenAt = new Date().toISOString();
 		for (const tweet of payload.data) {
 			const author =
 				usersById.get(tweet.author_id) ??
@@ -116,6 +115,14 @@ function mergeHomeTimelineIntoLocalStore(
 				getMediaCount(tweet),
 				JSON.stringify(tweet.entities ?? {}),
 			);
+			upsertTweetAccountEdge(db, {
+				accountId,
+				tweetId: tweet.id,
+				kind: "home",
+				source: "bird",
+				seenAt,
+				rawJson: JSON.stringify(tweet),
+			});
 			replaceTweetFts(db, tweet.id, tweet.text);
 		}
 	})();

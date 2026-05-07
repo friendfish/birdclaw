@@ -95,6 +95,20 @@ cached URL expansion. In JSON, inspect `profileEvidence` for typed reasons such
 as `affiliation`, `bio_handle`, `bio_domain`, `profile_history`,
 `profile_url`, and `expanded_url`.
 
+`whois` interprets query shape before ranking. A handle-like query such as
+`@github` prefers handle, affiliation, and bio-entity evidence; a domain query
+such as `github.com` prefers profile and expanded URL evidence; a fuzzy people
+query such as `github guy` prefers current affiliation, bio handle/company, and
+profile-history evidence. Human output is grouped into likely affiliated,
+ecosystem, profile/link, DM-context, and other buckets.
+
+Use the identity filters when domain-only matches would be noisy:
+
+```bash
+birdclaw whois "github guy" --current-affiliation github --exclude-domain-only
+birdclaw whois github --affiliation github --no-xurl-fallback --json
+```
+
 ## Snippets
 
 FTS5 snippets are returned with `<mark>` boundaries pre-rendered for the web UI. The CLI prints them as plain text in human mode and as `snippet`/`snippetHtml` fields in `--json` mode.

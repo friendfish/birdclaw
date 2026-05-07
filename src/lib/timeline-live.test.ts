@@ -1,0 +1,98 @@
+// @vitest-environment node
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { resetBirdclawPathsForTests } from "./config";
+import { getNativeDb, resetDatabaseForTests } from "./db";
+import { listTimelineItems } from "./queries";
+
+const listHomeTimelineViaBirdMock = vi.fn();
+
+vi.mock("./bird", () => ({
+	listHomeTimelineViaBird: (...args: unknown[]) =>
+		listHomeTimelineViaBirdMock(...args),
+}));
+
+const tempDirs: string[] = [];
+
+function makeTempHome() {
+	const tempDir = mkdtempSync(
+		path.join(os.tmpdir(), "birdclaw-timeline-live-"),
+	);
+	tempDirs.push(tempDir);
+	process.env.BIRDCLAW_HOME = tempDir;
+	return tempDir;
+}
+
+afterEach(() => {
+	resetDatabaseForTests();
+	resetBirdclawPathsForTests();
+	delete process.env.BIRDCLAW_HOME;
+	listHomeTimelineViaBirdMock.mockReset();
+
+	for (const dir of tempDirs.splice(0)) {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+describe("live home timeline sync", () => {
+	it("stores account-scoped home timeline edges without moving canonical tweets", async () => {
+		makeTempHome();
+		const db = getNativeDb();
+		db.prepare("update tweets set account_id = ? where id = ?").run(
+			"acct_primary",
+			"tweet_001",
+		);
+		listHomeTimelineViaBirdMock.mockResolvedValueOnce({
+			data: [
+				{
+					id: "tweet_001",
+					author_id: "42",
+					text: "same canonical tweet, another account timeline",
+					created_at: "2026-04-26T13:43:34.000Z",
+					public_metrics: { like_count: 12 },
+				},
+			],
+			includes: {
+				users: [{ id: "42", username: "sam", name: "Sam" }],
+			},
+			meta: { result_count: 1 },
+		});
+		const { syncHomeTimeline } = await import("./timeline-live");
+
+		await syncHomeTimeline({
+			account: "acct_studio",
+			limit: 5,
+			refresh: true,
+		});
+
+		expect(
+			db.prepare("select account_id from tweets where id = ?").get("tweet_001"),
+		).toEqual({ account_id: "acct_primary" });
+		expect(
+			db
+				.prepare(
+					"select account_id, kind, source from tweet_account_edges where tweet_id = ? and account_id = ?",
+				)
+				.get("tweet_001", "acct_studio"),
+		).toEqual({
+			account_id: "acct_studio",
+			kind: "home",
+			source: "bird",
+		});
+		expect(
+			listTimelineItems({
+				resource: "home",
+				account: "acct_studio",
+				search: "canonical",
+				limit: 5,
+			}),
+		).toEqual([
+			expect.objectContaining({
+				id: "tweet_001",
+				accountId: "acct_studio",
+			}),
+		]);
+	});
+});

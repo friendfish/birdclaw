@@ -68,6 +68,15 @@ matches. Fuzzy identity prompts such as `blacksmith guy` search significant
 terms and can rank a profile from bio `@handle`, domain, and company-phrase
 evidence even when the literal phrase was not in the DM.
 
+For "find the people from X" tasks, prefer:
+
+```bash
+birdclaw whois "github guy" --current-affiliation github --exclude-domain-only --no-xurl-fallback
+```
+
+That keeps current affiliation/bio/history evidence ahead of plain profile
+links and separates ecosystem mentions from likely staff/company matches.
+
 ## Influence score
 
 Influence is a derived ranking signal that starts with follower count and folds in:

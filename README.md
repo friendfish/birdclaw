@@ -17,7 +17,7 @@ Status: WIP. Real and usable. Not done. Expect schema churn, transport gaps, and
 
 ### Local data + storage
 
-- one shared SQLite DB for multiple accounts
+- one shared SQLite DB for multiple accounts, with canonical tweets/profiles and account-scoped timeline/collection edges
 - FTS5 search over tweets and DMs
 - archive autodiscovery on macOS
 - archive import for tweets, likes, profiles, and full DMs
@@ -260,7 +260,7 @@ Notes:
 - `actions.transport` accepts `auto`, `bird`, or `xurl`
 - `bird` mode uses your local `bird` CLI and caches its mentions output into birdclaw's canonical store
 - filters still work in `xurl` mode; filtered payloads are rebuilt from the local canonical store after sync
-- `sync likes`, `sync bookmarks`, `sync timeline`, and `sync mention-threads` store live results in the same local timeline table, so `search tweets`, `search tweets --liked`, and `search tweets --bookmarked` work across archive and live data
+- `sync likes`, `sync bookmarks`, `sync timeline`, and `sync mention-threads` store live results in the canonical local store; per-account home/mention/like/bookmark membership is kept as edges so shared tweets do not clobber account ownership
 
 ### Research bookmarks and threads
 
@@ -278,6 +278,7 @@ pnpm cli search dms "prototype" --json
 pnpm cli search dms "layout" --min-followers 1000 --min-influence-score 120 --sort influence --json
 pnpm cli search dms "blacksmith" --context 4 --resolve-profiles --expand-urls --no-xurl-fallback --json
 pnpm cli whois "blacksmith guy" --context 4 --no-xurl-fallback --json
+pnpm cli whois "github guy" --current-affiliation github --exclude-domain-only --no-xurl-fallback
 pnpm cli whois "blacksmith" --tweets --context 4 --no-xurl-fallback --json
 pnpm cli dms sync --limit 50 --refresh --json
 pnpm cli dms list --refresh --limit 10 --json
@@ -295,7 +296,12 @@ time, and bios are indexed for `@handles`, domains, and company phrases.
 `whois` uses that profile context plus DM context and cached URL expansion to
 return typed evidence such as `profile_bio`, `profile_url`, `profile_bio_url`,
 `affiliation`, `bio_handle`, `bio_domain`, `bio_company`, `profile_history`,
-`dm_context`, and `expanded_url`.
+`dm_context`, and `expanded_url`. It keeps a derived `identity_search_index`
+for fast local profile-evidence lookups, ranks current affiliation and bio
+identity evidence above plain domains, and groups human output into likely
+affiliated, ecosystem, link-only, and DM-context buckets. Use
+`--affiliation`, `--current-affiliation`, and `--exclude-domain-only` when you
+want "GitHub people" rather than anyone with a `github.com` link.
 
 ### AI inbox
 
@@ -399,6 +405,8 @@ data/profile_snapshots.jsonl
 data/profile_bio_entities.jsonl
 data/tweets/YYYY.jsonl
 data/tweets/unknown.jsonl
+data/timeline_edges/home.jsonl
+data/timeline_edges/mention.jsonl
 data/collections/likes.jsonl
 data/collections/bookmarks.jsonl
 data/dms/conversations.jsonl
@@ -407,7 +415,7 @@ data/moderation/blocks.jsonl
 data/moderation/mutes.jsonl
 ```
 
-Tweets are sharded by year for human browsing and yearly analysis. Collection-only tweets whose real creation date is unknown go into `data/tweets/unknown.jsonl` instead of pretending they belong to 1970. DMs are sharded by year with `conversation_id` in each row; this keeps Git fast while preserving conversation membership. Likes and bookmarks are stored as collection edges in `data/collections` and mirrored into the timeline rows for current query compatibility.
+Tweets are sharded by year for human browsing and yearly analysis. Collection-only tweets whose real creation date is unknown go into `data/tweets/unknown.jsonl` instead of pretending they belong to 1970. Timeline membership is stored in `data/timeline_edges`; likes and bookmarks are stored as account-scoped collection edges in `data/collections`. DMs are sharded by year with `conversation_id` in each row; this keeps Git fast while preserving conversation membership.
 
 Use `backup sync` when the target is a private Git repo. It pulls first, merge-imports the remote backup into local SQLite, exports the local union back into text shards, commits, and pushes.
 

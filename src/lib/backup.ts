@@ -259,6 +259,18 @@ function getExportRowSets(db: Database.Database) {
 			),
 		},
 		{
+			logicalName: "tweet_account_edges",
+			rows: rowsForQuery(
+				db,
+				`
+        select account_id, tweet_id, kind, first_seen_at, last_seen_at,
+          seen_count, source, raw_json, updated_at
+        from tweet_account_edges
+        order by kind, account_id, last_seen_at, tweet_id
+        `,
+			),
+		},
+		{
 			logicalName: "dm_conversations",
 			rows: rowsForQuery(
 				db,
@@ -382,6 +394,15 @@ function buildShards(db: Database.Database) {
 					addRows(shards, `data/collections/${kind}.jsonl`, [row]);
 				}
 				break;
+			case "tweet_account_edges":
+				for (const row of rowSet.rows) {
+					const kind =
+						row.kind === "home" || row.kind === "mention"
+							? row.kind
+							: "unknown";
+					addRows(shards, `data/timeline_edges/${kind}.jsonl`, [row]);
+				}
+				break;
 			case "dm_conversations":
 				addRows(shards, "data/dms/conversations.jsonl", rowSet.rows);
 				break;
@@ -491,15 +512,17 @@ function computeCounts(files: BackupFileManifest[]) {
 				? "tweets"
 				: second === "collections"
 					? `collections_${third?.replace(/\.jsonl$/, "") ?? "unknown"}`
-					: second === "dms" && third === "conversations.jsonl"
-						? "dm_conversations"
-						: second === "dms"
-							? "dm_messages"
-							: second === "moderation"
-								? third?.replace(/\.jsonl$/, "") || "moderation"
-								: second === "actions"
-									? third?.replace(/\.jsonl$/, "") || "actions"
-									: second?.replace(/\.jsonl$/, "") || "unknown";
+					: second === "timeline_edges"
+						? `timeline_edges_${third?.replace(/\.jsonl$/, "") ?? "unknown"}`
+						: second === "dms" && third === "conversations.jsonl"
+							? "dm_conversations"
+							: second === "dms"
+								? "dm_messages"
+								: second === "moderation"
+									? third?.replace(/\.jsonl$/, "") || "moderation"
+									: second === "actions"
+										? third?.replace(/\.jsonl$/, "") || "actions"
+										: second?.replace(/\.jsonl$/, "") || "unknown";
 		counts[key] = (counts[key] ?? 0) + file.rows;
 	}
 	return counts;
@@ -527,6 +550,8 @@ data/profile_snapshots.jsonl
 data/profile_bio_entities.jsonl
 data/tweets/YYYY.jsonl
 data/tweets/unknown.jsonl
+data/timeline_edges/home.jsonl
+data/timeline_edges/mention.jsonl
 data/collections/likes.jsonl
 data/collections/bookmarks.jsonl
 data/dms/conversations.jsonl
@@ -535,7 +560,7 @@ data/moderation/blocks.jsonl
 data/moderation/mutes.jsonl
 \`\`\`
 
-Tweets are sharded by creation year. Collection-only tweets whose creation date is unknown live in \`data/tweets/unknown.jsonl\`. DMs are sharded by year and keep \`conversation_id\` in each row.
+Tweets are sharded by creation year. Collection-only tweets whose creation date is unknown live in \`data/tweets/unknown.jsonl\`. Timeline edges keep account-scoped home/mention membership separate from canonical tweet content. DMs are sharded by year and keep \`conversation_id\` in each row.
 
 Never commit live tokens, browser cookies, raw SQLite WAL/SHM sidecars, or temporary cache files here.
 `,
@@ -948,6 +973,7 @@ function clearBackupImportData(db: Database.Database) {
 	db.exec(`
     delete from ai_scores;
     delete from tweet_actions;
+    delete from tweet_account_edges;
     delete from tweet_collections;
     delete from blocks;
     delete from mutes;
@@ -998,6 +1024,7 @@ export async function importBackup({
 		profileBioEntities,
 		tweets,
 		collections,
+		timelineEdges,
 		conversations,
 		messages,
 		blocks,
@@ -1012,6 +1039,7 @@ export async function importBackup({
 		readRows((file) => file === "data/profile_bio_entities.jsonl"),
 		readRows((file) => file.startsWith("data/tweets/")),
 		readRows((file) => file.startsWith("data/collections/")),
+		readRows((file) => file.startsWith("data/timeline_edges/")),
 		readRows((file) => file === "data/dms/conversations.jsonl"),
 		readRows(
 			(file) =>
@@ -1291,6 +1319,37 @@ export async function importBackup({
 				"tweet_id",
 				"kind",
 				"collected_at",
+				"source",
+				"raw_json",
+				"updated_at",
+			],
+		);
+		insertRows(
+			db,
+			`
+      insert into tweet_account_edges (
+        account_id, tweet_id, kind, first_seen_at, last_seen_at, seen_count,
+        source, raw_json, updated_at
+      ) values (?, ?, ?, ?, ?, coalesce(?, 1), coalesce(?, 'backup'), coalesce(?, '{}'), ?)
+      on conflict(account_id, tweet_id, kind) do update set
+        first_seen_at = min(tweet_account_edges.first_seen_at, excluded.first_seen_at),
+        last_seen_at = max(tweet_account_edges.last_seen_at, excluded.last_seen_at),
+        seen_count = max(tweet_account_edges.seen_count, excluded.seen_count),
+        source = coalesce(nullif(excluded.source, ''), tweet_account_edges.source),
+        raw_json = case
+          when excluded.raw_json not in ('', '{}', 'null') then excluded.raw_json
+          else tweet_account_edges.raw_json
+        end,
+        updated_at = max(tweet_account_edges.updated_at, excluded.updated_at)
+      `,
+			timelineEdges,
+			[
+				"account_id",
+				"tweet_id",
+				"kind",
+				"first_seen_at",
+				"last_seen_at",
+				"seen_count",
 				"source",
 				"raw_json",
 				"updated_at",

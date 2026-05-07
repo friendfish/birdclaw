@@ -23,6 +23,7 @@ describe("whois", () => {
       delete from dm_messages;
       delete from dm_conversations;
       delete from tweets;
+      delete from identity_search_index;
       delete from profile_bio_entities;
       delete from profile_snapshots;
       delete from profile_affiliations;
@@ -157,6 +158,45 @@ describe("whois", () => {
 		);
 	}
 
+	function insertGithubIdentityFixtures() {
+		const db = getNativeDb();
+		db.exec(`
+      insert into profiles (
+        id, handle, display_name, bio, followers_count, avatar_hue, url, created_at
+      ) values
+        ('profile_github_staff', 'staffer', 'GitHub Staffer', 'Developer advocacy at @github', 2000, 12, 'https://example.com/staffer', '2020-01-01T00:00:00.000Z'),
+        ('profile_github_star', 'starperson', 'Star Person', 'Security researcher and GitHub Star. DevRel @snyksec', 5000, 13, 'https://example.com/star', '2020-01-01T00:00:00.000Z'),
+        ('profile_github_link', 'linkperson', 'Link Person', 'Maintainer', 8000, 14, 'https://github.com/linkperson', '2020-01-01T00:00:00.000Z');
+
+      insert into dm_conversations (
+        id, account_id, participant_profile_id, title, last_message_at, unread_count, needs_reply
+      ) values
+        ('dm_github_staff', 'acct_primary', 'profile_github_staff', 'GitHub Staffer', '2026-05-04T00:00:00.000Z', 0, 0),
+        ('dm_github_star', 'acct_primary', 'profile_github_star', 'Star Person', '2026-05-05T00:00:00.000Z', 0, 0),
+        ('dm_github_link', 'acct_primary', 'profile_github_link', 'Link Person', '2026-05-06T00:00:00.000Z', 0, 0);
+
+      insert into profile_affiliations (
+        subject_profile_id, organization_profile_id, organization_name,
+        organization_handle, badge_url, url, label, source, is_active,
+        first_seen_at, last_seen_at, raw_json, updated_at
+      ) values (
+        'profile_github_staff', 'profile_org_github', 'GitHub',
+        'github', null, 'https://twitter.com/github', 'GitHub', 'fixture', 1,
+        '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z',
+        '{"label":"GitHub"}', '2026-05-01T00:00:00.000Z'
+      );
+
+      insert into profile_bio_entities (
+        profile_id, kind, value, source, is_active, first_seen_at, last_seen_at, raw_json
+      ) values
+        ('profile_github_staff', 'handle', '@github', 'bio', 1, '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', '{}'),
+        ('profile_github_staff', 'company_phrase', 'github', 'bio_handle', 1, '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', '{}'),
+        ('profile_github_star', 'handle', '@GitHub', 'bio', 1, '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', '{}'),
+        ('profile_github_star', 'company_phrase', 'GitHub', 'bio_handle', 1, '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', '{}'),
+        ('profile_github_link', 'domain', 'github.com', 'profile_url', 1, '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', '{}');
+    `);
+	}
+
 	afterEach(() => {
 		resetDatabaseForTests();
 		resetBirdclawPathsForTests();
@@ -253,6 +293,97 @@ describe("whois", () => {
 				}),
 			]),
 		});
+	});
+
+	it("ranks affiliation evidence above GitHub profile links and buckets ambiguity", async () => {
+		insertGithubIdentityFixtures();
+		const { formatWhois, runWhois } = await import("./whois");
+
+		const result = await runWhois("github guy", {
+			resolveProfiles: false,
+			expandUrls: false,
+			context: 1,
+			limit: 6,
+		});
+
+		expect(
+			result.candidates.map((candidate) => candidate.conversation.id),
+		).toEqual(
+			expect.arrayContaining([
+				"dm_github_staff",
+				"dm_github_star",
+				"dm_github_link",
+			]),
+		);
+		expect(result.candidates[0]).toMatchObject({
+			category: "likely_affiliated",
+			conversation: expect.objectContaining({ id: "dm_github_staff" }),
+			profileEvidence: expect.arrayContaining([
+				expect.objectContaining({ kind: "affiliation", value: "GitHub" }),
+			]),
+		});
+		expect(
+			result.candidates.find(
+				(candidate) => candidate.conversation.id === "dm_github_star",
+			)?.category,
+		).toBe("ecosystem");
+		expect(
+			result.candidates.find(
+				(candidate) => candidate.conversation.id === "dm_github_link",
+			)?.category,
+		).toBe("profile_or_link");
+		expect(formatWhois(result)).toContain("Likely affiliated");
+		expect(formatWhois(result)).toContain("Why: current affiliation GitHub");
+	});
+
+	it("explains uncommon evidence kinds for why lines", async () => {
+		const { __test__ } = await import("./whois");
+
+		expect(
+			__test__.explainCandidate({
+				profileEvidence: [
+					{
+						kind: "expanded_url",
+						value: "https://github.com/example",
+						source: "url",
+					},
+				],
+				reasons: ["expanded URL matches query"],
+			} as never),
+		).toBe("expanded URL https://github.com/example");
+		expect(
+			__test__.explainCandidate({
+				profileEvidence: [
+					{ kind: "profile_name", value: "GitHub Person", source: "profile" },
+				],
+				reasons: ["profile matches query"],
+			} as never),
+		).toBe("profile name GitHub Person");
+	});
+
+	it("filters whois candidates by affiliation and domain-only evidence", async () => {
+		insertGithubIdentityFixtures();
+		const { runWhois } = await import("./whois");
+
+		const current = await runWhois("github", {
+			resolveProfiles: false,
+			expandUrls: false,
+			currentAffiliation: "github",
+			limit: 6,
+		});
+		expect(
+			current.candidates.map((candidate) => candidate.conversation.id),
+		).toEqual(["dm_github_staff"]);
+
+		const noDomainOnly = await runWhois("github", {
+			resolveProfiles: false,
+			expandUrls: false,
+			excludeDomainOnly: true,
+			limit: 6,
+		});
+		expect(
+			noDomainOnly.candidates.map((candidate) => candidate.conversation.id),
+		).not.toContain("dm_github_link");
 	});
 
 	it("covers profile scoring helper edge cases", async () => {

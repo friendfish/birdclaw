@@ -75,6 +75,16 @@ export interface ProfileBioEntitiesTable {
 	raw_json: string;
 }
 
+export interface IdentitySearchIndexTable {
+	profile_id: string;
+	kind: string;
+	value: string;
+	normalized_value: string;
+	source: string;
+	weight: number;
+	updated_at: string;
+}
+
 export interface TweetsTable {
 	id: string;
 	account_id: string;
@@ -98,6 +108,18 @@ export interface TweetCollectionsTable {
 	tweet_id: string;
 	kind: "likes" | "bookmarks";
 	collected_at: string | null;
+	source: string;
+	raw_json: string;
+	updated_at: string;
+}
+
+export interface TweetAccountEdgesTable {
+	account_id: string;
+	tweet_id: string;
+	kind: "home" | "mention";
+	first_seen_at: string;
+	last_seen_at: string;
+	seen_count: number;
 	source: string;
 	raw_json: string;
 	updated_at: string;
@@ -169,8 +191,10 @@ export interface BirdclawDatabase {
 	profile_affiliations: ProfileAffiliationsTable;
 	profile_snapshots: ProfileSnapshotsTable;
 	profile_bio_entities: ProfileBioEntitiesTable;
+	identity_search_index: IdentitySearchIndexTable;
 	tweets: TweetsTable;
 	tweet_collections: TweetCollectionsTable;
+	tweet_account_edges: TweetAccountEdgesTable;
 	dm_conversations: DmConversationsTable;
 	dm_messages: DmMessagesTable;
 	tweet_actions: TweetActionsTable;
@@ -267,6 +291,17 @@ const BASE_SCHEMA_SQL = `
     primary key (profile_id, kind, value)
   );
 
+  create table if not exists identity_search_index (
+    profile_id text not null,
+    kind text not null,
+    value text not null,
+    normalized_value text not null,
+    source text not null,
+    weight integer not null,
+    updated_at text not null,
+    primary key (profile_id, kind, value, source)
+  );
+
   create table if not exists tweets (
     id text primary key,
     account_id text not null,
@@ -290,6 +325,19 @@ const BASE_SCHEMA_SQL = `
     tweet_id text not null,
     kind text not null,
     collected_at text,
+    source text not null,
+    raw_json text not null default '{}',
+    updated_at text not null,
+    primary key (account_id, tweet_id, kind)
+  );
+
+  create table if not exists tweet_account_edges (
+    account_id text not null,
+    tweet_id text not null,
+    kind text not null,
+    first_seen_at text not null,
+    last_seen_at text not null,
+    seen_count integer not null default 1,
     source text not null,
     raw_json text not null default '{}',
     updated_at text not null,
@@ -376,6 +424,8 @@ const INDEX_SQL = `
   create index if not exists idx_tweets_quoted on tweets(quoted_tweet_id);
   create index if not exists idx_tweet_collections_kind_account on tweet_collections(kind, account_id, collected_at desc, tweet_id);
   create index if not exists idx_tweet_collections_tweet on tweet_collections(tweet_id);
+  create index if not exists idx_tweet_account_edges_kind_account on tweet_account_edges(kind, account_id, last_seen_at desc, tweet_id);
+  create index if not exists idx_tweet_account_edges_tweet on tweet_account_edges(tweet_id);
   create index if not exists idx_dm_conversations_account on dm_conversations(account_id, last_message_at desc);
   create index if not exists idx_dm_messages_conversation on dm_messages(conversation_id, created_at asc);
   create index if not exists idx_profiles_followers on profiles(followers_count desc);
@@ -385,6 +435,8 @@ const INDEX_SQL = `
   create index if not exists idx_profile_snapshots_profile on profile_snapshots(profile_id, last_seen_at desc);
   create index if not exists idx_profile_bio_entities_profile on profile_bio_entities(profile_id, is_active, last_seen_at desc);
   create index if not exists idx_profile_bio_entities_value on profile_bio_entities(kind, value, is_active);
+  create index if not exists idx_identity_search_index_profile on identity_search_index(profile_id);
+  create index if not exists idx_identity_search_index_value on identity_search_index(normalized_value, kind, weight desc);
   create index if not exists idx_blocks_account_created on blocks(account_id, created_at desc);
   create index if not exists idx_mutes_account_created on mutes(account_id, created_at desc);
   create index if not exists idx_ai_scores_updated on ai_scores(updated_at desc);
@@ -471,6 +523,23 @@ function ensureTweetCollectionsTable(db: BetterSqlite3.Database) {
   `);
 }
 
+function ensureTweetAccountEdgesTable(db: BetterSqlite3.Database) {
+	db.exec(`
+    create table if not exists tweet_account_edges (
+      account_id text not null,
+      tweet_id text not null,
+      kind text not null,
+      first_seen_at text not null,
+      last_seen_at text not null,
+      seen_count integer not null default 1,
+      source text not null,
+      raw_json text not null default '{}',
+      updated_at text not null,
+      primary key (account_id, tweet_id, kind)
+    );
+  `);
+}
+
 function ensureProfileAffiliationsTable(db: BetterSqlite3.Database) {
 	db.exec(`
     create table if not exists profile_affiliations (
@@ -531,6 +600,21 @@ function ensureProfileBioEntitiesTable(db: BetterSqlite3.Database) {
   `);
 }
 
+function ensureIdentitySearchIndexTable(db: BetterSqlite3.Database) {
+	db.exec(`
+    create table if not exists identity_search_index (
+      profile_id text not null,
+      kind text not null,
+      value text not null,
+      normalized_value text not null,
+      source text not null,
+      weight integer not null,
+      updated_at text not null,
+      primary key (profile_id, kind, value, source)
+    );
+  `);
+}
+
 function backfillTweetCollections(db: BetterSqlite3.Database) {
 	const now = new Date().toISOString();
 	const insert = db.prepare(`
@@ -552,6 +636,28 @@ function backfillTweetCollections(db: BetterSqlite3.Database) {
 	})();
 }
 
+function backfillTweetAccountEdges(db: BetterSqlite3.Database) {
+	const now = new Date().toISOString();
+	db.prepare(`
+    insert or ignore into tweet_account_edges (
+      account_id, tweet_id, kind, first_seen_at, last_seen_at, seen_count,
+      source, raw_json, updated_at
+    )
+    select
+      account_id,
+      id,
+      kind,
+      created_at,
+      created_at,
+      1,
+      'legacy',
+      '{}',
+      ?
+    from tweets
+    where kind in ('home', 'mention')
+  `).run(now);
+}
+
 function ensureSchemaIndexes(db: BetterSqlite3.Database) {
 	db.exec(INDEX_SQL);
 }
@@ -567,14 +673,17 @@ function initDatabase(options: InitDatabaseOptions = {}) {
 		ensureTweetMetadataColumns(nativeDb);
 		ensureProfileAvatarColumns(nativeDb);
 		ensureTweetCollectionsTable(nativeDb);
+		ensureTweetAccountEdgesTable(nativeDb);
 		ensureProfileAffiliationsTable(nativeDb);
 		ensureProfileSnapshotsTable(nativeDb);
 		ensureProfileBioEntitiesTable(nativeDb);
+		ensureIdentitySearchIndexTable(nativeDb);
 		ensureSchemaIndexes(nativeDb);
 		if (options.seedDemoData !== false) {
 			seedDemoData(nativeDb);
 		}
 		backfillTweetCollections(nativeDb);
+		backfillTweetAccountEdges(nativeDb);
 	}
 
 	if (!kyselyDb) {

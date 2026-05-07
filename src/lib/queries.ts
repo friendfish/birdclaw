@@ -235,19 +235,42 @@ function getTimelineQualityReason(
 	return "keep:long-text";
 }
 
+function countTimelineEdges(db: Database.Database, kind: "home" | "mention") {
+	const row = db
+		.prepare(
+			`
+      with timeline_edges as (
+        select account_id, tweet_id, kind
+        from tweet_account_edges
+        where kind = ?
+        union all
+        select legacy.account_id, legacy.id as tweet_id, legacy.kind
+        from tweets legacy
+        where legacy.kind = ?
+          and not exists (
+            select 1
+            from tweet_account_edges edge
+            where edge.account_id = legacy.account_id
+              and edge.tweet_id = legacy.id
+              and edge.kind = legacy.kind
+          )
+      )
+      select count(*) as count
+      from timeline_edges e
+      join tweets t on t.id = e.tweet_id
+      where e.kind = ?
+      `,
+		)
+		.get(kind, kind, kind) as { count: number | bigint } | undefined;
+	return Number(row?.count ?? 0);
+}
+
 export async function getQueryEnvelope(): Promise<QueryEnvelope> {
 	const db = getDb();
+	const nativeDb = getNativeDb();
+	const homeCount = countTimelineEdges(nativeDb, "home");
+	const mentionCount = countTimelineEdges(nativeDb, "mention");
 	const counts = await Promise.all([
-		db
-			.selectFrom("tweets")
-			.select((eb) => eb.fn.countAll().as("count"))
-			.where("kind", "=", "home")
-			.executeTakeFirstOrThrow(),
-		db
-			.selectFrom("tweets")
-			.select((eb) => eb.fn.countAll().as("count"))
-			.where("kind", "=", "mention")
-			.executeTakeFirstOrThrow(),
 		db
 			.selectFrom("dm_conversations")
 			.select((eb) => eb.fn.countAll().as("count"))
@@ -269,13 +292,13 @@ export async function getQueryEnvelope(): Promise<QueryEnvelope> {
 
 	return {
 		stats: {
-			home: Number(counts[0].count),
-			mentions: Number(counts[1].count),
-			dms: Number(counts[2].count),
-			needsReply: Number(counts[3].count),
-			inbox: Number(counts[1].count) + Number(counts[3].count),
+			home: homeCount,
+			mentions: mentionCount,
+			dms: Number(counts[0].count),
+			needsReply: Number(counts[1].count),
+			inbox: mentionCount + Number(counts[1].count),
 		},
-		accounts: counts[4].map((row) => ({
+		accounts: counts[2].map((row) => ({
 			id: row.id,
 			name: row.name,
 			handle: row.handle,
@@ -284,8 +307,8 @@ export async function getQueryEnvelope(): Promise<QueryEnvelope> {
 			isDefault: row.is_default,
 			createdAt: row.created_at,
 		})) satisfies AccountRecord[],
-		archives: counts[5],
-		transport: counts[6],
+		archives: counts[3],
+		transport: counts[4],
 	};
 }
 
@@ -306,20 +329,88 @@ export function listTimelineItems({
 }: TimelineQuery): TimelineItem[] {
 	const db = getNativeDb();
 	const kind = resource === "mentions" ? "mention" : resource;
-	const params: Array<string | number> = [kind];
+	const params: Array<string | number> = [];
 	const normalizedLowQualityThreshold =
 		normalizeLowQualityThreshold(lowQualityThreshold);
+	let timelineEdgesCte = `
+      with timeline_edges as (
+        select account_id, tweet_id, kind
+        from tweet_account_edges
+        where kind = ?
+        union all
+        select legacy.account_id, legacy.id as tweet_id, legacy.kind
+        from tweets legacy
+        where legacy.kind = ?
+          and not exists (
+            select 1
+            from tweet_account_edges edge
+            where edge.account_id = legacy.account_id
+              and edge.tweet_id = legacy.id
+              and edge.kind = legacy.kind
+          )
+      )
+    `;
 	let join = "";
 	let where = "where t.kind = ?";
 	let searchSnippetSelect = "";
 
 	if (likedOnly || bookmarkedOnly) {
-		params.length = 0;
+		if (likedOnly && bookmarkedOnly) {
+			timelineEdgesCte = `
+        with timeline_edges as (
+          select likes.account_id, likes.tweet_id, 'home' as kind
+          from tweet_collections likes
+          join tweet_collections bookmarks
+            on bookmarks.account_id = likes.account_id
+            and bookmarks.tweet_id = likes.tweet_id
+            and bookmarks.kind = 'bookmarks'
+          where likes.kind = 'likes'
+          union all
+          select legacy.account_id, legacy.id as tweet_id, 'home' as kind
+          from tweets legacy
+          where legacy.liked = 1
+            and legacy.bookmarked = 1
+            and not exists (
+              select 1
+              from tweet_collections collection
+              where collection.account_id = legacy.account_id
+                and collection.tweet_id = legacy.id
+                and collection.kind in ('likes', 'bookmarks')
+            )
+        )
+      `;
+		} else {
+			const collectionKind = likedOnly ? "likes" : "bookmarks";
+			const legacyColumn = likedOnly ? "liked" : "bookmarked";
+			timelineEdgesCte = `
+        with timeline_edges as (
+          select account_id, tweet_id, 'home' as kind
+          from tweet_collections
+          where kind = ?
+          union all
+          select legacy.account_id, legacy.id as tweet_id, 'home' as kind
+          from tweets legacy
+          where legacy.${legacyColumn} = 1
+            and not exists (
+              select 1
+              from tweet_collections collection
+              where collection.account_id = legacy.account_id
+                and collection.tweet_id = legacy.id
+                and collection.kind = ?
+            )
+        )
+      `;
+			params.push(collectionKind, collectionKind);
+		}
 		where = "where 1 = 1";
+	} else {
+		params.push(kind, kind);
+		where = "where e.kind = ?";
+		params.push(kind);
 	}
 
 	if (account && account !== "all") {
-		where += " and a.id = ?";
+		where += " and e.account_id = ?";
 		params.push(account);
 	}
 
@@ -357,31 +448,42 @@ export function listTimelineItems({
 		params.push(ftsSearch);
 	}
 
-	if (likedOnly) {
-		where += " and t.liked = 1";
-	}
-
-	if (bookmarkedOnly) {
-		where += " and t.bookmarked = 1";
-	}
-
 	params.push(limit);
 
 	const rows = db
 		.prepare(
 			`
+      ${timelineEdgesCte}
       select
         t.id,
-        t.account_id,
+        e.account_id,
         a.handle as account_handle,
-        t.kind,
+        e.kind,
         t.text,
         t.created_at,
         t.is_replied,
         t.like_count,
         t.media_count,
-        t.bookmarked,
-        t.liked,
+        case
+          when exists (
+            select 1 from tweet_collections collection
+            where collection.account_id = e.account_id
+              and collection.tweet_id = t.id
+              and collection.kind = 'bookmarks'
+          ) then 1
+          when t.account_id = e.account_id and t.bookmarked = 1 then 1
+          else 0
+        end as bookmarked,
+        case
+          when exists (
+            select 1 from tweet_collections collection
+            where collection.account_id = e.account_id
+              and collection.tweet_id = t.id
+              and collection.kind = 'likes'
+          ) then 1
+          when t.account_id = e.account_id and t.liked = 1 then 1
+          else 0
+        end as liked,
         t.entities_json,
         t.media_json,
         t.quoted_tweet_id,
@@ -427,8 +529,9 @@ export function listTimelineItems({
         qp.avatar_url as quoted_avatar_url,
         qp.created_at as quoted_profile_created_at
         ${searchSnippetSelect}
-      from tweets t
-      join accounts a on a.id = t.account_id
+      from timeline_edges e
+      join tweets t on t.id = e.tweet_id
+      join accounts a on a.id = e.account_id
       join profiles p on p.id = t.author_profile_id
       left join tweets rt on rt.id = t.reply_to_id
       left join profiles rp on rp.id = rt.author_profile_id

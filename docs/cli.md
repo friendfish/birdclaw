@@ -333,7 +333,11 @@ URL, bio URLs, location, verified type, first-class affiliations, bio entities,
 profile-history snapshots, DM context, and expanded URLs. `whois` also searches
 significant terms from fuzzy prompts, so `blacksmith guy` can rank a match from
 `@useblacksmith` and `blacksmith.sh` even when the literal phrase was not stored
-in a DM.
+in a DM. Query intent changes ranking: `@github` emphasizes handle and
+affiliation evidence, `github.com` emphasizes URL/domain evidence, and
+`github guy` emphasizes people/org affiliation evidence. Human output explains
+"why this person?" and buckets candidates as likely affiliated, ecosystem,
+profile/link-only, DM context, or other local matches.
 
 Flags:
 
@@ -345,6 +349,9 @@ Flags:
 - `--refresh-profile-cache`
 - `--refresh-url-cache`
 - `--no-xurl-fallback`
+- `--affiliation <query>` - require current/bio/history affiliation evidence
+- `--current-affiliation <query>` - require an active affiliation badge edge
+- `--exclude-domain-only` - drop candidates that only matched domains or URLs
 - `--context <n>`
 - `--limit <n>`
 
@@ -353,6 +360,7 @@ Examples:
 ```bash
 birdclaw whois blacksmith --context 4 --no-xurl-fallback --json
 birdclaw whois "blacksmith guy" --context 4 --no-xurl-fallback --json
+birdclaw whois "github guy" --current-affiliation github --exclude-domain-only
 birdclaw whois blacksmith --tweets --no-xurl-fallback
 ```
 

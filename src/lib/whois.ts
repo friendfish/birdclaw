@@ -1,4 +1,8 @@
 import { getNativeDb } from "./db";
+import {
+	ensureIdentitySearchIndexForDmProfiles,
+	syncIdentitySearchIndexForProfileIds,
+} from "./identity-search-index";
 import { fetchProfileBioEntities } from "./profile-bio-entities";
 import { fetchProfileSnapshots } from "./profile-history";
 import { expandUrlsFromTexts } from "./url-expansion";
@@ -25,11 +29,15 @@ export interface WhoisOptions {
 	xurlFallback?: boolean;
 	context?: number;
 	limit?: number;
+	affiliation?: string;
+	currentAffiliation?: string;
+	excludeDomainOnly?: boolean;
 }
 
 export interface WhoisCandidate {
 	conversation: DmConversationItem;
 	confidence: number;
+	category: WhoisCandidateCategory;
 	reasons: string[];
 	profileEvidence: WhoisEvidenceSignal[];
 	evidence: Array<{
@@ -40,6 +48,13 @@ export interface WhoisCandidate {
 		urlExpansions?: UrlExpansionItem[];
 	}>;
 }
+
+export type WhoisCandidateCategory =
+	| "likely_affiliated"
+	| "ecosystem"
+	| "profile_or_link"
+	| "dm_context"
+	| "other";
 
 export interface WhoisResult {
 	query: string;
@@ -67,6 +82,17 @@ export interface WhoisEvidenceSignal {
 		| "expanded_url";
 	value: string;
 	source: "profile" | "affiliation" | "bio_entity" | "history" | "dm" | "url";
+}
+
+interface WhoisQueryIntent {
+	raw: string;
+	normalized: string;
+	terms: string[];
+	handles: string[];
+	domains: string[];
+	wantsPerson: boolean;
+	wantsAffiliation: boolean;
+	wantsDomain: boolean;
 }
 
 function normalizeQuery(query: string) {
@@ -97,6 +123,58 @@ function getSignificantQueryTerms(query: string) {
 				.filter((term) => term.length >= 3 && !stopwords.has(term)),
 		),
 	);
+}
+
+function getQueryDomains(query: string) {
+	return Array.from(
+		new Set(
+			query
+				.toLowerCase()
+				.match(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/g)
+				?.map((domain) => domain.replace(/^www\./, "")) ?? [],
+		),
+	);
+}
+
+function getQueryHandles(query: string) {
+	return Array.from(
+		new Set(
+			query
+				.match(/@[A-Za-z0-9_]{1,15}\b/g)
+				?.map((handle) => handle.toLowerCase()) ?? [],
+		),
+	);
+}
+
+function getQueryIntent(query: string): WhoisQueryIntent {
+	const normalized = normalizeQuery(query);
+	const domains = getQueryDomains(query);
+	const handles = getQueryHandles(query);
+	const terms = getSignificantQueryTerms(query);
+	const wantsPerson =
+		/\b(guy|person|people|who|someone|staff|employee|devrel|founder|founders)\b/i.test(
+			query,
+		);
+	const wantsDomain =
+		domains.length > 0 ||
+		(/\b(link|url|domain|repo|repository|github\.com)\b/i.test(query) &&
+			!wantsPerson);
+	const wantsAffiliation =
+		handles.length > 0 ||
+		wantsPerson ||
+		/\b(at|from|works?|employee|staff|affiliation|company|org|devrel)\b/i.test(
+			query,
+		);
+	return {
+		raw: query,
+		normalized,
+		terms,
+		handles,
+		domains,
+		wantsPerson,
+		wantsAffiliation,
+		wantsDomain,
+	};
 }
 
 function matchesQueryText(query: string, value: string | undefined | null) {
@@ -309,6 +387,140 @@ function collectProfileEvidence(
 	return signals;
 }
 
+const DOMAIN_ONLY_EVIDENCE = new Set<WhoisEvidenceSignal["kind"]>([
+	"profile_url",
+	"profile_bio_url",
+	"bio_domain",
+	"expanded_url",
+]);
+
+function getEvidenceWeight(
+	signal: WhoisEvidenceSignal,
+	intent: WhoisQueryIntent,
+	profile: ProfileRecord,
+) {
+	const bio = profile.bio.toLowerCase();
+	const ecosystemPenalty =
+		signal.kind === "bio_handle" || signal.kind === "bio_company"
+			? isEcosystemMention(bio, intent)
+			: false;
+	switch (signal.kind) {
+		case "affiliation":
+			return 72;
+		case "bio_handle":
+			return ecosystemPenalty ? 20 : 56;
+		case "bio_company":
+			return ecosystemPenalty ? 16 : 46;
+		case "profile_history":
+			return 36;
+		case "profile_handle":
+			return intent.handles.length > 0 ? 44 : 24;
+		case "profile_name":
+		case "profile_bio":
+			return 24;
+		case "dm_context":
+			return intent.wantsAffiliation ? 12 : 22;
+		case "expanded_url":
+			return intent.wantsDomain ? 26 : 8;
+		case "profile_url":
+		case "profile_bio_url":
+		case "bio_domain":
+			return intent.wantsDomain ? 30 : 8;
+		case "profile_location":
+		case "profile_verified_type":
+			return 8;
+	}
+}
+
+function isEcosystemMention(bio: string, intent: WhoisQueryIntent) {
+	const terms = new Set([
+		...intent.terms,
+		...intent.handles.map((handle) => handle.replace(/^@/, "")),
+	]);
+	for (const term of terms) {
+		const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		if (
+			new RegExp(
+				`\\b${escaped}\\s+(star|stars|sponsor|sponsors|campus expert|expert|partner|alumni)\\b`,
+				"i",
+			).test(bio)
+		) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function hasCurrentAffiliationMatch(
+	profile: ProfileRecord,
+	affiliationQuery: string | undefined,
+) {
+	if (!affiliationQuery?.trim()) {
+		return true;
+	}
+	const normalized = normalizeQuery(affiliationQuery);
+	return (profile.affiliations ?? []).some((affiliation) =>
+		getAffiliationTexts(affiliation).some((text) =>
+			matchesQueryText(normalized, text),
+		),
+	);
+}
+
+function hasAffiliationEvidenceMatch(
+	profile: ProfileRecord,
+	profileEvidence: WhoisEvidenceSignal[],
+	affiliationQuery: string | undefined,
+) {
+	if (!affiliationQuery?.trim()) {
+		return true;
+	}
+	const normalized = normalizeQuery(affiliationQuery);
+	if (hasCurrentAffiliationMatch(profile, affiliationQuery)) {
+		return true;
+	}
+	return profileEvidence.some(
+		(signal) =>
+			(signal.kind === "affiliation" ||
+				signal.kind === "bio_handle" ||
+				signal.kind === "bio_company" ||
+				signal.kind === "profile_history") &&
+			matchesQueryText(normalized, signal.value),
+	);
+}
+
+function hasNonDomainEvidence(profileEvidence: WhoisEvidenceSignal[]) {
+	return profileEvidence.some(
+		(signal) => !DOMAIN_ONLY_EVIDENCE.has(signal.kind),
+	);
+}
+
+function getCandidateCategory(
+	profile: ProfileRecord,
+	profileEvidence: WhoisEvidenceSignal[],
+	intent: WhoisQueryIntent,
+	messageMatched: boolean,
+): WhoisCandidateCategory {
+	if (profileEvidence.some((signal) => signal.kind === "affiliation")) {
+		return "likely_affiliated";
+	}
+	if (
+		profileEvidence.some(
+			(signal) =>
+				signal.kind === "bio_handle" ||
+				signal.kind === "bio_company" ||
+				signal.kind === "profile_history",
+		)
+	) {
+		return isEcosystemMention(profile.bio.toLowerCase(), intent)
+			? "ecosystem"
+			: "likely_affiliated";
+	}
+	if (profileEvidence.some((signal) => DOMAIN_ONLY_EVIDENCE.has(signal.kind))) {
+		return "profile_or_link";
+	}
+	return messageMatched ? "dm_context" : "other";
+}
+
 function scoreCandidate(
 	query: string,
 	conversation: DmConversationItem,
@@ -317,6 +529,7 @@ function scoreCandidate(
 	snapshots: ProfileSnapshot[] = [],
 ) {
 	const normalized = normalizeQuery(query);
+	const intent = getQueryIntent(query);
 	const profile = conversation.participant;
 	const profileEvidence = collectProfileEvidence(
 		normalized,
@@ -351,10 +564,10 @@ function scoreCandidate(
 		.join("\n")
 		.toLowerCase();
 	const reasons: string[] = [];
-	let confidence = 20;
+	let confidence = 0;
 
 	if (!/^id\d+$/.test(conversation.participant.handle)) {
-		confidence += 25;
+		confidence += 18;
 		reasons.push("resolved profile");
 	}
 	if (
@@ -362,22 +575,22 @@ function scoreCandidate(
 		matchesQueryText(normalized, profile.displayName) ||
 		matchesQueryText(normalized, profile.bio)
 	) {
-		confidence += 20;
+		confidence += 18;
 		reasons.push("profile matches query");
 	}
 	if (
 		matchesQueryText(normalized, profile.url) ||
 		profileBioUrls.some((url) => matchesQueryText(normalized, url))
 	) {
-		confidence += 20;
+		confidence += intent.wantsDomain ? 28 : 8;
 		reasons.push("profile URL matches query");
 	}
 	if (profileEvidence.some((signal) => signal.kind === "affiliation")) {
-		confidence += 30;
+		confidence += 40;
 		reasons.push("affiliation matches query");
 	}
 	if (profileEvidence.some((signal) => signal.source === "bio_entity")) {
-		confidence += 25;
+		confidence += 24;
 		reasons.push("bio entity matches query");
 	}
 	if (profileEvidence.some((signal) => signal.source === "history")) {
@@ -388,8 +601,11 @@ function scoreCandidate(
 		confidence += 25;
 		reasons.push("cofounder language");
 	}
-	if (messageTexts.some((text) => matchesQueryText(normalized, text))) {
-		confidence += 15;
+	const messageMatched = messageTexts.some((text) =>
+		matchesQueryText(normalized, text),
+	);
+	if (messageMatched) {
+		confidence += intent.wantsAffiliation ? 10 : 18;
 		reasons.push("message text matches query");
 		profileEvidence.push({
 			kind: "dm_context",
@@ -398,7 +614,7 @@ function scoreCandidate(
 		});
 	}
 	if (expansions.some((item) => matchesQueryText(normalized, item.finalUrl))) {
-		confidence += 15;
+		confidence += intent.wantsDomain ? 20 : 8;
 		reasons.push("expanded URL matches query");
 		for (const item of expansions) {
 			pushMatchEvidence(
@@ -411,8 +627,26 @@ function scoreCandidate(
 		}
 	}
 
+	for (const signal of profileEvidence) {
+		confidence += getEvidenceWeight(signal, intent, profile);
+	}
+	const category = getCandidateCategory(
+		profile,
+		profileEvidence,
+		intent,
+		messageMatched,
+	);
+	if (category === "ecosystem") {
+		confidence -= 24;
+		reasons.push("ecosystem mention, not direct affiliation");
+	}
+	if (category === "profile_or_link" && intent.wantsAffiliation) {
+		confidence -= 18;
+	}
+
 	return {
-		confidence: Math.min(100, confidence),
+		confidence: Math.max(0, Math.min(100, confidence)),
+		category,
 		reasons: reasons.length > 0 ? reasons : ["local DM match"],
 		profileEvidence,
 	};
@@ -460,33 +694,14 @@ function findProfileEvidenceConversationIds(
 	if (terms.length === 0) {
 		return [];
 	}
+	const db = getNativeDb();
+	ensureIdentitySearchIndexForDmProfiles(db, account);
 	const clauses: string[] = [];
 	const params: Array<string | number> = [];
 	for (const term of terms) {
 		const pattern = `%${term}%`;
-		clauses.push(`
-      lower(p.handle) like ?
-      or lower(p.display_name) like ?
-      or lower(p.bio) like ?
-      or lower(coalesce(p.location, '')) like ?
-      or lower(coalesce(p.url, '')) like ?
-      or lower(coalesce(p.verified_type, '')) like ?
-      or lower(coalesce(pa.organization_name, '')) like ?
-      or lower(coalesce(pa.organization_handle, '')) like ?
-      or lower(coalesce(pa.label, '')) like ?
-      or lower(coalesce(pa.url, '')) like ?
-      or lower(coalesce(pbe.value, '')) like ?
-      or lower(coalesce(ps.handle, '')) like ?
-      or lower(coalesce(ps.display_name, '')) like ?
-      or lower(coalesce(ps.bio, '')) like ?
-      or lower(coalesce(ps.location, '')) like ?
-      or lower(coalesce(ps.url, '')) like ?
-      or lower(coalesce(ps.verified_type, '')) like ?
-      or lower(coalesce(ps.affiliations_json, '')) like ?
-    `);
-		for (let index = 0; index < 18; index += 1) {
-			params.push(pattern);
-		}
+		clauses.push("isi.normalized_value like ?");
+		params.push(pattern);
 	}
 
 	let accountClause = "";
@@ -496,21 +711,16 @@ function findProfileEvidenceConversationIds(
 	}
 	params.push(limit);
 
-	const rows = getNativeDb()
+	const rows = db
 		.prepare(
 			`
-      select c.id
+      select c.id, max(isi.weight) as max_weight
       from dm_conversations c
-      join profiles p on p.id = c.participant_profile_id
-      left join profile_affiliations pa
-        on pa.subject_profile_id = p.id and pa.is_active = 1
-      left join profile_bio_entities pbe
-        on pbe.profile_id = p.id and pbe.is_active = 1
-      left join profile_snapshots ps on ps.profile_id = p.id
+      join identity_search_index isi on isi.profile_id = c.participant_profile_id
       where (${clauses.map((clause) => `(${clause})`).join(" or ")})
         ${accountClause}
       group by c.id
-      order by c.last_message_at desc
+      order by max_weight desc, c.last_message_at desc
       limit ?
       `,
 		)
@@ -594,6 +804,10 @@ export async function runWhois(
 			limit,
 		);
 	}
+	syncIdentitySearchIndexForProfileIds(
+		getNativeDb(),
+		conversations.map((item) => item.participant.id),
+	);
 
 	const relatedTweets = includeTweets
 		? [
@@ -640,7 +854,7 @@ export async function runWhois(
 	);
 	const snapshotsByProfile = fetchProfileSnapshots(getNativeDb(), profileIds);
 	const candidates = conversations
-		.map((conversation): WhoisCandidate => {
+		.map((conversation): WhoisCandidate | null => {
 			const conversationExpansions = urlExpansions.filter((item) =>
 				getMessageTexts(conversation).some((text) => text.includes(item.url)),
 			);
@@ -652,9 +866,33 @@ export async function runWhois(
 				bioEntitiesByProfile.get(profileId) ?? [],
 				snapshotsByProfile.get(profileId) ?? [],
 			);
+			if (
+				!hasCurrentAffiliationMatch(
+					conversation.participant,
+					options.currentAffiliation,
+				)
+			) {
+				return null;
+			}
+			if (
+				!hasAffiliationEvidenceMatch(
+					conversation.participant,
+					score.profileEvidence,
+					options.affiliation,
+				)
+			) {
+				return null;
+			}
+			if (
+				options.excludeDomainOnly &&
+				!hasNonDomainEvidence(score.profileEvidence)
+			) {
+				return null;
+			}
 			return {
 				conversation,
 				confidence: score.confidence,
+				category: score.category,
 				reasons: score.reasons,
 				profileEvidence: score.profileEvidence,
 				evidence: (conversation.matches ?? []).map((match) => ({
@@ -668,6 +906,7 @@ export async function runWhois(
 				})),
 			};
 		})
+		.filter((candidate): candidate is WhoisCandidate => candidate !== null)
 		.sort((left, right) => {
 			if (right.confidence !== left.confidence) {
 				return right.confidence - left.confidence;
@@ -688,17 +927,89 @@ export async function runWhois(
 	};
 }
 
+const CATEGORY_LABELS: Record<WhoisCandidateCategory, string> = {
+	likely_affiliated: "Likely affiliated",
+	ecosystem: "Ecosystem / role mentions",
+	profile_or_link: "Profile or link matches",
+	dm_context: "DM context matches",
+	other: "Other local matches",
+};
+
+function summarizeSignal(signal: WhoisEvidenceSignal) {
+	switch (signal.kind) {
+		case "affiliation":
+			return `current affiliation ${signal.value}`;
+		case "bio_handle":
+			return `bio handle ${signal.value}`;
+		case "bio_company":
+			return `bio company ${signal.value}`;
+		case "profile_history":
+			return `profile history ${signal.value}`;
+		case "profile_url":
+		case "profile_bio_url":
+		case "bio_domain":
+			return `domain/link ${signal.value}`;
+		case "dm_context":
+			return `DM context`;
+		case "expanded_url":
+			return `expanded URL ${signal.value}`;
+		default:
+			return `${signal.kind.replace(/^profile_/, "profile ")} ${signal.value}`;
+	}
+}
+
+function signalSummaryRank(signal: WhoisEvidenceSignal) {
+	switch (signal.kind) {
+		case "affiliation":
+			return 0;
+		case "bio_handle":
+			return 1;
+		case "bio_company":
+			return 2;
+		case "profile_history":
+			return 3;
+		case "dm_context":
+			return 4;
+		case "expanded_url":
+			return 5;
+		case "profile_url":
+		case "profile_bio_url":
+		case "bio_domain":
+			return 6;
+		default:
+			return 7;
+	}
+}
+
+function explainCandidate(candidate: WhoisCandidate) {
+	const evidence = candidate.profileEvidence
+		.slice()
+		.sort((left, right) => signalSummaryRank(left) - signalSummaryRank(right))
+		.slice(0, 4)
+		.map(summarizeSignal);
+	return evidence.length > 0
+		? evidence.join(" + ")
+		: candidate.reasons.join(", ");
+}
+
 export function formatWhois(result: WhoisResult) {
 	const lines = [`Whois: ${result.query}`];
 	if (result.candidates.length === 0) {
 		lines.push("No matching DM candidates.");
 	} else {
+		let activeCategory: WhoisCandidateCategory | undefined;
 		for (const candidate of result.candidates) {
 			const profile = candidate.conversation.participant;
+			if (activeCategory !== candidate.category) {
+				activeCategory = candidate.category;
+				lines.push("");
+				lines.push(CATEGORY_LABELS[candidate.category]);
+			}
 			lines.push("");
 			lines.push(
 				`${candidate.confidence}% @${profile.handle} (${profile.displayName})`,
 			);
+			lines.push(`Why: ${explainCandidate(candidate)}`);
 			lines.push(`Reasons: ${candidate.reasons.join(", ")}`);
 			lines.push(`Conversation: ${candidate.conversation.id}`);
 			for (const signal of candidate.profileEvidence.slice(0, 5)) {
@@ -728,6 +1039,9 @@ export function formatWhois(result: WhoisResult) {
 
 export const __test__ = {
 	getSignificantQueryTerms,
+	getQueryDomains,
+	getQueryHandles,
+	getQueryIntent,
 	matchesQueryText,
 	getDmSearchQueries,
 	getUrlEntityExpandedUrl,
@@ -736,7 +1050,11 @@ export const __test__ = {
 	getSnapshotAffiliationTexts,
 	getHistoricalSnapshotTexts,
 	collectProfileEvidence,
+	hasCurrentAffiliationMatch,
+	hasAffiliationEvidenceMatch,
+	hasNonDomainEvidence,
 	scoreCandidate,
+	explainCandidate,
 	attachExpansionsToMatches,
 	mergeConversations,
 };

@@ -12,6 +12,7 @@ import type {
 	XurlMentionsResponse,
 	XurlMentionUser,
 } from "./types";
+import { upsertTweetAccountEdge } from "./tweet-account-edges";
 import { ensureStubProfileForXUser, upsertProfileFromXUser } from "./x-profile";
 import { listMentionsViaXurl, lookupUsersByHandles } from "./xurl";
 
@@ -161,6 +162,7 @@ function mergeMentionsIntoLocalStore(
 	db: Database.Database,
 	accountId: string,
 	payload: XurlMentionsResponse,
+	source: MentionsDataSource,
 ) {
 	const usersById = new Map(
 		(payload.includes?.users ?? []).map((user) => [user.id, user]),
@@ -173,9 +175,9 @@ function mergeMentionsIntoLocalStore(
       entities_json, media_json, quoted_tweet_id
     ) values (?, ?, ?, 'mention', ?, ?, 0, null, ?, ?, 0, 0, ?, '[]', null)
     on conflict(id) do update set
-      account_id = excluded.account_id,
+      account_id = tweets.account_id,
       author_profile_id = excluded.author_profile_id,
-      kind = excluded.kind,
+      kind = case when tweets.kind = 'home' then tweets.kind else excluded.kind end,
       text = excluded.text,
       created_at = excluded.created_at,
       like_count = excluded.like_count,
@@ -189,6 +191,7 @@ function mergeMentionsIntoLocalStore(
 	);
 
 	const writePayload = db.transaction(() => {
+		const seenAt = new Date().toISOString();
 		for (const tweet of payload.data) {
 			const author =
 				usersById.get(tweet.author_id) ??
@@ -210,6 +213,14 @@ function mergeMentionsIntoLocalStore(
 				getMediaCount(tweet),
 				JSON.stringify(toLocalEntities(tweet)),
 			);
+			upsertTweetAccountEdge(db, {
+				accountId,
+				tweetId: tweet.id,
+				kind: "mention",
+				source,
+				seenAt,
+				rawJson: JSON.stringify(tweet),
+			});
 			replaceTweetFts(db, tweet.id, tweet.text);
 		}
 	});
@@ -408,7 +419,7 @@ async function exportMentionsViaCachedLiveSource({
 						all: fetchAll,
 						parsedMaxPages,
 					});
-		mergeMentionsIntoLocalStore(db, resolvedAccount.accountId, payload);
+		mergeMentionsIntoLocalStore(db, resolvedAccount.accountId, payload, mode);
 		writeSyncCache(cacheKey, payload, db);
 
 		if (

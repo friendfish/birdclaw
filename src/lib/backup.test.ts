@@ -36,6 +36,7 @@ function clearData() {
 	db.exec(`
     delete from ai_scores;
     delete from tweet_actions;
+    delete from tweet_account_edges;
     delete from tweet_collections;
     delete from blocks;
     delete from mutes;
@@ -130,6 +131,12 @@ function seedBackupFixture() {
       ('acct_primary', 'tweet_2025', 'likes', null, 'bird', '{"id":"tweet_2025"}', '2025-01-03T00:00:00.000Z'),
       ('acct_primary', 'tweet_unknown_date', 'likes', null, 'archive', '{"like":{"tweetId":"tweet_unknown_date"}}', '2025-01-03T00:00:00.000Z');
 
+    insert into tweet_account_edges (
+      account_id, tweet_id, kind, first_seen_at, last_seen_at, seen_count, source,
+      raw_json, updated_at
+    ) values
+      ('acct_primary', 'tweet_2024', 'home', '2024-12-31T23:59:00.000Z', '2024-12-31T23:59:00.000Z', 1, 'archive', '{}', '2025-01-03T00:00:00.000Z');
+
     insert into tweets_fts (tweet_id, text) values
       ('tweet_2024', 'Shipping text backups'),
       ('tweet_2025', 'Saved useful thing'),
@@ -218,6 +225,7 @@ describe("text backup", () => {
 			profile_snapshots: 1,
 			profile_bio_entities: 2,
 			tweets: 3,
+			timeline_edges_home: 1,
 			collections_bookmarks: 1,
 			collections_likes: 2,
 			dm_conversations: 1,
@@ -340,6 +348,7 @@ describe("text backup", () => {
 			profile_snapshots: 1,
 			profile_bio_entities: 2,
 			tweets: 3,
+			timeline_edges_home: 1,
 			collections_bookmarks: 1,
 			collections_likes: 2,
 			dm_conversations: 1,
