@@ -1,5 +1,10 @@
+import { getNativeDb } from "./db";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
 import type { UrlExpansionItem } from "./types";
+import {
+	normalizeUrlExpansionForIndex,
+	upsertUrlExpansion,
+} from "./url-expansion-store";
 
 const SUCCESS_CACHE_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 const FAILURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -66,6 +71,11 @@ function toExpansionItem(
 	};
 }
 
+function persistExpansion(item: UrlExpansionItem) {
+	const db = getNativeDb({ seedDemoData: false });
+	upsertUrlExpansion(db, normalizeUrlExpansionForIndex(item));
+}
+
 async function fetchExpansion(
 	url: string,
 	fetchImpl: typeof fetch,
@@ -124,16 +134,23 @@ export async function expandUrls(
 					? (options.successMaxAgeMs ?? SUCCESS_CACHE_TTL_MS)
 					: (options.failureMaxAgeMs ?? FAILURE_CACHE_TTL_MS);
 			if (isFresh(cached.updatedAt, maxAge)) {
-				results.push(
-					toExpansionItem(url, cached.value, "cache", cached.updatedAt),
+				const item = toExpansionItem(
+					url,
+					cached.value,
+					"cache",
+					cached.updatedAt,
 				);
+				persistExpansion(item);
+				results.push(item);
 				continue;
 			}
 		}
 
 		const value = await fetchExpansion(url, fetchImpl, timeoutMs);
 		const updatedAt = writeSyncCache(cacheKeyForUrl(url), value);
-		results.push(toExpansionItem(url, value, "network", updatedAt));
+		const item = toExpansionItem(url, value, "network", updatedAt);
+		persistExpansion(item);
+		results.push(item);
 	}
 
 	return results;

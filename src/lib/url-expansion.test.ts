@@ -59,6 +59,17 @@ describe("URL expansion cache", () => {
 			}),
 		]);
 		expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+		const { getNativeDb } = await import("./db");
+		expect(
+			getNativeDb()
+				.prepare(
+					"select final_url from url_expansions where short_url = 'https://t.co/uEKD3k4vep'",
+				)
+				.get(),
+		).toEqual({
+			final_url: "https://docs.blacksmith.sh/blacksmith-testbox/overview",
+		});
 	});
 
 	it("falls back from HEAD to GET and caches misses", async () => {
