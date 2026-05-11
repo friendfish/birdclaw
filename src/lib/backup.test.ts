@@ -38,6 +38,8 @@ function clearData() {
     delete from tweet_actions;
     delete from tweet_account_edges;
     delete from tweet_collections;
+    delete from link_occurrences;
+    delete from url_expansions;
     delete from blocks;
     delete from mutes;
     delete from dm_fts;
@@ -252,6 +254,19 @@ describe("text backup", () => {
 		resetDatabaseForTests();
 		resetBirdclawPathsForTests();
 		process.env.BIRDCLAW_HOME = makeTempDir("birdclaw-backup-dst-");
+		const staleDb = getNativeDb();
+		staleDb.exec(`
+      insert into url_expansions (
+        short_url, expanded_url, final_url, status, source, updated_at
+      ) values (
+        'https://t.co/stale', 'https://x.com/stale/status/1', 'https://x.com/stale/status/1', 'hit', 'network', '2026-04-01T00:00:00.000Z'
+      );
+      insert into link_occurrences (
+        source_kind, source_id, source_position, short_url, created_at
+      ) values (
+        'dm', 'deleted-message', 0, 'https://t.co/stale', '2026-04-01T00:00:00.000Z'
+      );
+    `);
 		const imported = await importBackup({ repoPath, mode: "replace" });
 		const after = getBackupDatabaseFingerprint();
 
@@ -259,6 +274,24 @@ describe("text backup", () => {
 		expect(imported.validation?.ok).toBe(true);
 		expect(after).toEqual(before);
 		expect(imported.fingerprint).toEqual(before);
+		expect(
+			(
+				staleDb
+					.prepare("select count(*) as count from link_occurrences")
+					.get() as {
+					count: number;
+				}
+			).count,
+		).toBe(0);
+		expect(
+			(
+				staleDb
+					.prepare("select count(*) as count from url_expansions")
+					.get() as {
+					count: number;
+				}
+			).count,
+		).toBe(0);
 
 		const validation = await validateBackup(repoPath);
 		expect(validation.ok).toBe(true);

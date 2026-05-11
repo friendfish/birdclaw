@@ -29,6 +29,7 @@ import {
 } from "#/lib/config";
 import { syncDirectMessagesViaCachedBird } from "#/lib/dms-live";
 import { listInboxItems, scoreInbox } from "#/lib/inbox";
+import { backfillLinkIndex, searchLinks } from "#/lib/link-index";
 import { syncMentionThreads } from "#/lib/mention-threads-live";
 import { exportMentionItems } from "#/lib/mentions-export";
 import {
@@ -71,6 +72,24 @@ function print(data: unknown, asJson: boolean) {
 
 function printError(error: string) {
 	console.error(JSON.stringify({ error }));
+}
+
+function formatLinkSearchItems(items: ReturnType<typeof searchLinks>) {
+	return items
+		.map((item) => {
+			const linked = item.linkedTweet
+				? ` -> @${item.linkedTweet.author.handle}/${item.linkedTweet.id}: ${item.linkedTweet.text}`
+				: ` -> ${item.expansion.finalUrl}`;
+			const source =
+				item.occurrence.sourceKind === "dm"
+					? `dm ${item.occurrence.direction ?? ""}`.trim()
+					: "tweet";
+			const participant = item.participant
+				? ` @${item.participant.handle}`
+				: "";
+			return `${item.occurrence.createdAt} ${source}${participant}: ${item.occurrence.shortUrl}${linked}`;
+		})
+		.join("\n");
 }
 
 function parseNonNegativeIntegerOption(
@@ -362,6 +381,100 @@ searchCommand
 			xurlFallback: options.xurlFallback,
 		});
 		print(items, program.opts().json ?? false);
+	});
+
+searchCommand
+	.command("links <query>")
+	.description("Search indexed short links, expansions, and linked tweets")
+	.option("--account <accountIdOrHandle>", "Account id or handle")
+	.option("--since <date>", "Include links created at or after this date")
+	.option("--until <date>", "Include links created before this date")
+	.option("--source <kind>", "dm or tweet")
+	.option("--direction <direction>", "inbound or outbound")
+	.option("--participant <value>", "DM participant handle or name")
+	.option("--media <type>", "image, video, or gif")
+	.option("--limit <n>", "Limit results", "20")
+	.action(async (query, options) => {
+		await autoUpdateBeforeRead();
+		const items = searchLinks(query, {
+			account: options.account,
+			since: options.since,
+			until: options.until,
+			source:
+				options.source === "tweet"
+					? "tweet"
+					: options.source === "dm"
+						? "dm"
+						: undefined,
+			direction:
+				options.direction === "inbound"
+					? "inbound"
+					: options.direction === "outbound"
+						? "outbound"
+						: undefined,
+			participant: options.participant,
+			mediaType:
+				options.media === "image" ||
+				options.media === "video" ||
+				options.media === "gif"
+					? options.media
+					: undefined,
+			limit: Number(options.limit),
+		});
+		if (program.opts().json) {
+			print(items, true);
+			return;
+		}
+		console.log(formatLinkSearchItems(items));
+	});
+
+const linksCommand = program
+	.command("links")
+	.description("Build and inspect the short-link index");
+
+linksCommand
+	.command("backfill")
+	.description("Backfill indexed URL occurrences and t.co expansions")
+	.option("--all-urls", "Index all URLs, not only t.co")
+	.option("--source <kind>", "dm or tweet")
+	.option("--refresh-url-cache", "Re-expand URLs already in the index")
+	.option("--limit <n>", "Limit network/cache expansions for this run")
+	.option("--concurrency <n>", "Concurrent URL expansion workers", "12")
+	.option("--timeout-ms <n>", "Per-redirect fetch timeout", "15000")
+	.action(async (options) => {
+		const limit = parseNonNegativeIntegerOption(options.limit, "--limit");
+		if (options.limit !== undefined && limit === undefined) {
+			return;
+		}
+		const concurrency = parseNonNegativeIntegerOption(
+			options.concurrency,
+			"--concurrency",
+		);
+		if (concurrency === undefined) {
+			return;
+		}
+		const timeoutMs = parseNonNegativeIntegerOption(
+			options.timeoutMs,
+			"--timeout-ms",
+		);
+		if (timeoutMs === undefined) {
+			return;
+		}
+		const result = await backfillLinkIndex({
+			includeAllUrls: Boolean(options.allUrls),
+			refresh: Boolean(options.refreshUrlCache),
+			source:
+				options.source === "tweet"
+					? "tweet"
+					: options.source === "dm"
+						? "dm"
+						: undefined,
+			limit,
+			concurrency,
+			timeoutMs,
+		});
+		await autoSyncAfterWrite();
+		print(result, program.opts().json ?? false);
 	});
 
 program

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Add a first-class short-link index for `t.co` URLs, including `links backfill` and `search links` so DM shares can be found through expanded tweet text, authors, dates, and media filters.
+
 ## 0.4.0 - 2026-05-09
 
 ### Added

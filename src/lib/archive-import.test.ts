@@ -295,6 +295,19 @@ describe("archive import", () => {
 		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
 		createdDirs.push(homeDir);
 		process.env.BIRDCLAW_HOME = homeDir;
+		const staleDb = getNativeDb();
+		staleDb.exec(`
+      insert into url_expansions (
+        short_url, expanded_url, final_url, status, source, updated_at
+      ) values (
+        'https://t.co/stale', 'https://x.com/stale/status/1', 'https://x.com/stale/status/1', 'hit', 'network', '2026-04-01T00:00:00.000Z'
+      );
+      insert into link_occurrences (
+        source_kind, source_id, source_position, short_url, created_at
+      ) values (
+        'dm', 'deleted-message', 0, 'https://t.co/stale', '2026-04-01T00:00:00.000Z'
+      );
+    `);
 
 		const result = await importArchive(archivePath);
 		const db = getNativeDb();
@@ -723,6 +736,20 @@ describe("archive import", () => {
 					.get() as { count: number }
 			).count,
 		).toBe(1);
+		expect(
+			(
+				db.prepare("select count(*) as count from link_occurrences").get() as {
+					count: number;
+				}
+			).count,
+		).toBe(0);
+		expect(
+			(
+				db.prepare("select count(*) as count from url_expansions").get() as {
+					count: number;
+				}
+			).count,
+		).toBe(0);
 	});
 
 	it("handles missing profile data, split likes files, and group dm edge cases", async () => {

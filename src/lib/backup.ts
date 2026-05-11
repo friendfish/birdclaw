@@ -971,6 +971,8 @@ function clearBackupImportData(db: Database) {
     delete from tweet_actions;
     delete from tweet_account_edges;
     delete from tweet_collections;
+    delete from link_occurrences;
+    delete from url_expansions;
     delete from blocks;
     delete from mutes;
     delete from dm_fts;

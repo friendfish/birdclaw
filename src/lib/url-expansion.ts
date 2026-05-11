@@ -3,6 +3,7 @@ import type { UrlExpansionItem } from "./types";
 
 const SUCCESS_CACHE_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 const FAILURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
 const URL_REGEX = /https?:\/\/[^\s<>"')\]]+/g;
 
 interface CachedUrlExpansion {
@@ -19,6 +20,7 @@ export interface ExpandUrlsOptions {
 	successMaxAgeMs?: number;
 	failureMaxAgeMs?: number;
 	fetchImpl?: typeof fetch;
+	timeoutMs?: number;
 }
 
 function cacheKeyForUrl(url: string) {
@@ -67,19 +69,24 @@ function toExpansionItem(
 async function fetchExpansion(
 	url: string,
 	fetchImpl: typeof fetch,
+	timeoutMs: number,
 ): Promise<CachedUrlExpansion> {
+	const requestInit = {
+		redirect: "follow",
+		headers: { "user-agent": "birdclaw/0.3 url-expander" },
+		signal: AbortSignal.timeout(timeoutMs),
+	} satisfies RequestInit;
+
 	try {
 		let response = await fetchImpl(url, {
+			...requestInit,
 			method: "HEAD",
-			redirect: "follow",
-			headers: { "user-agent": "birdclaw/0.3 url-expander" },
 		});
 
 		if (!response.url || response.url === url || response.status >= 400) {
 			response = await fetchImpl(url, {
+				...requestInit,
 				method: "GET",
-				redirect: "follow",
-				headers: { "user-agent": "birdclaw/0.3 url-expander" },
 			});
 		}
 
@@ -106,6 +113,7 @@ export async function expandUrls(
 ): Promise<UrlExpansionItem[]> {
 	const uniqueUrls = Array.from(new Set(urls));
 	const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+	const timeoutMs = options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
 	const results: UrlExpansionItem[] = [];
 
 	for (const url of uniqueUrls) {
@@ -123,7 +131,7 @@ export async function expandUrls(
 			}
 		}
 
-		const value = await fetchExpansion(url, fetchImpl);
+		const value = await fetchExpansion(url, fetchImpl, timeoutMs);
 		const updatedAt = writeSyncCache(cacheKeyForUrl(url), value);
 		results.push(toExpansionItem(url, value, "network", updatedAt));
 	}

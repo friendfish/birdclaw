@@ -183,6 +183,40 @@ export interface UrlExpansionItem {
 	updatedAt: string;
 }
 
+export interface LinkOccurrenceItem {
+	sourceKind: "dm" | "tweet";
+	sourceId: string;
+	sourcePosition: number;
+	shortUrl: string;
+	accountId?: string | null;
+	conversationId?: string | null;
+	direction?: string | null;
+	createdAt: string;
+}
+
+export interface LinkIndexItem {
+	shortUrl: string;
+	expandedUrl: string;
+	finalUrl: string;
+	status: "hit" | "miss" | "error";
+	expandedTweetId?: string | null;
+	expandedHandle?: string | null;
+	title?: string | null;
+	description?: string | null;
+	error?: string | null;
+	source: string;
+	updatedAt: string;
+}
+
+export interface LinkSearchItem {
+	occurrence: LinkOccurrenceItem;
+	expansion: LinkIndexItem;
+	sourceText: string;
+	sourceAuthor?: ProfileRecord | null;
+	participant?: ProfileRecord | null;
+	linkedTweet?: TimelineItem | null;
+}
+
 export interface DmSearchMatchItem {
 	message: DmMessageItem;
 	before: DmMessageItem[];

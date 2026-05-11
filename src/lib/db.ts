@@ -185,6 +185,31 @@ export interface SyncCacheTable {
 	updated_at: string;
 }
 
+export interface UrlExpansionsTable {
+	short_url: string;
+	expanded_url: string;
+	final_url: string;
+	status: string;
+	expanded_tweet_id: string | null;
+	expanded_handle: string | null;
+	title: string | null;
+	description: string | null;
+	error: string | null;
+	source: string;
+	updated_at: string;
+}
+
+export interface LinkOccurrencesTable {
+	source_kind: "dm" | "tweet";
+	source_id: string;
+	source_position: number;
+	short_url: string;
+	account_id: string | null;
+	conversation_id: string | null;
+	direction: string | null;
+	created_at: string;
+}
+
 export interface BirdclawDatabase {
 	accounts: AccountsTable;
 	profiles: ProfilesTable;
@@ -202,6 +227,8 @@ export interface BirdclawDatabase {
 	mutes: MutesTable;
 	ai_scores: AiScoresTable;
 	sync_cache: SyncCacheTable;
+	url_expansions: UrlExpansionsTable;
+	link_occurrences: LinkOccurrencesTable;
 }
 
 let nativeDb: Database | undefined;
@@ -407,6 +434,32 @@ const BASE_SCHEMA_SQL = `
     updated_at text not null
   );
 
+  create table if not exists url_expansions (
+    short_url text primary key,
+    expanded_url text not null,
+    final_url text not null,
+    status text not null,
+    expanded_tweet_id text,
+    expanded_handle text,
+    title text,
+    description text,
+    error text,
+    source text not null,
+    updated_at text not null
+  );
+
+  create table if not exists link_occurrences (
+    source_kind text not null,
+    source_id text not null,
+    source_position integer not null,
+    short_url text not null,
+    account_id text,
+    conversation_id text,
+    direction text,
+    created_at text not null,
+    primary key (source_kind, source_id, source_position, short_url)
+  );
+
   create virtual table if not exists tweets_fts using fts5(
     tweet_id unindexed,
     text
@@ -441,6 +494,13 @@ const INDEX_SQL = `
   create index if not exists idx_mutes_account_created on mutes(account_id, created_at desc);
   create index if not exists idx_ai_scores_updated on ai_scores(updated_at desc);
   create index if not exists idx_sync_cache_updated on sync_cache(updated_at desc);
+  create index if not exists idx_url_expansions_expanded on url_expansions(expanded_url);
+  create index if not exists idx_url_expansions_tweet on url_expansions(expanded_tweet_id);
+  create index if not exists idx_url_expansions_handle on url_expansions(expanded_handle);
+  create index if not exists idx_link_occurrences_url on link_occurrences(short_url);
+  create index if not exists idx_link_occurrences_created on link_occurrences(created_at desc);
+  create index if not exists idx_link_occurrences_account on link_occurrences(account_id, created_at desc);
+  create index if not exists idx_link_occurrences_direction on link_occurrences(direction, created_at desc);
 `;
 
 function getColumnNames(db: Database, tableName: string): Set<string> {
@@ -612,6 +672,36 @@ function ensureIdentitySearchIndexTable(db: Database) {
   `);
 }
 
+function ensureLinkIndexTables(db: Database) {
+	db.exec(`
+    create table if not exists url_expansions (
+      short_url text primary key,
+      expanded_url text not null,
+      final_url text not null,
+      status text not null,
+      expanded_tweet_id text,
+      expanded_handle text,
+      title text,
+      description text,
+      error text,
+      source text not null,
+      updated_at text not null
+    );
+
+    create table if not exists link_occurrences (
+      source_kind text not null,
+      source_id text not null,
+      source_position integer not null,
+      short_url text not null,
+      account_id text,
+      conversation_id text,
+      direction text,
+      created_at text not null,
+      primary key (source_kind, source_id, source_position, short_url)
+    );
+  `);
+}
+
 function backfillTweetCollections(db: Database) {
 	const now = new Date().toISOString();
 	const insert = db.prepare(`
@@ -675,6 +765,7 @@ function initDatabase(options: InitDatabaseOptions = {}) {
 		ensureProfileSnapshotsTable(nativeDb);
 		ensureProfileBioEntitiesTable(nativeDb);
 		ensureIdentitySearchIndexTable(nativeDb);
+		ensureLinkIndexTables(nativeDb);
 		ensureSchemaIndexes(nativeDb);
 		if (options.seedDemoData !== false) {
 			seedDemoData(nativeDb);

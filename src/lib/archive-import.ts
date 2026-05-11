@@ -288,6 +288,8 @@ function clearImportedData() {
     delete from tweet_actions;
     delete from tweet_account_edges;
     delete from tweet_collections;
+    delete from link_occurrences;
+    delete from url_expansions;
     delete from dm_fts;
     delete from tweets_fts;
     delete from dm_messages;
