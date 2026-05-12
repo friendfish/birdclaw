@@ -30,6 +30,8 @@ Status: WIP. Real and usable. Not done. Expect schema churn, transport gaps, and
 - profile-change history, affiliation badge edges, and extracted bio entities for local identity lookups
 - local avatar cache
 - local media cache root under `~/.birdclaw`
+- live syncers persist tweet media variants so `media fetch` can pull originals from `pbs.twimg.com` and `video.twimg.com` on a separate schedule
+- `media fetch` reuses bytes already extracted by `import archive` before falling back to CDN
 
 ### Web UI
 
@@ -77,7 +79,7 @@ Status: WIP. Real and usable. Not done. Expect schema churn, transport gaps, and
 ## Still In Progress
 
 - broader resumable live sync beyond the targeted paths already wired
-- fuller media fetch pipeline
+- thumbnail generation on top of the originals cache
 - richer multi-account UX
 - more complete transport coverage
 - more archive edge-case handling
@@ -117,24 +119,49 @@ export BIRDCLAW_HOME=/path/to/custom/root
 ### Media fetch
 
 `birdclaw media fetch` fills the local originals cache at
-`~/.birdclaw/media/originals` for tweet image URLs already stored in
-`tweets.media_json`.
+`~/.birdclaw/media/originals/<media_key>.<ext>` for tweet media URLs already
+stored in `tweets.media_json`. Images come from `pbs.twimg.com`, videos and
+animated GIFs from `video.twimg.com` (highest-bitrate mp4 variant; HLS-only
+media is skipped).
+
+Live syncers (`sync mentions`, `sync mention-threads`, `sync likes`, `sync
+bookmarks`, `sync timeline`) persist `media_json` with `variants[]` ride-along
+metadata so `media fetch` has URLs to download from. Archive-imported tweets
+already carry that shape. Before falling back to HTTP, `media fetch` looks for
+bytes already extracted by `import archive` under
+`~/.birdclaw/media/originals/archive/tweets/<tweetId>/` and copies those into
+the canonical path; reuses are counted in the JSON output as
+`reused_from_archive` and never spend CDN bandwidth.
 
 Legal posture: this is a respectful client-rendering cache, not a scraper. The
-command never enumerates, crawls, or derives Twitter/X CDN URLs. It only fetches
-`pbs.twimg.com` image URLs that birdclaw already has from an archive or API/live
-sync record, skips files that already exist locally, sends a birdclaw user agent,
-paces requests sequentially by default, caps optional parallelism at five, backs
-off on `429`, and relies on the local file cache for idempotency.
+command never enumerates, crawls, or derives Twitter/X CDN URLs. It only
+fetches URLs that birdclaw already has from an archive or API/live sync
+record, skips files that already exist locally, sends a birdclaw user agent,
+paces image requests sequentially by default, caps optional image parallelism
+at five, runs video downloads serially with their own `--video-pacing-ms`,
+streams response bodies to a `.tmp` file with `Range: bytes=<size>-` resume,
+caps each file at `--max-bytes` (100MB default), backs off on `429`, and
+relies on the local file cache for idempotency.
 
-Video downloads from `video.twimg.com`, thumbnail generation, and automatic
-invocation from sync commands are intentionally left out. Run it separately,
-for example from cron or launchd every few hours:
+Thumbnail generation and automatic invocation from sync commands are
+intentionally left out. Run it separately, for example from cron or launchd
+every few hours:
 
 ```bash
 birdclaw media fetch --json
 birdclaw media fetch --dry-run --limit 20
+birdclaw media fetch --include-video --video-pacing-ms 1500 --max-bytes 209715200 --json
+birdclaw media fetch --no-include-video --parallel 3 --pacing-ms 250 --json
 ```
+
+Notes:
+
+- `--include-video` is on by default; pass `--no-include-video` for images
+  only
+- `--kind`, `--since`, and `--limit` scope which tweet rows are inspected
+- `--parallel` applies to image fetches only; video fetches stay serial
+- JSON output reports `images_fetched`, `videos_fetched`, `gifs_fetched`,
+  `reused_from_archive`, and per-kind byte counters
 
 ## Requirements
 
