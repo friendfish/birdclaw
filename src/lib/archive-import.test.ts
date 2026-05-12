@@ -1,11 +1,18 @@
 // @vitest-environment node
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { __test__, importArchive } from "./archive-import";
-import { resetBirdclawPathsForTests } from "./config";
+import { getBirdclawPaths, resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 import {
 	getQueryEnvelope,
@@ -280,6 +287,42 @@ function makeWeirdArchive() {
 	return archivePath;
 }
 
+function makeMediaArchive() {
+	const root = mkdtempSync(path.join(os.tmpdir(), "birdclaw-archive-media-"));
+	const archiveDir = path.join(root, "sample", "data");
+	mkdirSync(path.join(archiveDir, "tweets_media"), { recursive: true });
+	mkdirSync(path.join(archiveDir, "direct_messages_media"), {
+		recursive: true,
+	});
+	mkdirSync(path.join(archiveDir, "profile_media"), { recursive: true });
+
+	writeFileSync(
+		path.join(archiveDir, "account.js"),
+		'window.YTD.account.part0 = [{ "account": { "accountId": "25401953", "username": "steipete" } }]',
+	);
+	writeFileSync(
+		path.join(
+			archiveDir,
+			"tweets_media",
+			"1727738789982839193-F_opG9tXYAACOd3.jpg",
+		),
+		"tweet-media",
+	);
+	writeFileSync(
+		path.join(archiveDir, "direct_messages_media", "m1-demo.png"),
+		"dm-media",
+	);
+	writeFileSync(
+		path.join(archiveDir, "profile_media", "profile-banner.jpg"),
+		"profile-media",
+	);
+
+	const archivePath = path.join(root, "archive.zip");
+	execFileSync("zip", ["-qr", archivePath, "sample"], { cwd: root });
+	createdDirs.push(root);
+	return archivePath;
+}
+
 describe("archive import", () => {
 	afterEach(() => {
 		resetDatabaseForTests();
@@ -349,6 +392,55 @@ describe("archive import", () => {
 		expect(liked.map((item) => item.text)).toEqual(["liked archive item"]);
 		expect(bookmarked.map((item) => item.text)).toEqual(["saved archive item"]);
 	}, 30000);
+
+
+	it("extracts archive media files into media originals", async () => {
+		const archivePath = makeMediaArchive();
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		const result = await importArchive(archivePath);
+		const { mediaOriginalsDir } = getBirdclawPaths();
+		const tweetMediaPath = path.join(
+			mediaOriginalsDir,
+			"archive",
+			"tweets",
+			"1727738789982839193",
+			"1727738789982839193-F_opG9tXYAACOd3.jpg",
+		);
+		const dmMediaPath = path.join(
+			mediaOriginalsDir,
+			"archive",
+			"dms",
+			"m1",
+			"m1-demo.png",
+		);
+		const profileMediaPath = path.join(
+			mediaOriginalsDir,
+			"archive",
+			"profile",
+			"profile",
+			"profile-banner.jpg",
+		);
+		const tweetMediaMtime = statSync(tweetMediaPath).mtimeMs;
+
+		expect(result.counts.mediaFiles).toEqual({
+			tweets: 1,
+			dms: 1,
+			community: 0,
+			profile: 1,
+			deleted: 0,
+			moments: 0,
+			dmGroup: 0,
+		});
+		expect(readFileSync(tweetMediaPath, "utf8")).toBe("tweet-media");
+		expect(readFileSync(dmMediaPath, "utf8")).toBe("dm-media");
+		expect(readFileSync(profileMediaPath, "utf8")).toBe("profile-media");
+
+		await importArchive(archivePath);
+		expect(statSync(tweetMediaPath).mtimeMs).toBe(tweetMediaMtime);
+	});
 
 	it("covers parsing helpers and fallback normalizers", () => {
 		expect(__test__.normalizeArchivePath("data\\tweets.js")).toBe(

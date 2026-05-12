@@ -1,6 +1,17 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import {
+	createWriteStream,
+	existsSync,
+	mkdirSync,
+	renameSync,
+	statSync,
+	unlinkSync,
+} from "node:fs";
+import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
+import { getBirdclawPaths } from "./config";
 import { getNativeDb } from "./db";
 
 const execFileAsync = promisify(execFile);
@@ -29,10 +40,33 @@ interface ImportedArchiveSummary {
 		dmConversations: number;
 		dmMessages: number;
 		profiles: number;
+		mediaFiles: ArchiveMediaFileCounts;
 	};
 }
 
 type ArchiveRecord = Record<string, unknown>;
+type ArchiveMediaKind =
+	| "tweets"
+	| "dms"
+	| "community"
+	| "profile"
+	| "deleted"
+	| "moments"
+	| "dmGroup";
+type ArchiveMediaFileCounts = Record<ArchiveMediaKind, number>;
+
+const ARCHIVE_MEDIA_DIRECTORIES: Array<{
+	directory: string;
+	kind: ArchiveMediaKind;
+}> = [
+	{ directory: "tweets_media", kind: "tweets" },
+	{ directory: "direct_messages_media", kind: "dms" },
+	{ directory: "community_tweet_media", kind: "community" },
+	{ directory: "deleted_tweets_media", kind: "deleted" },
+	{ directory: "profile_media", kind: "profile" },
+	{ directory: "moments_tweets_media", kind: "moments" },
+	{ directory: "direct_messages_group_media", kind: "dmGroup" },
+];
 
 function normalizeArchivePath(value: string) {
 	return value.replaceAll("\\", "/");
@@ -75,6 +109,23 @@ async function listArchiveEntries(archivePath: string) {
 		.split("\n")
 		.map((item) => item.trim())
 		.filter((item) => item.length > 0);
+}
+
+async function listArchiveEntryDetails(archivePath: string) {
+	const stdout = await runUnzip(
+		archivePath,
+		["-Z", "-l", archivePath],
+		1024 * 1024 * 64,
+	);
+	return stdout
+		.split("\n")
+		.map((line) => line.trim().split(/\s+/))
+		.filter((parts) => parts.length >= 10 && /^[-d]/.test(parts[0] ?? ""))
+		.map((parts) => ({
+			path: parts.slice(9).join(" "),
+			size: Number(parts[3] ?? 0),
+		}))
+		.filter((entry) => entry.path.length > 0 && Number.isFinite(entry.size));
 }
 
 async function readArchiveEntry(archivePath: string, entryPath: string) {
@@ -293,6 +344,105 @@ function inferProfileFromDirectory(
 	const handle = match?.handle?.replace(/^@/, "") || `id${userId}`;
 	const displayName = match?.displayName || handle;
 	return { handle, displayName };
+}
+
+function createArchiveMediaFileCounts(): ArchiveMediaFileCounts {
+	return {
+		tweets: 0,
+		dms: 0,
+		community: 0,
+		profile: 0,
+		deleted: 0,
+		moments: 0,
+		dmGroup: 0,
+	};
+}
+
+function getArchiveMediaKind(entryPath: string) {
+	const normalized = normalizeArchivePath(entryPath);
+	if (normalized.endsWith("/")) return undefined;
+	return ARCHIVE_MEDIA_DIRECTORIES.find(({ directory }) =>
+		normalized.includes(`/data/${directory}/`),
+	);
+}
+
+function getArchiveMediaOwnerId(entryPath: string) {
+	const fileName = path.posix.basename(normalizeArchivePath(entryPath));
+	const separator = fileName.indexOf("-");
+	return separator > 0 ? fileName.slice(0, separator) : "unknown";
+}
+
+function getArchiveMediaDestination(entryPath: string, kind: ArchiveMediaKind) {
+	const { mediaOriginalsDir } = getBirdclawPaths();
+	const normalized = normalizeArchivePath(entryPath);
+	const fileName = path.posix.basename(normalized);
+	return path.join(
+		mediaOriginalsDir,
+		"archive",
+		kind,
+		getArchiveMediaOwnerId(normalized),
+		fileName,
+	);
+}
+
+function needsArchiveMediaCopy(destinationPath: string, size: number) {
+	if (!existsSync(destinationPath)) return true;
+	return statSync(destinationPath).size !== size;
+}
+
+async function copyArchiveEntryToFile(
+	archivePath: string,
+	entryPath: string,
+	destinationPath: string,
+) {
+	mkdirSync(path.dirname(destinationPath), { recursive: true });
+	const temporaryPath = `${destinationPath}.${process.pid}.${randomUUID()}.tmp`;
+	const child = spawn("unzip", ["-p", archivePath, entryPath], {
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	let stderr = "";
+	child.stderr.setEncoding("utf8");
+	child.stderr.on("data", (chunk) => {
+		stderr += String(chunk);
+	});
+	const exit = new Promise<number | null>((resolve, reject) => {
+		child.on("error", reject);
+		child.on("close", resolve);
+	});
+
+	try {
+		await pipeline(child.stdout, createWriteStream(temporaryPath));
+		const exitCode = await exit;
+		if (exitCode !== 0) {
+			throw new Error(
+				`Failed to extract ${entryPath}: ${stderr.trim() || `exit ${String(exitCode)}`}`,
+			);
+		}
+		renameSync(temporaryPath, destinationPath);
+	} catch (error) {
+		child.kill();
+		if (existsSync(temporaryPath)) {
+			unlinkSync(temporaryPath);
+		}
+		throw error;
+	}
+}
+
+async function extractArchiveMediaFiles(archivePath: string) {
+	const counts = createArchiveMediaFileCounts();
+	for (const entry of await listArchiveEntryDetails(archivePath)) {
+		const mediaKind = getArchiveMediaKind(entry.path);
+		if (!mediaKind) continue;
+
+		counts[mediaKind.kind] += 1;
+		const destinationPath = getArchiveMediaDestination(
+			entry.path,
+			mediaKind.kind,
+		);
+		if (!needsArchiveMediaCopy(destinationPath, entry.size)) continue;
+		await copyArchiveEntryToFile(archivePath, entry.path, destinationPath);
+	}
+	return counts;
 }
 
 function clearImportedData() {
@@ -760,6 +910,8 @@ export async function importArchive(
 		bookmarkCount += bookmarks.length;
 	}
 
+	const mediaFileCounts = await extractArchiveMediaFiles(archivePath);
+
 	if (tweetRows.some((tweet) => tweet.authorProfileId === "profile_unknown")) {
 		profiles.set("profile_unknown", {
 			id: "profile_unknown",
@@ -937,6 +1089,7 @@ export async function importArchive(
 			dmConversations: conversations.size,
 			dmMessages: dmMessages.length,
 			profiles: profiles.size,
+			mediaFiles: mediaFileCounts,
 		},
 	};
 }
