@@ -323,6 +323,84 @@ function makeMediaArchive() {
 	return archivePath;
 }
 
+function makeMediaVariantsArchive() {
+	const root = mkdtempSync(
+		path.join(os.tmpdir(), "birdclaw-archive-variants-"),
+	);
+	const archiveDir = path.join(root, "sample", "data");
+	mkdirSync(archiveDir, { recursive: true });
+
+	writeFileSync(
+		path.join(archiveDir, "account.js"),
+		'window.YTD.account.part0 = [{ "account": { "accountId": "25401953", "username": "steipete" } }]',
+	);
+	writeFileSync(
+		path.join(archiveDir, "tweets.js"),
+		`window.YTD.tweets.part0 = [
+  {
+    "tweet": {
+      "id_str": "video-1",
+      "created_at": "Tue Jun 03 19:32:20 +0000 2025",
+      "full_text": "video",
+      "extended_entities": {
+        "media": [{
+          "media_url_https": "https://pbs.twimg.com/video-thumb.jpg",
+          "type": "video",
+          "sizes": { "large": { "w": 1920, "h": 1080 } },
+          "video_info": {
+            "duration_millis": 46947,
+            "variants": [
+              { "bitrate": "832000", "content_type": "video/mp4", "url": "https://video.twimg.com/640.mp4" },
+              { "content_type": "application/x-mpegURL", "url": "https://video.twimg.com/playlist.m3u8" },
+              { "bitrate": "2176000", "content_type": "video/mp4", "url": "https://video.twimg.com/1280.mp4" }
+            ]
+          }
+        }]
+      }
+    }
+  },
+  {
+    "tweet": {
+      "id_str": "gif-1",
+      "created_at": "Tue Jun 03 19:33:20 +0000 2025",
+      "full_text": "gif",
+      "extended_entities": {
+        "media": [{
+          "media_url_https": "https://pbs.twimg.com/gif-thumb.jpg",
+          "type": "animated_gif",
+          "video_info": {
+            "variants": [
+              { "bitrate": "256000", "content_type": "video/mp4", "url": "https://video.twimg.com/gif.mp4" }
+            ]
+          }
+        }]
+      }
+    }
+  },
+  {
+    "tweet": {
+      "id_str": "photo-1",
+      "created_at": "Tue Jun 03 19:34:20 +0000 2025",
+      "full_text": "photo",
+      "extended_entities": {
+        "media": [{
+          "media_url_https": "https://pbs.twimg.com/photo.jpg",
+          "type": "photo",
+          "sizes": { "large": { "w": 1200, "h": 800 } },
+          "ext_alt_text": "Photo alt"
+        }]
+      }
+    }
+  }
+]`,
+	);
+
+	const archivePath = path.join(root, "archive.zip");
+	execFileSync("zip", ["-qr", archivePath, "sample"], { cwd: root });
+	createdDirs.push(root);
+	return archivePath;
+}
+
 describe("archive import", () => {
 	afterEach(() => {
 		resetDatabaseForTests();
@@ -440,6 +518,70 @@ describe("archive import", () => {
 
 		await importArchive(archivePath);
 		expect(statSync(tweetMediaPath).mtimeMs).toBe(tweetMediaMtime);
+	});
+
+	it("imports archive video variants into tweet media json", async () => {
+		const archivePath = makeMediaVariantsArchive();
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		await importArchive(archivePath);
+		const rows = getNativeDb()
+			.prepare("select id, media_json from tweets order by id")
+			.all() as Array<{ id: string; media_json: string }>;
+		const mediaByTweet = new Map(
+			rows.map((row) => [row.id, JSON.parse(row.media_json)]),
+		);
+
+		expect(mediaByTweet.get("video-1")).toEqual([
+			{
+				url: "https://pbs.twimg.com/video-thumb.jpg",
+				type: "video",
+				altText: undefined,
+				thumbnailUrl: "https://pbs.twimg.com/video-thumb.jpg",
+				width: 1920,
+				height: 1080,
+				durationMs: 46947,
+				variants: [
+					{
+						url: "https://video.twimg.com/1280.mp4",
+						contentType: "video/mp4",
+						bitRate: 2176000,
+					},
+					{
+						url: "https://video.twimg.com/640.mp4",
+						contentType: "video/mp4",
+						bitRate: 832000,
+					},
+				],
+			},
+		]);
+		expect(mediaByTweet.get("gif-1")).toEqual([
+			{
+				url: "https://pbs.twimg.com/gif-thumb.jpg",
+				type: "gif",
+				altText: undefined,
+				thumbnailUrl: "https://pbs.twimg.com/gif-thumb.jpg",
+				variants: [
+					{
+						url: "https://video.twimg.com/gif.mp4",
+						contentType: "video/mp4",
+						bitRate: 256000,
+					},
+				],
+			},
+		]);
+		expect(mediaByTweet.get("photo-1")).toEqual([
+			{
+				url: "https://pbs.twimg.com/photo.jpg",
+				type: "image",
+				altText: "Photo alt",
+				thumbnailUrl: "https://pbs.twimg.com/photo.jpg",
+				width: 1200,
+				height: 800,
+			},
+		]);
 	});
 
 	it("covers parsing helpers and fallback normalizers", () => {

@@ -178,6 +178,11 @@ function getTweetMediaCount(tweet: Record<string, unknown>) {
 	return Math.max(entitiesMedia.length, extendedMedia.length);
 }
 
+function toFiniteNumber(value: unknown) {
+	const number = Number(value);
+	return Number.isFinite(number) ? number : undefined;
+}
+
 function extractTweetEntities(tweet: Record<string, unknown>) {
 	const entities = asRecord(tweet.entities);
 	const urls = asArray<Record<string, unknown>>(entities?.urls)
@@ -237,6 +242,61 @@ function extractTweetEntities(tweet: Record<string, unknown>) {
 	};
 }
 
+function archiveMediaType(value: unknown) {
+	const type = String(value ?? "image");
+	return type === "photo"
+		? "image"
+		: type === "video" || type === "animated_gif"
+			? type === "animated_gif"
+				? "gif"
+				: "video"
+			: "unknown";
+}
+
+function archiveMediaSize(entry: Record<string, unknown>) {
+	const sizes = asRecord(entry.sizes);
+	const large = asRecord(sizes?.large);
+	const largeWidth = toFiniteNumber(large?.w ?? large?.width);
+	const largeHeight = toFiniteNumber(large?.h ?? large?.height);
+	if (largeWidth !== undefined && largeHeight !== undefined) {
+		return { width: largeWidth, height: largeHeight };
+	}
+
+	return Object.values(sizes ?? {})
+		.map((size) => asRecord(size))
+		.map((size) => ({
+			width: toFiniteNumber(size?.w ?? size?.width),
+			height: toFiniteNumber(size?.h ?? size?.height),
+		}))
+		.filter(
+			(size): size is { width: number; height: number } =>
+				size.width !== undefined && size.height !== undefined,
+		)
+		.sort(
+			(left, right) => right.width * right.height - left.width * left.height,
+		)[0];
+}
+
+function archiveMp4Variants(entry: Record<string, unknown>) {
+	const videoInfo = asRecord(entry.video_info);
+	return asArray<Record<string, unknown>>(videoInfo?.variants)
+		.filter(
+			(variant) =>
+				variant.content_type === "video/mp4" && typeof variant.url === "string",
+		)
+		.map((variant) => {
+			const bitRate = toFiniteNumber(variant.bitrate ?? variant.bit_rate);
+			return {
+				url: String(variant.url),
+				contentType: String(variant.content_type),
+				...(bitRate !== undefined ? { bitRate } : {}),
+			};
+		})
+		.sort(
+			(left, right) => Number(right.bitRate ?? 0) - Number(left.bitRate ?? 0),
+		);
+}
+
 function extractTweetMedia(tweet: Record<string, unknown>) {
 	const extendedEntities = asRecord(tweet.extended_entities);
 	const entities = asRecord(tweet.entities);
@@ -254,22 +314,20 @@ function extractTweetMedia(tweet: Record<string, unknown>) {
 			const thumbnailUrl = String(
 				entry.media_url_https ?? entry.media_url ?? url,
 			);
-			const type = String(entry.type ?? "image");
+			const videoInfo = asRecord(entry.video_info);
+			const durationMs = toFiniteNumber(videoInfo?.duration_millis);
+			const variants = archiveMp4Variants(entry);
 			return {
 				url,
-				type:
-					type === "photo"
-						? "image"
-						: type === "video" || type === "animated_gif"
-							? type === "animated_gif"
-								? "gif"
-								: "video"
-							: "unknown",
+				type: archiveMediaType(entry.type),
 				altText:
 					typeof entry.ext_alt_text === "string"
 						? entry.ext_alt_text
 						: undefined,
 				thumbnailUrl,
+				...archiveMediaSize(entry),
+				...(durationMs !== undefined ? { durationMs } : {}),
+				...(variants.length > 0 ? { variants } : {}),
 			};
 		})
 		.filter((entry) => {
