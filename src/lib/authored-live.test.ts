@@ -53,6 +53,15 @@ function authoredEdgeCount(tweetId?: string) {
 		.get(...(tweetId ? [tweetId, "authored"] : ["authored"]));
 }
 
+function authoredCursor(accountId = "acct_primary") {
+	const row = getNativeDb()
+		.prepare("select value_json from sync_cache where cache_key = ?")
+		.get(`authored:xurl:${accountId}:cursor`) as
+		| { value_json: string }
+		| undefined;
+	return row ? JSON.parse(row.value_json) : null;
+}
+
 describe("live authored tweet sync", () => {
 	beforeEach(() => {
 		mocks.getTransportStatus.mockResolvedValue({
@@ -354,6 +363,79 @@ describe("live authored tweet sync", () => {
 			"25401953",
 			expect.objectContaining({ maxResults: 5 }),
 		);
+	});
+
+	it("links a missing account external id when xurl whoami matches", async () => {
+		makeTempHome();
+		getNativeDb()
+			.prepare("update accounts set external_user_id = null where id = ?")
+			.run("acct_primary");
+		mocks.listUserTweets.mockResolvedValueOnce({
+			items: [],
+			nextToken: null,
+		});
+		const { syncAuthoredTweets } = await import("./authored-live");
+
+		const result = await syncAuthoredTweets({ limit: 5 });
+
+		expect(result).toMatchObject({
+			ok: true,
+			accountId: "acct_primary",
+			userId: "25401953",
+		});
+		expect(
+			getNativeDb()
+				.prepare("select external_user_id from accounts where id = ?")
+				.get("acct_primary"),
+		).toEqual({ external_user_id: "25401953" });
+		expect(mocks.listUserTweets).toHaveBeenCalledWith(
+			"25401953",
+			expect.any(Object),
+		);
+	});
+
+	it("refuses a missing account external id when xurl whoami mismatches without moving the cursor", async () => {
+		makeTempHome();
+		getNativeDb()
+			.prepare(
+				"insert into sync_cache (cache_key, value_json, updated_at) values (?, ?, ?)",
+			)
+			.run(
+				"authored:xurl:acct_studio:cursor",
+				JSON.stringify({
+					sinceId: "600",
+					paginationToken: null,
+					pendingNewestId: null,
+				}),
+				"2026-05-12T12:00:00.000Z",
+			);
+		mocks.lookupAuthenticatedUser.mockResolvedValueOnce({
+			id: "25401953",
+			username: "steipete",
+			name: "Peter Steinberger",
+		});
+		const { syncAuthoredTweets } = await import("./authored-live");
+
+		await expect(
+			syncAuthoredTweets({ account: "acct_studio", limit: 5 }),
+		).rejects.toMatchObject({
+			name: "AuthoredSyncError",
+			exitCode: 4,
+			message: expect.stringContaining(
+				"selected account acct_studio is @birdclaw_lab",
+			),
+		});
+		expect(mocks.listUserTweets).not.toHaveBeenCalled();
+		expect(authoredCursor("acct_studio")).toEqual({
+			sinceId: "600",
+			paginationToken: null,
+			pendingNewestId: null,
+		});
+		expect(
+			getNativeDb()
+				.prepare("select external_user_id from accounts where id = ?")
+				.get("acct_studio"),
+		).toEqual({ external_user_id: null });
 	});
 
 	it("passes until_id without preserving a stale pending pagination token", async () => {

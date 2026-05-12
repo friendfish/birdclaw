@@ -229,6 +229,25 @@ function resolveAccount(db: Database, accountId?: string) {
 	};
 }
 
+function normalizeUsername(value: string) {
+	return value.replace(/^@/, "").trim().toLowerCase();
+}
+
+function persistAccountExternalUserId(
+	db: Database,
+	accountId: string,
+	externalUserId: string,
+) {
+	db.prepare(
+		`
+    update accounts
+    set external_user_id = ?
+    where id = ?
+      and (external_user_id is null or external_user_id = '')
+    `,
+	).run(externalUserId, accountId);
+}
+
 function userFromAuthenticatedPayload(
 	payload: Record<string, unknown> | null,
 ): XurlMentionUser | undefined {
@@ -262,7 +281,7 @@ async function resolveAuthoredIdentity({
 	}
 
 	const resolvedAccount = resolveAccount(db, account);
-	if (account && resolvedAccount.externalUserId) {
+	if (resolvedAccount.externalUserId) {
 		return {
 			...resolvedAccount,
 			userId: resolvedAccount.externalUserId,
@@ -278,6 +297,22 @@ async function resolveAuthoredIdentity({
 			4,
 		);
 	}
+
+	if (
+		normalizeUsername(authenticatedUser.username) !==
+		normalizeUsername(resolvedAccount.username)
+	) {
+		throw new AuthoredSyncError(
+			`xurl is authenticated as @${authenticatedUser.username}, but selected account ${resolvedAccount.accountId} is @${resolvedAccount.username}. Link the account external_user_id or switch xurl login before syncing authored tweets.`,
+			4,
+		);
+	}
+
+	persistAccountExternalUserId(
+		db,
+		resolvedAccount.accountId,
+		authenticatedUser.id,
+	);
 
 	return {
 		...resolvedAccount,
