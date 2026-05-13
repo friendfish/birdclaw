@@ -34,6 +34,8 @@ Most `sync *` commands accept:
 
 Mirror the authenticated user's authored timeline through `xurl`. Retweets are included and stored with their X `referenced_tweets` marker intact. The command resumes from a stored `since_id`; it does not audit old rows or detect deletes.
 
+On a first run with no authored cursor, Birdclaw seeds `since_id` from the newest local archive-backed tweet authored by that account when one exists. Fresh installs with no local baseline full-scan from X and print a stderr cost hint. Pass `--since-id <id>` to override the archive seed deliberately.
+
 ```bash
 birdclaw sync authored --mode xurl --limit 100 --json
 birdclaw sync authored --account acct_primary --mode xurl --limit 100 --json

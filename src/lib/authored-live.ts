@@ -145,6 +145,35 @@ function writeAuthoredCursor(
 	writeSyncCache(cursorKey(accountId), state, db);
 }
 
+function findArchiveAuthoredSinceSeed(db: Database, accountId: string) {
+	const row = db
+		.prepare(
+			`
+    select t.id
+    from tweets t
+    join accounts a on a.id = t.account_id
+    where a.id = ?
+      and (
+        exists (
+          select 1
+          from tweet_account_edges e
+          where e.account_id = t.account_id
+            and e.tweet_id = t.id
+            and e.kind = 'authored'
+        )
+        or (
+          t.kind = 'home'
+          and t.author_profile_id in ('profile_me', 'profile_user_' || a.external_user_id)
+        )
+      )
+    order by length(t.id) desc, t.id desc
+    limit 1
+    `,
+		)
+		.get(accountId) as { id: string } | undefined;
+	return row?.id ?? null;
+}
+
 function compareTweetIds(
 	left: string | null | undefined,
 	right: string | null | undefined,
@@ -752,7 +781,21 @@ export async function syncAuthoredTweets({
 	}
 	const usePersistedPagination =
 		!sinceId && !untilId && Boolean(cursor.paginationToken);
-	const effectiveSinceId = sinceId ?? (untilId ? null : cursor.sinceId);
+	const shouldSeedFromArchive =
+		!usePersistedPagination &&
+		!cursor.sinceId &&
+		sinceId === undefined &&
+		!untilId;
+	const archiveSinceSeed = shouldSeedFromArchive
+		? findArchiveAuthoredSinceSeed(db, identity.accountId)
+		: null;
+	if (shouldSeedFromArchive && !archiveSinceSeed) {
+		console.error(
+			"birdclaw sync authored: no archive baseline found; starting a full backwards scan",
+		);
+	}
+	const effectiveSinceId =
+		sinceId ?? archiveSinceSeed ?? (untilId ? null : cursor.sinceId);
 	let nextToken = usePersistedPagination
 		? (cursor.paginationToken ?? undefined)
 		: undefined;

@@ -62,6 +62,20 @@ function authoredCursor(accountId = "acct_primary") {
 	return row ? JSON.parse(row.value_json) : null;
 }
 
+function insertArchiveAuthoredTweet(id: string) {
+	getNativeDb()
+		.prepare(
+			`
+      insert into tweets (
+        id, account_id, author_profile_id, kind, text, created_at, is_replied,
+        reply_to_id, like_count, media_count, bookmarked, liked, entities_json,
+        media_json, quoted_tweet_id
+      ) values (?, 'acct_primary', 'profile_user_25401953', 'home', ?, ?, 0, null, 0, 0, 0, 0, '{}', '[]', null)
+      `,
+		)
+		.run(id, `archive tweet ${id}`, "2026-05-10T12:00:00.000Z");
+}
+
 describe("live authored tweet sync", () => {
 	beforeEach(() => {
 		mocks.getTransportStatus.mockResolvedValue({
@@ -436,6 +450,58 @@ describe("live authored tweet sync", () => {
 				.prepare("select external_user_id from accounts where id = ?")
 				.get("acct_studio"),
 		).toEqual({ external_user_id: null });
+	});
+
+	it("seeds a first authored sync from local archive rows unless since_id is explicit", async () => {
+		makeTempHome();
+		insertArchiveAuthoredTweet("1000");
+		mocks.listUserTweets
+			.mockResolvedValueOnce({
+				items: [],
+				nextToken: null,
+			})
+			.mockResolvedValueOnce({
+				items: [],
+				nextToken: null,
+			});
+		const { syncAuthoredTweets } = await import("./authored-live");
+
+		await syncAuthoredTweets({ limit: 5 });
+		await syncAuthoredTweets({ limit: 5, sinceId: "0" });
+
+		expect(mocks.listUserTweets).toHaveBeenNthCalledWith(
+			1,
+			"25401953",
+			expect.objectContaining({ sinceId: "1000" }),
+		);
+		expect(mocks.listUserTweets).toHaveBeenNthCalledWith(
+			2,
+			"25401953",
+			expect.objectContaining({ sinceId: "0" }),
+		);
+	});
+
+	it("warns and omits since_id when first authored sync has no archive baseline", async () => {
+		makeTempHome();
+		const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+		mocks.listUserTweets.mockResolvedValueOnce({
+			items: [],
+			nextToken: null,
+		});
+		const { syncAuthoredTweets } = await import("./authored-live");
+
+		try {
+			await syncAuthoredTweets({ limit: 5 });
+			const requestOptions = mocks.listUserTweets.mock.calls[0]?.[1] as
+				| Record<string, unknown>
+				| undefined;
+			expect(requestOptions?.sinceId).toBeUndefined();
+			expect(stderr).toHaveBeenCalledWith(
+				"birdclaw sync authored: no archive baseline found; starting a full backwards scan",
+			);
+		} finally {
+			stderr.mockRestore();
+		}
 	});
 
 	it("passes until_id without preserving a stale pending pagination token", async () => {
