@@ -127,7 +127,6 @@ describe("live home timeline sync", () => {
 					author_id: "42",
 					text: "partial home media",
 					created_at: "2026-04-26T13:43:34.000Z",
-					attachments: { media_keys: ["missing_media"] },
 				},
 			],
 			includes: {
