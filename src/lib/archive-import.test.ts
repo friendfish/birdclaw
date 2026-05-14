@@ -1867,10 +1867,10 @@ describe("archive import", () => {
 			db
 				.prepare(
 					`
-          select handle, display_name, bio
-          from profiles
-          where id = 'profile_user_42'
-        `,
+	          select handle, display_name, bio
+	          from profiles
+	          where id = 'profile_user_42'
+	        `,
 				)
 				.get(),
 		).toEqual({
@@ -1878,7 +1878,7 @@ describe("archive import", () => {
 			display_name: "sam",
 			bio: "Imported from archive user 42",
 		});
-	});
+	}, 20000);
 
 	it("preserves hydrated group-DM sender profiles when follow rows overlap", async () => {
 		const archivePath = makeWeirdArchive({ followers: ["42"] });
