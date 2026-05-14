@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@steipete/sweet-cookie':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.3.0
+        version: 0.3.0
       '@tailwindcss/vite':
         specifier: ^4.3.0
         version: 4.3.0(vite@8.0.13(@types/node@25.8.0)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.0))
@@ -998,8 +998,8 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@steipete/sweet-cookie@0.2.0':
-    resolution: {integrity: sha512-R6kkmWZe36gysj0oET8v7ZQ3aZ6GxLU+ssD1BMomy53Au1Ax9LZ4g1pWE5FLgAD9nX6Y5VYjbn9kc5UZpG776Q==}
+  '@steipete/sweet-cookie@0.3.0':
+    resolution: {integrity: sha512-eGjIEtWe6PPO1kOGGcxloiI8CXuIRdUzDbNBjhoZyvS9FiL0U3vVussNDV0EBuu3OILGrCKizpkxmpJ9G3BcHg==}
     engines: {node: '>=22'}
 
   '@tailwindcss/node@4.3.0':
@@ -2982,7 +2982,7 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@steipete/sweet-cookie@0.2.0': {}
+  '@steipete/sweet-cookie@0.3.0': {}
 
   '@tailwindcss/node@4.3.0':
     dependencies:

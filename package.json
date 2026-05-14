@@ -51,7 +51,7 @@
 		"docs:site": "node scripts/build-docs-site.mjs"
 	},
 	"dependencies": {
-		"@steipete/sweet-cookie": "^0.2.0",
+		"@steipete/sweet-cookie": "^0.3.0",
 		"@tailwindcss/vite": "^4.3.0",
 		"@tanstack/devtools-vite": "0.7.0",
 		"@tanstack/react-devtools": "0.10.5",
