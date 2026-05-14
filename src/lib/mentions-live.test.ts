@@ -213,6 +213,21 @@ describe("cached live mentions", () => {
 	    `,
 			)
 			.run();
+		getNativeDb()
+			.prepare(
+				`
+	    insert into tweets (
+	      id, account_id, author_profile_id, kind, text, created_at,
+	      is_replied, reply_to_id, like_count, media_count, bookmarked, liked,
+	      entities_json, media_json, quoted_tweet_id
+	    ) values (
+	      'tweet_media_mention', 'acct_primary', 'profile_user_42',
+	      'home', 'mention with archived media', '2026-03-09T01:58:00.000Z',
+	      0, null, 1, 1, 0, 0, '{}', '[{"url":"https://img.example/media.jpg","type":"image"}]', null
+	    )
+	    `,
+			)
+			.run();
 		listMentionsViaXurlMock.mockResolvedValueOnce({
 			data: [
 				{
@@ -229,6 +244,13 @@ describe("cached live mentions", () => {
 					text: "authored tweet also appears as mention",
 					created_at: "2026-03-09T02:00:00.000Z",
 					public_metrics: { like_count: 8 },
+				},
+				{
+					id: "tweet_media_mention",
+					author_id: "42",
+					text: "mention also appears without media expansions",
+					created_at: "2026-03-09T02:00:00.000Z",
+					public_metrics: { like_count: 5 },
 				},
 			],
 			includes: {
@@ -254,10 +276,10 @@ describe("cached live mentions", () => {
 			source: "xurl",
 			kind: "mentions",
 			accountId: "acct_primary",
-			count: 2,
+			count: 3,
 			partial: false,
 			payload: {
-				meta: { result_count: 2, page_count: 1, next_token: null },
+				meta: { result_count: 3, page_count: 1, next_token: null },
 			},
 		});
 		expect(
@@ -288,6 +310,14 @@ describe("cached live mentions", () => {
 			kind: "authored",
 			text: "authored tweet also appears as mention",
 			like_count: 8,
+		});
+		expect(
+			getNativeDb()
+				.prepare("select media_count, media_json from tweets where id = ?")
+				.get("tweet_media_mention"),
+		).toEqual({
+			media_count: 1,
+			media_json: '[{"url":"https://img.example/media.jpg","type":"image"}]',
 		});
 	});
 

@@ -261,9 +261,12 @@ function mergeMentionThreadIntoLocalStore({
       is_replied = max(tweets.is_replied, excluded.is_replied),
       reply_to_id = coalesce(excluded.reply_to_id, tweets.reply_to_id),
       like_count = excluded.like_count,
-      media_count = excluded.media_count,
+      media_count = max(tweets.media_count, excluded.media_count),
       entities_json = excluded.entities_json,
-      media_json = excluded.media_json,
+      media_json = case
+        when excluded.media_json not in ('', '[]', 'null') then excluded.media_json
+        else tweets.media_json
+      end,
       bookmarked = tweets.bookmarked,
       liked = tweets.liked
     `,

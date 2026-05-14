@@ -735,7 +735,7 @@ describe("mention thread sync", () => {
 	    ) values (
 	      'authored_context', 'acct_primary', 'profile_user_25401953',
 	      'authored', 'authored original', '2026-05-12T09:58:00.000Z',
-	      0, null, 1, 0, 0, 0, '{}', '[]', null
+	      0, null, 1, 1, 0, 0, '{}', '[{"url":"https://img.example/authored.jpg","type":"image"}]', null
 	    )
 	    `,
 			)
@@ -779,12 +779,16 @@ describe("mention thread sync", () => {
 		await syncMentionThreads({ mode: "xurl", limit: 1, delayMs: 0 });
 
 		const row = getNativeDb()
-			.prepare("select kind, text, like_count from tweets where id = ?")
+			.prepare(
+				"select kind, text, like_count, media_count, media_json from tweets where id = ?",
+			)
 			.get("authored_context");
 		expect(row).toEqual({
 			kind: "authored",
 			text: "authored original with fresh context",
 			like_count: 5,
+			media_count: 1,
+			media_json: '[{"url":"https://img.example/authored.jpg","type":"image"}]',
 		});
 	});
 
