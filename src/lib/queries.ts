@@ -1235,10 +1235,13 @@ export function listDmConversations({
 
 export function getConversationThread(
 	conversationId: string,
+	filters: Pick<DmQuery, "account"> = {},
 ): { conversation: DmConversationItem; messages: DmMessageItem[] } | null {
-	const conversation = listDmConversations({ limit: 100 }).find(
-		(item) => item.id === conversationId,
-	);
+	const conversation = listDmConversations({
+		...filters,
+		conversationIds: [conversationId],
+		limit: 1,
+	}).find((item) => item.id === conversationId);
 
 	if (!conversation) {
 		return null;
@@ -1474,7 +1477,9 @@ export function queryResource(
 			resource,
 			items,
 			selectedConversation: selectedConversationId
-				? getConversationThread(selectedConversationId)
+				? getConversationThread(selectedConversationId, {
+						account: dmFilters.account,
+					})
 				: null,
 		};
 	}

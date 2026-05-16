@@ -931,6 +931,42 @@ describe("birdclaw queries", () => {
 		expect(result.selectedConversation?.messages).toHaveLength(2);
 	});
 
+	it("hydrates selected dms with the active account filter", () => {
+		setupTempHome();
+		const db = getNativeDb();
+		const insertConversation = db.prepare(`
+      insert into dm_conversations (
+        id, account_id, participant_profile_id, title, last_message_at, unread_count, needs_reply
+      ) values (?, 'acct_primary', 'profile_sam', ?, ?, 0, 0)
+    `);
+		const insertMessage = db.prepare(`
+      insert into dm_messages (
+        id, conversation_id, sender_profile_id, text, created_at, direction, is_replied, media_count
+      ) values (?, ?, 'profile_sam', ?, ?, 'inbound', 1, 0)
+    `);
+
+		for (let index = 0; index < 120; index += 1) {
+			const id = `dm_bulk_${String(index).padStart(3, "0")}`;
+			const createdAt = `2026-05-16T12:${String(index % 60).padStart(2, "0")}:00.000Z`;
+			insertConversation.run(id, `Bulk ${String(index)}`, createdAt);
+			insertMessage.run(
+				`msg_${id}`,
+				id,
+				`Bulk conversation ${String(index)}`,
+				createdAt,
+			);
+		}
+
+		const result = queryResource("dms", {
+			account: "acct_studio",
+			conversationId: "dm_004",
+		});
+
+		expect(result.items.map((item) => item.id)).toEqual(["dm_004"]);
+		expect(result.selectedConversation?.conversation.id).toBe("dm_004");
+		expect(result.selectedConversation?.messages).toHaveLength(2);
+	});
+
 	it("returns a null selected conversation when dm filters empty the result set", () => {
 		setupTempHome();
 
