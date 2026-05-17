@@ -220,6 +220,23 @@ describe("link preview metadata", () => {
 		expect(cancel).toHaveBeenCalledOnce();
 	});
 
+	it("cancels non-OK link preview response bodies", async () => {
+		const cancel = vi.fn();
+		const fetchImpl = vi.fn().mockResolvedValue(
+			new Response(new ReadableStream({ cancel }), {
+				status: 404,
+				headers: { "content-type": "text/html" },
+			}),
+		);
+
+		await expect(
+			fetchLinkPreviewMetadata("https://example.com/missing", { fetchImpl }),
+		).resolves.toMatchObject({
+			error: "HTTP 404",
+		});
+		expect(cancel).toHaveBeenCalledOnce();
+	});
+
 	it("keeps link preview fetch effects lazy", async () => {
 		const fetchImpl = vi.fn().mockResolvedValue({
 			ok: true,

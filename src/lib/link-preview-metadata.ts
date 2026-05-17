@@ -451,6 +451,12 @@ function decodedResponseBody(response: Response) {
 	return body;
 }
 
+function cancelResponseBodyEffect(response: Response) {
+	return tryPromise(() => response.body?.cancel() ?? Promise.resolve()).pipe(
+		Effect.catchAll(() => Effect.void),
+	);
+}
+
 function respondWithResolvedAddress(
 	selected: ResolvedAddress,
 	lookupOptions: { all?: boolean } | number | undefined,
@@ -645,9 +651,7 @@ function safePreviewFetchEffect(
 
 			const location = response.headers.get("location");
 			if (!location) return response;
-			yield* tryPromise(
-				() => response.body?.cancel() ?? Promise.resolve(),
-			).pipe(Effect.catchAll(() => Effect.void));
+			yield* cancelResponseBodyEffect(response);
 			if (redirect === MAX_REDIRECTS) {
 				return yield* Effect.fail(
 					new Error("Link preview redirected too many times"),
@@ -776,10 +780,11 @@ export function fetchLinkPreviewMetadataEffect(
 		const finalUrl = response.url || url;
 		const contentType = response.headers.get("content-type") ?? "";
 		if (!response.ok) {
+			yield* cancelResponseBodyEffect(response);
 			return yield* Effect.fail(new Error(`HTTP ${response.status}`));
 		}
 		if (contentType.toLowerCase().startsWith("image/")) {
-			yield* tryPromise(() => response.body?.cancel() ?? Promise.resolve());
+			yield* cancelResponseBodyEffect(response);
 			return {
 				url: finalUrl,
 				title: hostLabel(finalUrl),
