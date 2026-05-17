@@ -1668,9 +1668,17 @@ program
 		await autoUpdateBeforeRead();
 		const child = spawn(
 			process.execPath,
-			["node_modules/vite/bin/vite.js", "dev", "--port", "3000"],
+			[
+				"node_modules/vite/bin/vite.js",
+				"dev",
+				"--host",
+				"127.0.0.1",
+				"--port",
+				"3000",
+			],
 			{
 				cwd: packageRoot,
+				env: { ...process.env, BIRDCLAW_LOCAL_WEB: "1" },
 				stdio: "inherit",
 				detached: process.platform !== "win32",
 			},

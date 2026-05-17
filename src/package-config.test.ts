@@ -53,6 +53,11 @@ describe("package configuration", () => {
 		);
 	});
 
+	it("marks source dev server as local-only for token-free loopback APIs", () => {
+		expect(packageJson.scripts.dev).toContain("BIRDCLAW_LOCAL_WEB=1");
+		expect(packageJson.scripts.dev).toContain("--host 127.0.0.1");
+	});
+
 	it("publishes script helpers referenced by package scripts", () => {
 		const isPublished = (filePath: string) =>
 			packageJson.files.some(

@@ -1,7 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 import { readCachedAvatarEffect } from "#/lib/avatar-cache";
-import { jsonResponse, runRouteEffect } from "#/lib/http-effect";
+import {
+	jsonResponse,
+	runRouteEffect,
+	sensitiveRequestErrorResponse,
+} from "#/lib/http-effect";
 
 export const Route = createFileRoute("/api/avatar")({
 	server: {
@@ -9,6 +13,9 @@ export const Route = createFileRoute("/api/avatar")({
 			GET: ({ request }) =>
 				runRouteEffect(
 					Effect.gen(function* () {
+						const sensitiveError = sensitiveRequestErrorResponse(request);
+						if (sensitiveError) return sensitiveError;
+
 						const url = new URL(request.url);
 						const profileId = url.searchParams.get("profileId")?.trim();
 
@@ -19,7 +26,9 @@ export const Route = createFileRoute("/api/avatar")({
 							);
 						}
 
-						const avatar = yield* readCachedAvatarEffect(profileId);
+						const avatar = yield* readCachedAvatarEffect(profileId).pipe(
+							Effect.catchAll(() => Effect.succeed(null)),
+						);
 						if (!avatar) {
 							return jsonResponse(
 								{ ok: false, message: "Avatar not found" },
@@ -31,6 +40,7 @@ export const Route = createFileRoute("/api/avatar")({
 							headers: {
 								"cache-control": "public, max-age=86400, immutable",
 								"content-type": avatar.contentType,
+								"x-content-type-options": "nosniff",
 							},
 						});
 					}),

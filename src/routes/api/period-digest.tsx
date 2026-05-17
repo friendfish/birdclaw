@@ -2,7 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 import { maybeAutoUpdateBackupEffect } from "#/lib/backup";
 import { runEffectBackground } from "#/lib/effect-runtime";
-import { runRouteEffect } from "#/lib/http-effect";
+import {
+	parseBoundedInteger,
+	runRouteEffect,
+	sensitiveRequestErrorResponse,
+} from "#/lib/http-effect";
 import {
 	streamPeriodDigestEffect,
 	type PeriodDigestOptions,
@@ -15,12 +19,6 @@ function parseBoolean(value: string | null) {
 	return value === "true" || value === "1" || value === "yes";
 }
 
-function parseNumber(value: string | null) {
-	if (!value) return undefined;
-	const parsed = Number(value);
-	return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 function parseOptions(url: URL): PeriodDigestOptions {
 	return {
 		period: url.searchParams.get("period") ?? undefined,
@@ -29,9 +27,13 @@ function parseOptions(url: URL): PeriodDigestOptions {
 		account: url.searchParams.get("account") ?? undefined,
 		includeDms: parseBoolean(url.searchParams.get("includeDms")),
 		refresh: parseBoolean(url.searchParams.get("refresh")),
-		model: url.searchParams.get("model") ?? undefined,
-		maxTweets: parseNumber(url.searchParams.get("maxTweets")),
-		maxLinks: parseNumber(url.searchParams.get("maxLinks")),
+		model: url.searchParams.get("model") === "gpt-5.5" ? "gpt-5.5" : undefined,
+		maxTweets: parseBoundedInteger(url.searchParams.get("maxTweets"), {
+			max: 100,
+		}),
+		maxLinks: parseBoundedInteger(url.searchParams.get("maxLinks"), {
+			max: 25,
+		}),
 	};
 }
 
@@ -45,6 +47,9 @@ export const Route = createFileRoute("/api/period-digest")({
 			GET: ({ request }) =>
 				runRouteEffect(
 					Effect.gen(function* () {
+						const denied = sensitiveRequestErrorResponse(request);
+						if (denied) return denied;
+
 						yield* maybeAutoUpdateBackupEffect();
 						const url = new URL(request.url);
 						const options = parseOptions(url);

@@ -1,6 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
-import { jsonResponse, runRouteEffect } from "#/lib/http-effect";
+import {
+	jsonResponse,
+	runRouteEffect,
+	sensitiveRequestErrorResponse,
+} from "#/lib/http-effect";
 import { getOrFetchLinkPreviewEffect } from "#/lib/link-preview-metadata";
 
 function parseUrl(value: string | null) {
@@ -22,9 +26,11 @@ export const Route = createFileRoute("/api/link-preview")({
 			GET: ({ request }) =>
 				runRouteEffect(
 					Effect.gen(function* () {
+						const denied = sensitiveRequestErrorResponse(request);
+						if (denied) return denied;
+
 						const url = new URL(request.url);
 						const previewUrl = parseUrl(url.searchParams.get("url"));
-						const shortUrl = parseUrl(url.searchParams.get("shortUrl"));
 						if (!previewUrl) {
 							return jsonResponse(
 								{ ok: false, message: "Missing url" },
@@ -32,9 +38,7 @@ export const Route = createFileRoute("/api/link-preview")({
 							);
 						}
 
-						const preview = yield* getOrFetchLinkPreviewEffect(previewUrl, {
-							shortUrl,
-						});
+						const preview = yield* getOrFetchLinkPreviewEffect(previewUrl);
 						return jsonResponse({ ok: true, preview });
 					}),
 				),

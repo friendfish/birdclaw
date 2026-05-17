@@ -22,6 +22,9 @@ afterEach(() => {
 });
 
 describe("avatar api route", () => {
+	const onePixelPng =
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+
 	it("returns 400 when profileId is missing", async () => {
 		const response = await GET({
 			request: new Request("http://birdclaw.test/api/avatar"),
@@ -45,10 +48,7 @@ describe("avatar api route", () => {
 			"",
 			0,
 			18,
-			"data:image/svg+xml;utf8," +
-				encodeURIComponent(
-					'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#111"/></svg>',
-				),
+			`data:image/png;base64,${onePixelPng}`,
 			"2026-03-08T12:00:00.000Z",
 		);
 
@@ -59,8 +59,10 @@ describe("avatar api route", () => {
 		});
 
 		expect(response.status).toBe(200);
-		expect(response.headers.get("content-type")).toBe("image/svg+xml");
-		await expect(response.text()).resolves.toContain("<svg");
+		expect(response.headers.get("content-type")).toBe("image/png");
+		expect(Buffer.from(await response.arrayBuffer())).toEqual(
+			Buffer.from(onePixelPng, "base64"),
+		);
 	});
 
 	it("returns 404 when a profile has no avatar", async () => {
@@ -79,6 +81,38 @@ describe("avatar api route", () => {
 				"",
 				0,
 				18,
+				"2026-03-08T12:00:00.000Z",
+			);
+
+		const response = await GET({
+			request: new Request(
+				"http://birdclaw.test/api/avatar?profileId=profile_demo",
+			),
+		});
+
+		expect(response.status).toBe(404);
+	});
+
+	it("returns 404 instead of serving unsupported avatar data", async () => {
+		const tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-avatar-api-"));
+		tempDirs.push(tempDir);
+		process.env.BIRDCLAW_HOME = tempDir;
+
+		getNativeDb()
+			.prepare(
+				"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, avatar_url, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
+			)
+			.run(
+				"profile_demo",
+				"demo",
+				"Demo",
+				"",
+				0,
+				18,
+				"data:image/svg+xml;utf8," +
+					encodeURIComponent(
+						'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#111"/></svg>',
+					),
 				"2026-03-08T12:00:00.000Z",
 			);
 

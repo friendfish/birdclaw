@@ -4,6 +4,7 @@ import {
 	jsonResponse,
 	requestJsonEffect,
 	runRouteEffect,
+	sensitiveRequestErrorResponse,
 } from "#/lib/http-effect";
 import { getWebSyncJob, parseWebSyncKind, startWebSync } from "#/lib/web-sync";
 
@@ -15,6 +16,9 @@ export const Route = createFileRoute("/api/sync")({
 	server: {
 		handlers: {
 			GET: ({ request }) => {
+				const denied = sensitiveRequestErrorResponse(request);
+				if (denied) return denied;
+
 				const url = new URL(request.url);
 				const id = url.searchParams.get("id");
 				if (!id) {
@@ -37,6 +41,9 @@ export const Route = createFileRoute("/api/sync")({
 			POST: ({ request }) =>
 				runRouteEffect(
 					Effect.gen(function* () {
+						const denied = sensitiveRequestErrorResponse(request);
+						if (denied) return denied;
+
 						const body = yield* requestJsonEffect<Record<string, unknown>>(
 							request,
 							{},

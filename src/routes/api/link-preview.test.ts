@@ -38,7 +38,6 @@ describe("api link preview route", () => {
 
 		expect(getOrFetchLinkPreviewMock).toHaveBeenCalledWith(
 			"https://peekaboo.sh/",
-			{ shortUrl: "https://t.co/demo" },
 		);
 		await expect(response.json()).resolves.toEqual({
 			ok: true,

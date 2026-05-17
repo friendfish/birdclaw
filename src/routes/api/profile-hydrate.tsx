@@ -1,6 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
-import { jsonResponse, runRouteEffect } from "#/lib/http-effect";
+import {
+	jsonResponse,
+	runRouteEffect,
+	sensitiveRequestErrorResponse,
+} from "#/lib/http-effect";
 import { resolveProfilesForHandlesEffect } from "#/lib/profile-resolver";
 
 function parseHandles(url: URL) {
@@ -23,6 +27,9 @@ export const Route = createFileRoute("/api/profile-hydrate")({
 			GET: ({ request }) =>
 				runRouteEffect(
 					Effect.gen(function* () {
+						const denied = sensitiveRequestErrorResponse(request);
+						if (denied) return denied;
+
 						const url = new URL(request.url);
 						const handles = parseHandles(url);
 						if (handles.length === 0) {

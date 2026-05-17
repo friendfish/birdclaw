@@ -34,7 +34,7 @@ describe("status api route", () => {
 		});
 
 		const response = await GET({
-			request: new Request("http://birdclaw.test/api/status"),
+			request: new Request("http://localhost/api/status"),
 		});
 
 		await expect(response.json()).resolves.toEqual({

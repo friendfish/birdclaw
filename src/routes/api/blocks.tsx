@@ -1,13 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 import { getBlocksResponse } from "#/lib/blocks";
-import { jsonResponse, runRouteEffect } from "#/lib/http-effect";
-
-function parseNumber(value: string | null) {
-	if (!value) return undefined;
-	const parsed = Number(value);
-	return Number.isFinite(parsed) ? parsed : undefined;
-}
+import {
+	jsonResponse,
+	parseBoundedInteger,
+	runRouteEffect,
+	sensitiveRequestErrorResponse,
+} from "#/lib/http-effect";
 
 export const Route = createFileRoute("/api/blocks")({
 	server: {
@@ -15,12 +14,18 @@ export const Route = createFileRoute("/api/blocks")({
 			GET: ({ request }) =>
 				runRouteEffect(
 					Effect.sync(() => {
+						const denied = sensitiveRequestErrorResponse(request);
+						if (denied) return denied;
+
 						const url = new URL(request.url);
 						return jsonResponse(
 							getBlocksResponse({
 								accountId: url.searchParams.get("account") ?? undefined,
 								search: url.searchParams.get("search") ?? undefined,
-								limit: parseNumber(url.searchParams.get("limit")) ?? 12,
+								limit: parseBoundedInteger(url.searchParams.get("limit"), {
+									defaultValue: 12,
+									max: 50,
+								}),
 							}),
 						);
 					}),

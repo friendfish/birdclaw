@@ -77,7 +77,7 @@ describe("api action route", () => {
 				body: JSON.stringify({
 					kind: "scoreInbox",
 					scoreKind: "mixed",
-					limit: "4",
+					limit: 4,
 				}),
 			}),
 		});

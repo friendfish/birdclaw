@@ -7,8 +7,10 @@ import {
 } from "#/lib/blocks";
 import {
 	jsonResponse,
+	parseBoundedInteger,
 	requestJsonEffect,
 	runRouteEffect,
+	sensitiveRequestErrorResponse,
 } from "#/lib/http-effect";
 import { scoreInboxEffect } from "#/lib/inbox";
 import { addMuteEffect, removeMuteEffect } from "#/lib/mutes";
@@ -49,6 +51,9 @@ export const Route = createFileRoute("/api/action")({
 			POST: ({ request }) =>
 				runRouteEffect(
 					Effect.gen(function* () {
+						const denied = sensitiveRequestErrorResponse(request);
+						if (denied) return denied;
+
 						const body =
 							yield* requestJsonEffect<Record<string, string>>(request);
 						const transport = parseActionsTransport(body.transport);
@@ -74,7 +79,10 @@ export const Route = createFileRoute("/api/action")({
 							result = yield* scoreInboxEffect({
 								kind: ((body.scoreKind as InboxKind) || "mixed") as InboxKind,
 								account: body.account,
-								limit: body.limit ? Number(body.limit) : 8,
+								limit: parseBoundedInteger(body.limit, {
+									defaultValue: 8,
+									max: 20,
+								}),
 							});
 						} else if (body.kind === "blockProfile") {
 							result = yield* addBlockEffect(

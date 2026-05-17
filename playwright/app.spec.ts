@@ -1,6 +1,17 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
+test.beforeEach(async ({ context, baseURL }) => {
+	if (!baseURL) throw new Error("Playwright baseURL is required");
+	await context.addCookies([
+		{
+			name: "birdclaw_token",
+			value: "birdclaw-e2e-token",
+			url: baseURL,
+		},
+	]);
+});
+
 async function selectAccount(page: Page, accountHandle: string) {
 	await page.getByRole("button", { name: /^Active account:/ }).click();
 	await page.getByRole("option", { name: new RegExp(accountHandle) }).click();

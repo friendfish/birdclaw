@@ -1,7 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 import { maybeAutoUpdateBackupEffect } from "#/lib/backup";
-import { jsonResponse, runRouteEffect } from "#/lib/http-effect";
+import {
+	jsonResponse,
+	parseBoundedInteger,
+	runRouteEffect,
+	sensitiveRequestErrorResponse,
+} from "#/lib/http-effect";
 import { queryResource } from "#/lib/queries";
 import type {
 	ReplyFilter,
@@ -16,7 +21,7 @@ function parseReplyFilter(value: string | null): ReplyFilter {
 	return "all";
 }
 
-function parseNumber(value: string | null) {
+function parseOptionalNumber(value: string | null) {
 	if (!value) return undefined;
 	const parsed = Number(value);
 	return Number.isFinite(parsed) ? parsed : undefined;
@@ -32,6 +37,9 @@ export const Route = createFileRoute("/api/query")({
 			GET: ({ request }) =>
 				runRouteEffect(
 					Effect.gen(function* () {
+						const denied = sensitiveRequestErrorResponse(request);
+						if (denied) return denied;
+
 						yield* maybeAutoUpdateBackupEffect();
 						const url = new URL(request.url);
 						const resource = (url.searchParams.get("resource") ??
@@ -50,7 +58,9 @@ export const Route = createFileRoute("/api/query")({
 							),
 							likedOnly: url.searchParams.get("liked") === "true",
 							bookmarkedOnly: url.searchParams.get("bookmarked") === "true",
-							limit: parseNumber(url.searchParams.get("limit")) ?? undefined,
+							limit: parseBoundedInteger(url.searchParams.get("limit"), {
+								max: 200,
+							}),
 						};
 
 						if (resource === "dms") {
@@ -58,16 +68,16 @@ export const Route = createFileRoute("/api/query")({
 								queryResource("dms", {
 									...baseFilters,
 									participant: url.searchParams.get("participant") ?? undefined,
-									minFollowers: parseNumber(
+									minFollowers: parseOptionalNumber(
 										url.searchParams.get("minFollowers"),
 									),
-									maxFollowers: parseNumber(
+									maxFollowers: parseOptionalNumber(
 										url.searchParams.get("maxFollowers"),
 									),
-									minInfluenceScore: parseNumber(
+									minInfluenceScore: parseOptionalNumber(
 										url.searchParams.get("minInfluenceScore"),
 									),
-									maxInfluenceScore: parseNumber(
+									maxInfluenceScore: parseOptionalNumber(
 										url.searchParams.get("maxInfluenceScore"),
 									),
 									sort:

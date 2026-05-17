@@ -482,9 +482,17 @@ describe("cli", () => {
 		);
 		expect(spawnMock).toHaveBeenCalledWith(
 			process.execPath,
-			["node_modules/vite/bin/vite.js", "dev", "--port", "3000"],
+			[
+				"node_modules/vite/bin/vite.js",
+				"dev",
+				"--host",
+				"127.0.0.1",
+				"--port",
+				"3000",
+			],
 			expect.objectContaining({
 				cwd: expect.stringContaining("birdclaw"),
+				env: expect.objectContaining({ BIRDCLAW_LOCAL_WEB: "1" }),
 				stdio: "inherit",
 			}),
 		);

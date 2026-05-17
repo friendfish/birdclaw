@@ -128,6 +128,7 @@ async function startServerIfNeeded(baseUrl) {
 			stdio: ["ignore", "pipe", "pipe"],
 			env: {
 				...withSanitizedNodeOptions(process.env),
+				BIRDCLAW_LOCAL_WEB: "1",
 			},
 		},
 	);

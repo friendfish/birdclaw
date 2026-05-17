@@ -4,11 +4,20 @@ import { spawn } from "node:child_process";
 import { withSanitizedNodeOptions } from "./sanitize-node-options.mjs";
 
 const cwd = process.cwd();
-const home = process.env.BIRDCLAW_HOME || path.join(cwd, ".playwright-home");
+const home = path.join(cwd, ".playwright-home");
 const port = process.env.BIRDCLAW_PLAYWRIGHT_PORT || "3000";
 const viteBin = path.join(cwd, "node_modules", "vite", "bin", "vite.js");
+const resolvedHome = path.resolve(home);
+const resolvedCwd = path.resolve(cwd);
 
-rmSync(home, { recursive: true, force: true });
+if (
+	!resolvedHome.startsWith(`${resolvedCwd}${path.sep}`) ||
+	path.basename(resolvedHome) !== ".playwright-home"
+) {
+	throw new Error(`Refusing to delete unsafe test home: ${resolvedHome}`);
+}
+
+rmSync(resolvedHome, { recursive: true, force: true });
 
 const child = spawn(
 	process.execPath,
@@ -18,8 +27,12 @@ const child = spawn(
 		stdio: "inherit",
 		env: {
 			...withSanitizedNodeOptions(process.env),
-			BIRDCLAW_HOME: home,
+			BIRDCLAW_HOME: resolvedHome,
+			BIRDCLAW_E2E: "1",
+			BIRDCLAW_E2E_FAKE_LIVE_WRITES: "1",
 			BIRDCLAW_DISABLE_LIVE_WRITES: "1",
+			BIRDCLAW_LOCAL_WEB: "1",
+			BIRDCLAW_WEB_TOKEN: "birdclaw-e2e-token",
 		},
 	},
 );
