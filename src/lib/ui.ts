@@ -66,7 +66,7 @@ export const tabButtonClass =
 export const tabButtonActiveClass = "text-[var(--ink)] font-bold";
 
 export const tabButtonIndicatorClass =
-	"pointer-events-none absolute inset-x-0 bottom-0 mx-auto h-[3px] w-12 rounded-full bg-[var(--accent)]";
+	"pointer-events-none absolute bottom-0 left-1/2 h-[3px] w-12 -translate-x-1/2 rounded-full bg-[var(--accent)]";
 
 /* Feed rows: flat, hairline divider, no boxed cards. */
 export const feedClass = "flex flex-col";
