@@ -26,13 +26,12 @@ Add a local block entry and attempt a live block write.
 
 Accepts a handle (`amelia`), `@handle`, Twitter URL, local profile id, or numeric Twitter user id.
 
-Live transport order:
+Live transport order for `auto`:
 
-1. `xurl` — when resolvable. Twitter often rejects pure OAuth2 block writes.
-2. `bird` — cookie-backed fallback.
-3. `xweb` — last-resort web cookie session for `auto` mode.
+1. `bird` — cookie-backed, verified with `bird status`.
+2. `xurl` — used when `bird` fails and the selected account matches the authenticated xurl account.
 
-When all three fail, the local block is still recorded so the web UI hides the account immediately. A later `blocks sync` will retry.
+When both live transports fail, the local block is not recorded. Use `blocks record` for a local-only row.
 
 ### `blocks remove`
 
@@ -89,7 +88,7 @@ birdclaw unban @amelia --account acct_primary --transport bird --json
 
 `ban` / `unban` are aliases for `blocks add` / `blocks remove` with one extra knob: `--transport`.
 
-- `--transport auto` — try `bird` first, then `xurl`, then `xweb` cookie-backed (the safest default for OAuth2-rejected accounts)
+- `--transport auto` — try `bird` first, then `xurl`; xweb is not used automatically
 - `--transport bird` — force `bird`
 - `--transport xurl` — force `xurl`; verifies through `bird status` before mutating SQLite
 
@@ -111,7 +110,7 @@ Same model as blocks, with one resolution detail: `mute` and `unmute` prefer `bi
 OAuth2 block writes are the most common failure case. Twitter intermittently rejects them with no recoverable error code. For that reason:
 
 - `auto` is the default everywhere
-- `auto` includes the `xweb` cookie fallback for blocks
+- xweb helpers remain low-level and are not part of `auto`
 - forced `xurl` writes still verify through `bird status` before sqlite changes
 - failed live writes never leave the local DB in an inconsistent state — either the local row reflects the live state or it is rolled back
 
@@ -119,9 +118,9 @@ If your account chronically rejects OAuth2 blocks, just set:
 
 ```json
 {
-  "actions": {
-    "transport": "auto"
-  }
+	"actions": {
+		"transport": "auto"
+	}
 }
 ```
 

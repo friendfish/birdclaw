@@ -40,25 +40,25 @@ The Playwright test home is `.playwright-home` in the repo, which is why CI neve
 
 ```json
 {
-  "actions": {
-    "transport": "auto"
-  },
-  "mentions": {
-    "dataSource": "bird",
-    "birdCommand": "/Users/steipete/Projects/bird/bird"
-  },
-  "backup": {
-    "repoPath": "/Users/steipete/Projects/backup-birdclaw",
-    "remote": "https://github.com/steipete/backup-birdclaw.git",
-    "autoSync": true,
-    "staleAfterSeconds": 900
-  }
+	"actions": {
+		"transport": "auto"
+	},
+	"mentions": {
+		"dataSource": "bird",
+		"birdCommand": "/Users/steipete/Projects/bird/bird"
+	},
+	"backup": {
+		"repoPath": "/Users/steipete/Projects/backup-birdclaw",
+		"remote": "https://github.com/steipete/backup-birdclaw.git",
+		"autoSync": true,
+		"staleAfterSeconds": 900
+	}
 }
 ```
 
 ### `actions.transport`
 
-- `auto` — try `bird` first for block/unblock/mute, fall back to `xurl`, then to the cookie-backed `xweb` path
+- `auto` — try `bird` first for block/unblock/mute, then fall back to `xurl`; xweb is not used automatically
 - `bird` — force `bird`
 - `xurl` — force `xurl`; verifies through `bird status` before mutating SQLite
 
@@ -78,18 +78,21 @@ See [Backup](backup.md). When `autoSync` is enabled, read commands pull + merge 
 
 ## Environment variables
 
-| Variable | Purpose |
-| -------- | ------- |
-| `BIRDCLAW_HOME` | Override the storage root (`~/.birdclaw` by default) |
-| `BIRDCLAW_DB` | Point at a custom SQLite file path |
-| `BIRDCLAW_PROFILE` | Pick a non-default profile/account |
-| `BIRDCLAW_TRANSPORT` | Force `auto`, `xurl`, `bird`, `official`, or `xweb` for one process |
-| `BIRDCLAW_LOG` | Increase log verbosity |
-| `BIRDCLAW_ALLOWED_HOSTS` | Comma-separated extra Vite dev-server hostnames for `birdclaw serve` behind a trusted reverse proxy |
-| `BIRDCLAW_DISABLE_LIVE_WRITES` | Set to `1` to block any live mutation (used by tests and CI) |
-| `BIRDCLAW_BACKUP_AUTO_SYNC` | Set to `0` to disable auto-sync for one process |
-| `NO_COLOR` | Disable ANSI color in human output |
-| `OPENAI_API_KEY` | Enable inbox scoring and low-signal filtering |
+| Variable                       | Purpose                                                                                                                                |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `BIRDCLAW_HOME`                | Override the storage root (`~/.birdclaw` by default)                                                                                   |
+| `BIRDCLAW_DB`                  | Point at a custom SQLite file path                                                                                                     |
+| `BIRDCLAW_PROFILE`             | Pick a non-default profile/account                                                                                                     |
+| `BIRDCLAW_TRANSPORT`           | Force `auto`, `xurl`, `bird`, `official`, or `xweb` for one process                                                                    |
+| `BIRDCLAW_LOG`                 | Increase log verbosity                                                                                                                 |
+| `BIRDCLAW_ALLOWED_HOSTS`       | Comma-separated extra Vite dev-server hostnames for `birdclaw serve` behind a trusted reverse proxy                                    |
+| `BIRDCLAW_LOCAL_WEB`           | Internal `birdclaw serve` marker for direct local-only loopback web APIs; forwarded/proxied requests still require remote-token config |
+| `BIRDCLAW_WEB_TOKEN`           | Token required for remote web API access; send as `x-birdclaw-token` or `birdclaw_token`                                               |
+| `BIRDCLAW_ALLOW_REMOTE_WEB`    | Set to `1` with `BIRDCLAW_WEB_TOKEN` to allow non-loopback web API requests                                                            |
+| `BIRDCLAW_DISABLE_LIVE_WRITES` | Set to `1` to block any live mutation (used by tests and CI)                                                                           |
+| `BIRDCLAW_BACKUP_AUTO_SYNC`    | Set to `0` to disable auto-sync for one process                                                                                        |
+| `NO_COLOR`                     | Disable ANSI color in human output                                                                                                     |
+| `OPENAI_API_KEY`               | Enable inbox scoring and low-signal filtering                                                                                          |
 
 `BIRDCLAW_DISABLE_LIVE_WRITES=1` is set automatically in CI and Playwright runs so test code can never publish a tweet, send a DM, or block an account.
 
@@ -109,7 +112,7 @@ Per-account state — cursors, transport preferences, last-sync watermarks, Open
 2. **xurl** — official-API live reads/writes
 3. **bird** — cookie-backed reads/writes (DMs, mentions, block fallback)
 4. **official** — direct API client (planned)
-5. **xweb** — experimental low-level web cookie session (block/unblock fallback only)
+5. **xweb** — experimental low-level web cookie session; not used by moderation `auto` writes
 
 `auto` mode walks this list in order. Force one transport for one command with `--mode <kind>` on `sync` / `mentions export`, or `--transport <kind>` on `ban` / `unban` / `mute` / `unmute`.
 

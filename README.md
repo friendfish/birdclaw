@@ -263,6 +263,11 @@ Start the app:
 birdclaw serve
 ```
 
+`birdclaw serve` binds the dev server to `127.0.0.1` and enables local
+loopback web APIs without a token. Remote web access requires
+`BIRDCLAW_WEB_TOKEN` plus `BIRDCLAW_ALLOW_REMOTE_WEB=1`; send the token as
+`x-birdclaw-token` or a `birdclaw_token` cookie.
+
 Use the Sync button in Home, Mentions, Likes, Bookmarks, or DMs to run the matching live sync from the web UI and then reload the local view. These controls are explicit because live reads can be slow, auth-dependent, or rate-limited.
 
 When running behind a trusted reverse proxy such as Tailscale Serve, add any extra proxy hostnames to `BIRDCLAW_ALLOWED_HOSTS`. The clawmac Tailscale hostname is allowed by default.
@@ -451,7 +456,7 @@ pnpm cli unban @amelia --account acct_primary --transport bird --json
 Notes:
 
 - `ban` / `unban` accept `--transport auto|bird|xurl`
-- `auto` tries `bird` first, then falls back to `xurl`, then `x-web` cookie-backed block/unblock when both fail
+- `auto` tries `bird` first, then falls back to `xurl`; unverified x-web writes are not used by moderation actions
 - forced `xurl` writes still verify through `bird status` before sqlite changes
 - Twitter still rejects pure OAuth2 block writes, so `auto` is the safe default for block/unblock
 - `blocks import` accepts newline-delimited blocklists with comments and markdown bullets

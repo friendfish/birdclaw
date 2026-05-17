@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Harden web write/quota endpoints, URL/avatar fetching, backup imports, archive replacement imports, block sync pruning, and GitHub workflows based on a deepsec security pass.
 - Validate compose, tweet-reply, and DM-reply writes before live transport, reject failed xurl sends without leaving local ghost entries, and keep failed web reply drafts visible with the transport error.
 - Keep account-scoped manual sync buttons disabled until account metadata loads so saved timelines do not submit accountless collection syncs.
 - Cancel failed link preview response bodies promptly so repeated broken preview fetches do not leave sockets open until timeout.
