@@ -242,6 +242,93 @@ describe("URL expansion cache", () => {
 		]);
 	});
 
+	it("reports unsafe expansion URLs without fetching", async () => {
+		const fetchImpl = vi.fn();
+		const { expandUrlsEffect } = await import("./url-expansion");
+
+		await expect(
+			Effect.runPromise(
+				expandUrlsEffect(["http://127.0.0.1/admin"], {
+					fetchImpl,
+					successMaxAgeMs: -1,
+				}),
+			),
+		).resolves.toEqual([
+			expect.objectContaining({
+				finalUrl: "http://127.0.0.1/admin",
+				source: "network",
+				status: "error",
+				error: "Link preview URL points to a private host",
+			}),
+		]);
+		expect(fetchImpl).not.toHaveBeenCalled();
+	});
+
+	it("reports redirects without locations as expansion errors", async () => {
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValue(new Response(null, { status: 302 }));
+		const { expandUrlsEffect } = await import("./url-expansion");
+
+		await expect(
+			Effect.runPromise(
+				expandUrlsEffect(["https://t.co/no-location"], {
+					fetchImpl,
+					successMaxAgeMs: -1,
+				}),
+			),
+		).resolves.toEqual([
+			expect.objectContaining({
+				finalUrl: "https://t.co/no-location",
+				source: "network",
+				status: "error",
+				error: "URL expansion ended on a redirect",
+			}),
+		]);
+		expect(fetchImpl).toHaveBeenCalledTimes(1);
+	});
+
+	it("follows GET redirects after a HEAD miss", async () => {
+		const fetchImpl = vi
+			.fn()
+			.mockImplementation((url: string, init: RequestInit) =>
+				Promise.resolve(
+					init.method === "GET" && url === "https://t.co/get-redirect"
+						? new Response(null, {
+								status: 302,
+								headers: { location: "https://example.com/get-final" },
+							})
+						: ({
+								ok: true,
+								status: 200,
+								url,
+							} as Response),
+				),
+			);
+		const { expandUrlsEffect } = await import("./url-expansion");
+
+		await expect(
+			Effect.runPromise(
+				expandUrlsEffect(["https://t.co/get-redirect"], {
+					fetchImpl,
+					successMaxAgeMs: -1,
+				}),
+			),
+		).resolves.toEqual([
+			expect.objectContaining({
+				finalUrl: "https://example.com/get-final",
+				source: "network",
+				status: "hit",
+			}),
+		]);
+		expect(fetchImpl.mock.calls.map(([, init]) => init?.method)).toEqual([
+			"HEAD",
+			"GET",
+			"HEAD",
+			"GET",
+		]);
+	});
+
 	it("keeps safe resolved-address expansion HEAD-first through redirects", async () => {
 		const fetchImpl = vi.fn().mockImplementation((url: string) =>
 			Promise.resolve(

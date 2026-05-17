@@ -290,4 +290,212 @@ describe("actions transport", () => {
 		});
 		expect(mocks.blockUserViaXWeb).not.toHaveBeenCalled();
 	});
+
+	it("reports missing target ids for forced xurl actions", async () => {
+		const { runModerationAction } = await import("./actions-transport");
+
+		await expect(
+			runModerationAction({
+				action: "block",
+				query: "missing",
+				transport: "xurl",
+			}),
+		).resolves.toEqual({
+			ok: false,
+			output: "missing target user id for xurl transport",
+			transport: "xurl",
+		});
+		expect(mocks.blockUserViaXurl).not.toHaveBeenCalled();
+	});
+
+	it("reports unavailable xurl authenticated users", async () => {
+		mocks.lookupAuthenticatedUser.mockResolvedValue(null);
+		const { runModerationAction } = await import("./actions-transport");
+
+		await expect(
+			runModerationAction({
+				action: "block",
+				query: "7",
+				targetUserId: "7",
+				transport: "xurl",
+			}),
+		).resolves.toEqual({
+			ok: false,
+			output: "xurl authenticated user unavailable",
+			transport: "xurl",
+		});
+		expect(mocks.blockUserViaXurl).not.toHaveBeenCalled();
+	});
+
+	it("reports xurl verification gaps and mismatches", async () => {
+		mocks.readBirdStatusViaBird
+			.mockResolvedValueOnce(null)
+			.mockResolvedValueOnce({ blocking: false, muting: false });
+		const { runModerationAction } = await import("./actions-transport");
+
+		await expect(
+			runModerationAction({
+				action: "block",
+				query: "7",
+				targetUserId: "7",
+				transport: "xurl",
+			}),
+		).resolves.toEqual({
+			ok: false,
+			output: "xurl block ok\nxurl verify unavailable from bird status",
+			transport: "xurl",
+		});
+		await expect(
+			runModerationAction({
+				action: "block",
+				query: "7",
+				targetUserId: "7",
+				transport: "xurl",
+			}),
+		).resolves.toEqual({
+			ok: false,
+			output: "xurl block ok\nxurl verify mismatch blocking=false",
+			transport: "xurl",
+		});
+	});
+
+	it("checks expected xurl account identities before live writes", async () => {
+		mocks.lookupAuthenticatedUser.mockResolvedValueOnce({
+			id: "2",
+			username: "other",
+		});
+		const { runModerationAction } = await import("./actions-transport");
+
+		await expect(
+			runModerationAction({
+				action: "block",
+				query: "7",
+				targetUserId: "7",
+				transport: "xurl",
+				expectedAccount: {
+					id: "acct_primary",
+					handle: "steipete",
+					externalUserId: "1",
+				},
+			}),
+		).resolves.toEqual({
+			ok: false,
+			output: "xurl is authenticated as user 2, not account acct_primary",
+			transport: "xurl",
+		});
+		expect(mocks.blockUserViaXurl).not.toHaveBeenCalled();
+	});
+
+	it("uses expected handle matches as the verified xurl source id", async () => {
+		mocks.lookupAuthenticatedUser.mockResolvedValue({
+			id: "25401953",
+			username: "@Steipete",
+		});
+		const { runModerationAction } = await import("./actions-transport");
+
+		await expect(
+			runModerationAction({
+				action: "unmute",
+				query: "7",
+				targetUserId: "7",
+				transport: "xurl",
+				expectedAccount: {
+					id: "acct_primary",
+					handle: "steipete",
+				},
+			}),
+		).resolves.toEqual({
+			ok: true,
+			output: "xurl unmute ok\nverified muting=false",
+			transport: "xurl",
+		});
+		expect(mocks.unmuteUserViaXurl).toHaveBeenCalledWith("25401953", "7");
+		expect(mocks.lookupAuthenticatedUser).toHaveBeenCalledTimes(1);
+	});
+
+	it("reports expected handle mismatches with missing source usernames", async () => {
+		mocks.lookupAuthenticatedUser.mockResolvedValue({ id: "25401953" });
+		const { runModerationAction } = await import("./actions-transport");
+
+		await expect(
+			runModerationAction({
+				action: "unblock",
+				query: "7",
+				targetUserId: "7",
+				transport: "xurl",
+				expectedAccount: {
+					id: "acct_primary",
+					handle: "steipete",
+				},
+			}),
+		).resolves.toEqual({
+			ok: false,
+			output: "xurl authenticated user unavailable",
+			transport: "xurl",
+		});
+		expect(mocks.unblockUserViaXurl).not.toHaveBeenCalled();
+	});
+
+	it("combines bird and xurl account-check failures in auto mode", async () => {
+		mocks.blockUserViaBird.mockResolvedValue({
+			ok: false,
+			output: "bird unavailable",
+		});
+		mocks.lookupAuthenticatedUser.mockResolvedValue({
+			id: "2",
+			username: "other",
+		});
+		const { runModerationAction } = await import("./actions-transport");
+
+		await expect(
+			runModerationAction({
+				action: "block",
+				query: "7",
+				targetUserId: "7",
+				expectedAccount: {
+					id: "acct_primary",
+					handle: "steipete",
+					externalUserId: "1",
+				},
+			}),
+		).resolves.toEqual({
+			ok: false,
+			output:
+				"bird: bird unavailable\nxurl: xurl is authenticated as user 2, not account acct_primary",
+			transport: "xurl",
+		});
+		expect(mocks.blockUserViaXurl).not.toHaveBeenCalled();
+	});
+
+	it("runs explicit bird and xurl unblock branches", async () => {
+		mocks.readBirdStatusViaBird.mockResolvedValueOnce({ blocking: false });
+		const { runModerationAction } = await import("./actions-transport");
+
+		await expect(
+			runModerationAction({
+				action: "unblock",
+				query: "7",
+				targetUserId: "7",
+				transport: "bird",
+			}),
+		).resolves.toEqual({
+			ok: true,
+			output: "bird unblock ok",
+			transport: "bird",
+		});
+		await expect(
+			runModerationAction({
+				action: "unblock",
+				query: "7",
+				targetUserId: "7",
+				transport: "xurl",
+			}),
+		).resolves.toEqual({
+			ok: true,
+			output: "xurl unblock ok\nverified blocking=false",
+			transport: "xurl",
+		});
+		expect(mocks.unblockUserViaBird).toHaveBeenCalledWith("7");
+		expect(mocks.unblockUserViaXurl).toHaveBeenCalledWith("1", "7");
+	});
 });

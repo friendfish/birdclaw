@@ -168,20 +168,42 @@ describe("link preview metadata", () => {
 	});
 
 	it("covers address parser edge cases used by preview host checks", () => {
+		expect(__test__.safeHttpUrl(undefined)).toBeNull();
+		expect(__test__.safeHttpUrl("mailto:test@example.com")).toBeNull();
+		expect(__test__.safeHttpUrl("not a url")).toBeNull();
+		expect(__test__.safeHttpUrl("https://example.com/a")).toBe(
+			"https://example.com/a",
+		);
 		expect(__test__.ipv4ToNumber("1.2.3")).toBeNull();
 		expect(__test__.ipv4ToNumber("1.2.3.x")).toBeNull();
 		expect(__test__.ipv4ToNumber("256.1.1.1")).toBeNull();
 		expect(__test__.isIpv4InRange("8.8.8.8", "0.0.0.0", 0)).toBe(true);
 		expect(__test__.isIpv4InRange("bad", "0.0.0.0", 0)).toBe(false);
+		expect(__test__.isIpv4InRange("8.8.8.8", "bad", 0)).toBe(false);
+		expect(__test__.parseIpv6Parts("8.8.8.8")).toBeNull();
 		expect(__test__.parseIpv6Parts("not-an-ip")).toBeNull();
 		expect(__test__.parseIpv6Parts("1::2::3")).toBeNull();
+		expect(__test__.parseIpv6Parts("1:2:3")).toBeNull();
+		expect(__test__.parseIpv6Parts("1:2:3:4:5:6:7:8:9")).toBeNull();
+		expect(__test__.parseIpv6Parts("1:2:3:4:5:6:7:zzzz")).toBeNull();
+		expect(__test__.parseIpv6Parts("::ffff:999.0.0.1")).toBeNull();
 		expect(__test__.parseIpv6Parts("::ffff:127.0.0.1")).toEqual([
 			0, 0, 0, 0, 0, 0xffff, 0x7f00, 1,
 		]);
 		expect(__test__.ipv4FromIpv6Suffix("::ffff:7f00:1")).toBe("127.0.0.1");
+		expect(__test__.ipv4FromIpv6Suffix("::ffff:127.0.0.1")).toBe("127.0.0.1");
+		expect(__test__.ipv4FromIpv6Suffix("64:ff9b::7f00:1")).toBe("127.0.0.1");
+		expect(__test__.ipv4FromIpv6Suffix("64:ff9b:1::7f00:1")).toBe("127.0.0.1");
+		expect(__test__.ipv4FromIpv6Suffix("::ffff:zzzz")).toBeNull();
 		expect(__test__.ipv4FromIpv6Suffix("not-an-ip")).toBeNull();
+		expect(__test__.isPrivateIpv6("::")).toBe(true);
+		expect(__test__.isPrivateIpv6("::1")).toBe(true);
 		expect(__test__.isPrivateIpv6("not-an-ip")).toBe(false);
 		expect(__test__.isPrivateIpv6("fd00::1")).toBe(true);
+		expect(__test__.isPrivateIpv6("2001:4860:4860::8888")).toBe(false);
+		expect(() =>
+			__test__.assertSafePreviewUrl("https://example.com/"),
+		).not.toThrow();
 	});
 
 	it("rejects unsupported schemes and credentialed preview URLs", async () => {
@@ -533,6 +555,91 @@ describe("link preview metadata", () => {
 			title: "Peekaboo",
 			image_url: "https://peekaboo.sh/og.png",
 		});
+	});
+
+	it("returns safe cached previews without refetching", async () => {
+		const tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-preview-"));
+		tempDirs.push(tempDir);
+		process.env.BIRDCLAW_HOME = tempDir;
+		resetBirdclawPathsForTests();
+		resetDatabaseForTests();
+		getNativeDb({ seedDemoData: false })
+			.prepare(
+				`
+				insert into url_expansions (
+					short_url, expanded_url, final_url, status, title, description,
+					image_url, site_name, error, source, updated_at
+				) values (?, ?, ?, 'hit', ?, ?, ?, ?, null, 'metadata', ?)
+				`,
+			)
+			.run(
+				"https://t.co/cached",
+				"https://example.com/cached",
+				"https://example.com/final",
+				"Cached title",
+				"Cached description",
+				"https://example.com/card.png",
+				"Example",
+				"2026-05-17T00:00:00.000Z",
+			);
+		const fetchImpl = vi.fn();
+
+		await expect(
+			getOrFetchLinkPreview("https://example.com/final", {
+				shortUrl: "https://t.co/cached",
+				fetchImpl,
+			}),
+		).resolves.toEqual({
+			url: "https://example.com/final",
+			title: "Cached title",
+			description: "Cached description",
+			imageUrl: "https://example.com/card.png",
+			siteName: "Example",
+		});
+		expect(fetchImpl).not.toHaveBeenCalled();
+	});
+
+	it("refetches unsafe or non-hit cached previews", async () => {
+		const tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-preview-"));
+		tempDirs.push(tempDir);
+		process.env.BIRDCLAW_HOME = tempDir;
+		resetBirdclawPathsForTests();
+		resetDatabaseForTests();
+		getNativeDb({ seedDemoData: false }).exec(`
+			insert into url_expansions (
+				short_url, expanded_url, final_url, status, title, description,
+				image_url, site_name, error, source, updated_at
+			) values
+				('https://t.co/unsafe-image', 'https://example.com/unsafe-image',
+				 'https://example.com/unsafe-image', 'hit', 'Unsafe image', null,
+				 'http://127.0.0.1/card.png', 'Example', null, 'metadata',
+				 '2026-05-17T00:00:00.000Z'),
+				('https://t.co/miss', 'https://example.com/miss',
+				 'https://example.com/miss', 'miss', 'Miss', null,
+				 null, 'Example', 'HTTP 404', 'metadata',
+				 '2026-05-17T00:00:00.000Z')
+		`);
+		const fetchImpl = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			url: "https://example.com/refetched",
+			headers: new Headers({ "content-type": "text/html" }),
+			text: vi.fn().mockResolvedValue("<title>Refetched</title>"),
+		});
+
+		await expect(
+			getOrFetchLinkPreview("https://example.com/unsafe-image", {
+				shortUrl: "https://t.co/unsafe-image",
+				fetchImpl,
+			}),
+		).resolves.toMatchObject({ title: "Refetched" });
+		await expect(
+			getOrFetchLinkPreview("https://example.com/miss", {
+				shortUrl: "https://t.co/miss",
+				fetchImpl,
+			}),
+		).resolves.toMatchObject({ title: "Refetched" });
+		expect(fetchImpl).toHaveBeenCalledTimes(2);
 	});
 
 	it("keeps cached-preview effects lazy until run", async () => {
