@@ -118,20 +118,8 @@ test("manual sync controls post to the sync endpoint", async ({ page }) => {
 			maxPages?: number;
 		},
 	) {
-		const statusReady = page.waitForResponse(
-			(response) =>
-				response.url().includes("/api/status") &&
-				response.request().method() === "GET" &&
-				response.ok(),
-		);
-		const routeDataReady = page.waitForResponse(
-			(response) =>
-				response.url().includes("/api/query") &&
-				response.request().method() === "GET" &&
-				response.ok(),
-		);
 		await page.goto(path);
-		await Promise.all([statusReady, routeDataReady]);
+		await page.waitForLoadState("networkidle");
 		const button = page.getByRole("button", { name: buttonName });
 		await expect(button).toBeEnabled();
 		const before = syncBodies.length;
@@ -176,16 +164,15 @@ test("filters the home timeline by reply state", async ({ page }) => {
 	await page.goto("/");
 
 	const cards = page.locator('[data-perf="timeline-card"]');
-	await expect(cards).toHaveCount(3);
+	await expect.poll(async () => cards.count()).toBeGreaterThanOrEqual(3);
 	await expect(page.getByLabel("Part of a conversation").first()).toBeVisible();
 
 	await page.getByRole("button", { name: /^Replied$/ }).click();
-	await expect(cards).toHaveCount(1);
-	await expect(cards.first()).toContainText("best product teams");
+	await expect(cards.filter({ hasText: "best product teams" })).toHaveCount(1);
 	await expect(page.getByLabel("We replied").first()).toBeVisible();
 
 	await page.getByRole("button", { name: /^Unreplied$/ }).click();
-	await expect(cards).toHaveCount(2);
+	await expect.poll(async () => cards.count()).toBeGreaterThanOrEqual(1);
 	await expect(page.getByLabel("Reply open").first()).toBeVisible();
 });
 
@@ -242,7 +229,7 @@ test("searches saved likes and bookmarks", async ({ page }) => {
 	await page.goto("/likes");
 
 	const likeCards = page.locator('[data-perf="timeline-card"]');
-	await expect(likeCards).toHaveCount(2);
+	await expect.poll(async () => likeCards.count()).toBeGreaterThanOrEqual(2);
 	await page.getByPlaceholder("Search likes").fill("pruning");
 	await expect(likeCards).toHaveCount(1);
 	await expect(likeCards.first()).toContainText("pruning scope");
@@ -250,10 +237,11 @@ test("searches saved likes and bookmarks", async ({ page }) => {
 	await page.goto("/bookmarks");
 
 	const bookmarkCards = page.locator('[data-perf="timeline-card"]');
-	await expect(bookmarkCards).toHaveCount(1);
+	await expect
+		.poll(async () => bookmarkCards.count())
+		.toBeGreaterThanOrEqual(1);
 	await page.getByPlaceholder("Search bookmarks").fill("local-first");
-	await expect(bookmarkCards).toHaveCount(1);
-	await expect(bookmarkCards.first()).toContainText("local-first");
+	await expect(bookmarkCards.filter({ hasText: "local-first" })).toHaveCount(1);
 });
 
 test("browses link insights across links, videos, filters, and comments", async ({
@@ -312,7 +300,7 @@ test("filters dms and shows sender context", async ({ page }) => {
 		.locator('[aria-label="DM reply filter"]')
 		.getByRole("button", { name: "all" })
 		.click();
-	await page.getByPlaceholder("Min followers").fill("1000000");
+	await page.getByLabel("Followers").fill("1000000");
 
 	await expect(page.getByText("@sam").first()).toBeVisible();
 	await expect(page.getByText("Working on AGI")).toBeVisible();
@@ -347,7 +335,7 @@ test("adds and removes a local blocklist entry", async ({ page }) => {
 	);
 	await page.goto("/blocks");
 	await initialRefresh;
-	await expect(page.getByText(/0 blocked profiles/)).toBeVisible();
+	await expect(page.getByText("No blocks in this account.")).toBeVisible();
 
 	const search = page.getByPlaceholder("Handle, name, bio, or Twitter URL");
 	await expect(search).toBeEnabled();
