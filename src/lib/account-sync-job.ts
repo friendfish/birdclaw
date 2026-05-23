@@ -249,12 +249,22 @@ async function runStep({
 	}): Promise<AccountSyncAuditStep> {
 	try {
 		if (kind === "timeline") {
-			if (!allowBirdAccount) {
+			const timelineMode =
+				mode === "auto"
+					? account
+						? allowBirdAccount
+							? "bird"
+							: "xurl"
+						: "auto"
+					: mode;
+			if (timelineMode === "bird" && !allowBirdAccount) {
 				return { kind, ok: false, count: 0, error: birdAccountError(kind) };
 			}
 			const result = await syncHomeTimeline({
 				account,
+				mode: timelineMode,
 				limit,
+				maxPages,
 				following: true,
 				refresh,
 				cacheTtlMs,

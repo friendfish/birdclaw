@@ -5,18 +5,28 @@ import { getNativeDb } from "./db";
 import { runEffectPromise } from "./effect-runtime";
 import { buildMediaJsonFromIncludes, countTweetMedia } from "./media-includes";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
-import type { XurlMentionsResponse } from "./types";
+import type {
+	XurlMediaItem,
+	XurlMentionUser,
+	XurlMentionsResponse,
+} from "./types";
 import { upsertTweetAccountEdge } from "./tweet-account-edges";
 import { ensureStubProfileForXUser, upsertProfileFromXUser } from "./x-profile";
+import { listHomeTimelineViaXurlEffect } from "./xurl";
 
 const DEFAULT_TIMELINE_CACHE_TTL_MS = 2 * 60_000;
+const MAX_XURL_TIMELINE_PAGE_SIZE = 100;
 
+export type HomeTimelineMode = "bird" | "xurl" | "auto";
 export interface SyncHomeTimelineOptions {
 	account?: string;
+	mode?: HomeTimelineMode;
 	limit?: number;
+	maxPages?: number;
 	following?: boolean;
 	refresh?: boolean;
 	cacheTtlMs?: number;
+	timeoutMs?: number;
 }
 
 function parseCacheTtlMs(value?: number) {
@@ -32,27 +42,105 @@ function assertLimit(limit: number) {
 	}
 }
 
+function parseMode(mode: HomeTimelineMode | undefined) {
+	const parsed = mode ?? "bird";
+	if (parsed !== "bird" && parsed !== "xurl" && parsed !== "auto") {
+		throw new Error("--mode must be bird, xurl, or auto");
+	}
+	return parsed;
+}
+
+function parseMaxPages(maxPages: number | undefined) {
+	if (maxPages === undefined) return 1;
+	if (!Number.isFinite(maxPages) || maxPages < 1) {
+		throw new Error("--max-pages must be at least 1");
+	}
+	return Math.floor(maxPages);
+}
+
+function getReferencedTweetId(
+	tweet: XurlMentionsResponse["data"][number],
+	type: "replied_to" | "quoted",
+) {
+	return tweet.referenced_tweets?.find((reference) => reference.type === type)
+		?.id;
+}
+
+function mergeTimelinePayloads(
+	payloads: XurlMentionsResponse[],
+	limit: number,
+) {
+	const data: XurlMentionsResponse["data"] = [];
+	const usersById = new Map<string, XurlMentionUser>();
+	const mediaByKey = new Map<string, XurlMediaItem>();
+	let meta: XurlMentionsResponse["meta"] | undefined;
+
+	for (const payload of payloads) {
+		meta = payload.meta;
+		for (const tweet of payload.data) {
+			if (data.some((existing) => existing.id === tweet.id)) continue;
+			data.push(tweet);
+			if (data.length >= limit) break;
+		}
+		for (const user of payload.includes?.users ?? []) {
+			usersById.set(user.id, user);
+		}
+		for (const media of payload.includes?.media ?? []) {
+			mediaByKey.set(media.media_key, media);
+		}
+		if (data.length >= limit) break;
+	}
+
+	return {
+		data,
+		includes: {
+			users: [...usersById.values()],
+			media: [...mediaByKey.values()],
+		},
+		meta,
+	} satisfies XurlMentionsResponse;
+}
+
 function resolveAccount(db: Database, accountId?: string) {
 	const row = accountId
-		? (db.prepare("select id from accounts where id = ?").get(accountId) as
-				| { id: string }
+		? (db
+				.prepare(
+					"select id, handle, external_user_id, is_default as isDefault from accounts where id = ?",
+				)
+				.get(accountId) as
+				| ({ id: string; handle: string; external_user_id: string | null } & {
+						isDefault: number;
+				  })
 				| undefined)
 		: (db
 				.prepare(
 					`
-          select id
+          select id, handle, external_user_id, is_default as isDefault
           from accounts
           order by is_default desc, created_at asc
           limit 1
           `,
 				)
-				.get() as { id: string } | undefined);
+				.get() as
+				| ({ id: string; handle: string; external_user_id: string | null } & {
+						isDefault: number;
+				  })
+				| undefined);
 
 	if (!row) {
 		throw new Error(`Unknown account: ${accountId ?? "default"}`);
 	}
 
-	return row.id;
+	return {
+		accountId: row.id,
+		isDefault: row.isDefault === 1,
+		username: row.handle.replace(/^@/, ""),
+		externalUserId:
+			typeof row.external_user_id === "string" &&
+			row.external_user_id.trim().length > 0
+				? row.external_user_id.trim()
+				: undefined,
+	};
 }
 
 function replaceTweetFts(db: Database, tweetId: string, text: string) {
@@ -67,6 +155,7 @@ function mergeHomeTimelineIntoLocalStore(
 	db: Database,
 	accountId: string,
 	payload: XurlMentionsResponse,
+	source: "bird" | "xurl",
 ) {
 	const usersById = new Map(
 		(payload.includes?.users ?? []).map((user) => [user.id, user]),
@@ -77,13 +166,15 @@ function mergeHomeTimelineIntoLocalStore(
       id, account_id, author_profile_id, kind, text, created_at,
       is_replied, reply_to_id, like_count, media_count, bookmarked, liked,
       entities_json, media_json, quoted_tweet_id
-    ) values (?, ?, ?, 'home', ?, ?, 0, null, ?, ?, 0, 0, ?, ?, null)
+    ) values (?, ?, ?, 'home', ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
     on conflict(id) do update set
       account_id = tweets.account_id,
       author_profile_id = excluded.author_profile_id,
       kind = tweets.kind,
       text = excluded.text,
       created_at = excluded.created_at,
+      is_replied = max(tweets.is_replied, excluded.is_replied),
+      reply_to_id = coalesce(tweets.reply_to_id, excluded.reply_to_id),
       like_count = excluded.like_count,
       media_count = max(tweets.media_count, excluded.media_count),
       entities_json = excluded.entities_json,
@@ -92,7 +183,8 @@ function mergeHomeTimelineIntoLocalStore(
         else tweets.media_json
       end,
       bookmarked = tweets.bookmarked,
-      liked = tweets.liked
+      liked = tweets.liked,
+      quoted_tweet_id = coalesce(tweets.quoted_tweet_id, excluded.quoted_tweet_id)
     `,
 	);
 
@@ -109,22 +201,27 @@ function mergeHomeTimelineIntoLocalStore(
 			const profile = usersById.has(tweet.author_id)
 				? upsertProfileFromXUser(db, author)
 				: ensureStubProfileForXUser(db, tweet.author_id);
+			const replyToId = getReferencedTweetId(tweet, "replied_to") ?? null;
+			const quotedTweetId = getReferencedTweetId(tweet, "quoted") ?? null;
 			upsertTweet.run(
 				tweet.id,
 				accountId,
 				profile.profile.id,
 				tweet.text,
 				tweet.created_at,
+				0,
+				replyToId,
 				Number(tweet.public_metrics?.like_count ?? 0),
 				countTweetMedia(tweet),
 				JSON.stringify(tweet.entities ?? {}),
 				buildMediaJsonFromIncludes(tweet, payload.includes?.media),
+				quotedTweetId,
 			);
 			upsertTweetAccountEdge(db, {
 				accountId,
 				tweetId: tweet.id,
 				kind: "home",
-				source: "bird",
+				source,
 				seenAt,
 				rawJson: JSON.stringify(tweet),
 			});
@@ -135,14 +232,17 @@ function mergeHomeTimelineIntoLocalStore(
 
 export function syncHomeTimelineEffect({
 	account,
+	mode,
 	limit = 100,
+	maxPages,
 	following = true,
 	refresh = false,
 	cacheTtlMs,
+	timeoutMs,
 }: SyncHomeTimelineOptions = {}): Effect.Effect<
 	{
 		ok: true;
-		source: "bird" | "cache";
+		source: "bird" | "xurl" | "cache";
 		kind: "timeline";
 		accountId: string;
 		feed: "following" | "for-you";
@@ -153,9 +253,18 @@ export function syncHomeTimelineEffect({
 > {
 	return Effect.gen(function* () {
 		assertLimit(limit);
+		const parsedMode = parseMode(mode);
+		const parsedMaxPages = parseMaxPages(maxPages);
 		const db = getNativeDb();
-		const accountId = resolveAccount(db, account);
-		const cacheKey = `timeline:bird:${accountId}:${following ? "following" : "for-you"}:${String(limit)}`;
+		const resolvedAccount = resolveAccount(db, account);
+		const accountId = resolvedAccount.accountId;
+		const effectiveMode =
+			parsedMode === "auto" &&
+			account !== undefined &&
+			!resolvedAccount.isDefault
+				? "xurl"
+				: parsedMode;
+		const cacheKey = `timeline:${effectiveMode}:${accountId}:${following ? "following" : "for-you"}:${String(limit)}:${String(parsedMaxPages)}`;
 		const ttlMs = parseCacheTtlMs(cacheTtlMs);
 		const cached = readSyncCache<XurlMentionsResponse>(cacheKey, db);
 		const cacheAgeMs = cached
@@ -174,16 +283,75 @@ export function syncHomeTimelineEffect({
 			} as const;
 		}
 
-		const payload = yield* listHomeTimelineViaBirdEffect({
+		const fetchViaXurl = Effect.gen(function* () {
+			if (!following) {
+				return yield* Effect.fail(
+					new Error("xurl home timeline mode does not support --for-you"),
+				);
+			}
+			const pages: XurlMentionsResponse[] = [];
+			let nextToken: string | undefined;
+			for (let page = 0; page < parsedMaxPages; page += 1) {
+				const fetchedCount = pages.reduce(
+					(sum, item) => sum + item.data.length,
+					0,
+				);
+				const remaining = Math.max(1, limit - fetchedCount);
+				const pageSize = Math.min(
+					MAX_XURL_TIMELINE_PAGE_SIZE,
+					Math.max(5, remaining),
+				);
+				const pagePayload = yield* listHomeTimelineViaXurlEffect({
+					maxResults: pageSize,
+					userId: resolvedAccount.externalUserId,
+					username: resolvedAccount.username,
+					paginationToken: nextToken,
+					timeoutMs,
+				});
+				pages.push(pagePayload);
+				nextToken =
+					typeof pagePayload.meta?.next_token === "string"
+						? pagePayload.meta.next_token
+						: undefined;
+				if (!nextToken || fetchedCount + pagePayload.data.length >= limit) {
+					break;
+				}
+			}
+			return mergeTimelinePayloads(pages, limit);
+		});
+		const fetchViaBird = listHomeTimelineViaBirdEffect({
 			maxResults: limit,
 			following,
 		});
-		mergeHomeTimelineIntoLocalStore(db, accountId, payload);
+		let source: "bird" | "xurl";
+		let payload: XurlMentionsResponse;
+		if (effectiveMode === "xurl") {
+			payload = yield* fetchViaXurl;
+			source = "xurl";
+		} else if (effectiveMode === "auto") {
+			const fetched = yield* fetchViaXurl.pipe(
+				Effect.map((value) => ({ source: "xurl" as const, value })),
+				Effect.catchAll(() =>
+					fetchViaBird.pipe(
+						Effect.map((value) => ({ source: "bird" as const, value })),
+					),
+				),
+			);
+			payload = fetched.value;
+			source = fetched.source;
+		} else {
+			payload = yield* listHomeTimelineViaBirdEffect({
+				maxResults: limit,
+				following,
+			});
+			source = "bird";
+		}
+		mergeHomeTimelineIntoLocalStore(db, accountId, payload, source);
 		writeSyncCache(cacheKey, payload, db);
 
 		return {
 			ok: true,
-			source: "bird",
+			source,
 			kind: "timeline",
 			accountId,
 			feed: following ? "following" : "for-you",

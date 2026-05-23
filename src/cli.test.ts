@@ -2495,6 +2495,8 @@ describe("cli", () => {
 				model: "gpt-5.5",
 				maxTweets: 10,
 				maxLinks: 2,
+				liveSync: true,
+				liveSyncMode: "xurl",
 			},
 			expect.objectContaining({ onDelta: expect.any(Function) }),
 		);
@@ -2528,6 +2530,22 @@ describe("cli", () => {
 		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
 		expect(consoleErrorMock).toHaveBeenCalledWith(
 			expect.stringContaining("--max-tweets must be a non-negative integer"),
+		);
+		consoleErrorMock.mockRestore();
+	});
+
+	it("rejects invalid digest live modes", async () => {
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "today", "--live-mode", "weird"]);
+
+		expect(process.exitCode).toBe(1);
+		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
+		expect(consoleErrorMock).toHaveBeenCalledWith(
+			expect.stringContaining("--live-mode must be auto, bird, or xurl"),
 		);
 		consoleErrorMock.mockRestore();
 	});

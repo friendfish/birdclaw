@@ -9,6 +9,7 @@ import { getNativeDb, resetDatabaseForTests } from "./db";
 import { listTimelineItems } from "./queries";
 
 const listHomeTimelineViaBirdMock = vi.fn();
+const listHomeTimelineViaXurlMock = vi.fn();
 
 vi.mock("./bird", async () => {
 	const { Effect } = await import("effect");
@@ -18,6 +19,17 @@ vi.mock("./bird", async () => {
 		listHomeTimelineViaBirdEffect: (...args: unknown[]) =>
 			Effect.tryPromise({
 				try: () => listHomeTimelineViaBirdMock(...args),
+				catch: (error) => error,
+			}),
+	};
+});
+
+vi.mock("./xurl", async () => {
+	const { Effect } = await import("effect");
+	return {
+		listHomeTimelineViaXurlEffect: (...args: unknown[]) =>
+			Effect.tryPromise({
+				try: () => listHomeTimelineViaXurlMock(...args),
 				catch: (error) => error,
 			}),
 	};
@@ -39,6 +51,7 @@ afterEach(() => {
 	resetBirdclawPathsForTests();
 	delete process.env.BIRDCLAW_HOME;
 	listHomeTimelineViaBirdMock.mockReset();
+	listHomeTimelineViaXurlMock.mockReset();
 
 	for (const dir of tempDirs.splice(0)) {
 		rmSync(dir, { recursive: true, force: true });
@@ -181,5 +194,126 @@ describe("live home timeline sync", () => {
 
 		expect(row.media_count).toBe(1);
 		expect(row.media_json).toBe(existingMediaJson);
+	});
+
+	it("fetches paginated xurl home timeline and stores reply context", async () => {
+		makeTempHome();
+		const db = getNativeDb();
+		listHomeTimelineViaXurlMock
+			.mockResolvedValueOnce({
+				data: [
+					{
+						id: "home_xurl_reply",
+						author_id: "42",
+						text: "reply from the live timeline",
+						created_at: "2026-04-26T13:43:34.000Z",
+						referenced_tweets: [{ type: "replied_to", id: "tweet_001" }],
+						public_metrics: { like_count: 12 },
+					},
+				],
+				includes: {
+					users: [{ id: "42", username: "sam", name: "Sam" }],
+				},
+				meta: { next_token: "next-page" },
+			})
+			.mockResolvedValueOnce({
+				data: [
+					{
+						id: "home_xurl_2",
+						author_id: "43",
+						text: "second page item",
+						created_at: "2026-04-26T13:40:34.000Z",
+					},
+				],
+				includes: {
+					users: [{ id: "43", username: "lee", name: "Lee" }],
+				},
+				meta: {},
+			});
+		const { syncHomeTimeline } = await import("./timeline-live");
+
+		const result = await syncHomeTimeline({
+			account: "acct_primary",
+			mode: "xurl",
+			limit: 2,
+			maxPages: 2,
+			refresh: true,
+		});
+
+		expect(result).toMatchObject({ source: "xurl", count: 2 });
+		expect(listHomeTimelineViaXurlMock).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({
+				maxResults: 5,
+				userId: "25401953",
+				username: "steipete",
+			}),
+		);
+		expect(listHomeTimelineViaXurlMock).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ paginationToken: "next-page" }),
+		);
+		expect(
+			db
+				.prepare(
+					"select reply_to_id, is_replied from tweets where id = 'home_xurl_reply'",
+				)
+				.get(),
+		).toEqual({ reply_to_id: "tweet_001", is_replied: 0 });
+		expect(
+			db
+				.prepare(
+					"select source from tweet_account_edges where tweet_id = 'home_xurl_reply'",
+				)
+				.get(),
+		).toEqual({ source: "xurl" });
+	});
+
+	it("falls back to bird for auto mode and rejects xurl for-you imports", async () => {
+		makeTempHome();
+		listHomeTimelineViaXurlMock.mockRejectedValueOnce(new Error("no xurl"));
+		listHomeTimelineViaBirdMock.mockResolvedValueOnce({
+			data: [],
+			meta: { result_count: 0 },
+		});
+		const { syncHomeTimeline } = await import("./timeline-live");
+
+		await expect(
+			syncHomeTimeline({
+				account: "acct_primary",
+				mode: "auto",
+				limit: 5,
+				refresh: true,
+			}),
+		).resolves.toMatchObject({ source: "bird" });
+		await expect(
+			syncHomeTimeline({
+				account: "acct_primary",
+				mode: "xurl",
+				limit: 5,
+				following: false,
+				refresh: true,
+			}),
+		).rejects.toThrow("xurl home timeline mode does not support --for-you");
+	});
+
+	it("does not fall back to bird for non-default account auto syncs", async () => {
+		makeTempHome();
+		listHomeTimelineViaXurlMock.mockRejectedValueOnce(new Error("no xurl"));
+		listHomeTimelineViaBirdMock.mockResolvedValueOnce({
+			data: [],
+			meta: { result_count: 0 },
+		});
+		const { syncHomeTimeline } = await import("./timeline-live");
+
+		await expect(
+			syncHomeTimeline({
+				account: "acct_studio",
+				mode: "auto",
+				limit: 5,
+				refresh: true,
+			}),
+		).rejects.toThrow("no xurl");
+		expect(listHomeTimelineViaBirdMock).not.toHaveBeenCalled();
 	});
 });

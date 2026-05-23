@@ -308,6 +308,55 @@ describe("xurl transport wrapper", () => {
 		]);
 	});
 
+	it("lists reverse-chronological home timeline via xurl oauth2", async () => {
+		execFileAsyncMock.mockResolvedValueOnce({
+			stdout: JSON.stringify({
+				data: [{ id: "tweet_1", author_id: "42", text: "home" }],
+				meta: { next_token: "next" },
+			}),
+			stderr: "",
+		});
+		const { listHomeTimelineViaXurl } = await import("./xurl");
+
+		await expect(
+			listHomeTimelineViaXurl({
+				maxResults: 100,
+				userId: "25401953",
+				paginationToken: "cursor",
+			}),
+		).resolves.toEqual({
+			data: [{ id: "tweet_1", author_id: "42", text: "home" }],
+			meta: { next_token: "next" },
+		});
+		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
+			"--auth",
+			"oauth2",
+			`/2/users/25401953/timelines/reverse_chronological?max_results=100&expansions=${AUTHOR_MEDIA_EXPANSIONS}&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics%2Creferenced_tweets&media.fields=${MEDIA_FIELDS}&user.fields=${RICH_USER_FIELDS}&pagination_token=cursor`,
+		]);
+	});
+
+	it("selects the requested OAuth2 username for home timeline reads", async () => {
+		execFileAsyncMock.mockResolvedValueOnce({
+			stdout: JSON.stringify({ data: [] }),
+			stderr: "",
+		});
+		const { listHomeTimelineViaXurl } = await import("./xurl");
+
+		await listHomeTimelineViaXurl({
+			maxResults: 100,
+			userId: "25401953",
+			username: "steipete",
+		});
+
+		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
+			"--auth",
+			"oauth2",
+			"--username",
+			"steipete",
+			`/2/users/25401953/timelines/reverse_chronological?max_results=100&expansions=${AUTHOR_MEDIA_EXPANSIONS}&tweet.fields=created_at%2Cconversation_id%2Centities%2Cpublic_metrics%2Creferenced_tweets&media.fields=${MEDIA_FIELDS}&user.fields=${RICH_USER_FIELDS}`,
+		]);
+	});
+
 	it("passes start_time for mention backfills when present", async () => {
 		execFileAsyncMock.mockResolvedValueOnce({
 			stdout: JSON.stringify({

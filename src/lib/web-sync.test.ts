@@ -364,18 +364,23 @@ describe("web sync dispatcher", () => {
 		});
 	});
 
-	it("ignores selected accounts for Bird-only sync plans", async () => {
+	it("keeps timeline web syncs account-scoped", async () => {
 		const pending = deferred<{ ok: boolean; source: string; count: number }>();
 		syncHomeTimelineMock.mockReturnValue(pending.promise);
 
 		const defaultJob = startWebSync("timeline");
 		const selectedJob = startWebSync("timeline", "acct_studio");
 
-		expect(selectedJob.id).toBe(defaultJob.id);
-		expect(selectedJob.accountId).toBeUndefined();
-		expect(syncHomeTimelineMock).toHaveBeenCalledTimes(1);
-		expect(syncHomeTimelineMock).toHaveBeenCalledWith(
-			expect.objectContaining({ account: undefined }),
+		expect(selectedJob.id).not.toBe(defaultJob.id);
+		expect(selectedJob.accountId).toBe("acct_studio");
+		expect(syncHomeTimelineMock).toHaveBeenCalledTimes(2);
+		expect(syncHomeTimelineMock).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({ account: undefined, mode: "auto" }),
+		);
+		expect(syncHomeTimelineMock).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ account: "acct_studio", mode: "xurl" }),
 		);
 
 		pending.resolve({ ok: true, source: "bird", count: 1 });
@@ -383,6 +388,26 @@ describe("web sync dispatcher", () => {
 			expect(getWebSyncJob(defaultJob.id)).toMatchObject({
 				status: "succeeded",
 			});
+		});
+	});
+
+	it("keeps auto fallback for default-account timeline syncs", async () => {
+		setupDefaultAccount("acct_studio");
+		syncHomeTimelineMock.mockResolvedValue({
+			ok: true,
+			source: "bird",
+			count: 7,
+		});
+
+		await runWebSync("timeline", "acct_studio");
+
+		expect(syncHomeTimelineMock).toHaveBeenCalledWith({
+			account: "acct_studio",
+			mode: "auto",
+			limit: 100,
+			maxPages: 3,
+			following: true,
+			refresh: true,
 		});
 	});
 

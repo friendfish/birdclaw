@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
 import { Effect } from "effect";
 import { z } from "zod";
+import { maybeAutoSyncBackupEffect } from "./backup";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
 import { getLinkInsights } from "./link-insights";
+import { syncMentionThreadsEffect } from "./mention-threads-live";
+import { syncMentionsEffect } from "./mentions-live";
 import { listDmConversations, listTimelineItems } from "./queries";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
+import { syncHomeTimelineEffect, type HomeTimelineMode } from "./timeline-live";
 import type { ProfileRecord } from "./types";
 
 export type PeriodDigestPreset = "today" | "yesterday" | "24h" | "week";
@@ -29,6 +33,13 @@ export interface PeriodDigestOptions {
 	signal?: AbortSignal;
 	maxTweets?: number;
 	maxLinks?: number;
+	liveSync?: boolean;
+	liveSyncMode?: HomeTimelineMode;
+	liveTimelineLimit?: number;
+	liveTimelineMaxPages?: number;
+	liveMentionsLimit?: number;
+	liveMentionsMaxPages?: number;
+	liveThreadLimit?: number;
 }
 
 export interface PeriodDigestWindow {
@@ -111,6 +122,15 @@ interface CompactTweet {
 	liked: boolean;
 	bookmarked: boolean;
 	needsReply: boolean;
+	replyToId?: string | null;
+	replyToTweet?: {
+		id: string;
+		url: string;
+		author: string;
+		name: string;
+		createdAt: string;
+		text: string;
+	} | null;
 }
 
 interface CompactDm {
@@ -168,6 +188,12 @@ const DEFAULT_REASONING_EFFORT = "medium";
 const DEFAULT_SERVICE_TIER = "priority";
 const DEFAULT_MAX_TWEETS = 300;
 const DEFAULT_MAX_LINKS = 12;
+const DEFAULT_LIVE_TIMELINE_LIMIT = 300;
+const DEFAULT_LIVE_TIMELINE_MAX_PAGES = 3;
+const DEFAULT_LIVE_MENTIONS_LIMIT = 100;
+const DEFAULT_LIVE_MENTIONS_MAX_PAGES = 3;
+const DEFAULT_LIVE_THREAD_LIMIT = 12;
+const DEFAULT_LIVE_THREAD_TIMEOUT_MS = 5_000;
 const DELIMITER_PATTERN = /\n---\s*\n/;
 const VISIBLE_DELIMITER_HOLD = 8;
 
@@ -273,6 +299,16 @@ function compactTweet(
 	source: PeriodDigestSourceKind,
 	item: ReturnType<typeof listTimelineItems>[number],
 ): CompactTweet {
+	const replyToTweet = item.replyToTweet
+		? {
+				id: item.replyToTweet.id,
+				url: tweetUrl(item.replyToTweet.author.handle, item.replyToTweet.id),
+				author: item.replyToTweet.author.handle,
+				name: item.replyToTweet.author.displayName,
+				createdAt: item.replyToTweet.createdAt,
+				text: item.replyToTweet.text,
+			}
+		: null;
 	return {
 		id: item.id,
 		url: tweetUrl(item.author.handle, item.id),
@@ -286,6 +322,8 @@ function compactTweet(
 		liked: item.liked,
 		bookmarked: item.bookmarked,
 		needsReply: !item.isReplied,
+		replyToId: item.replyToId ?? null,
+		replyToTweet,
 	};
 }
 
@@ -417,6 +455,9 @@ function contextHash(context: Omit<PeriodDigestContext, "hash">) {
 					tweet.liked,
 					tweet.bookmarked,
 					tweet.needsReply,
+					tweet.replyToId,
+					tweet.replyToTweet?.id,
+					tweet.replyToTweet?.text,
 				]),
 				dms: context.dms.map((dm) => [
 					dm.id,
@@ -537,6 +578,99 @@ function serviceTierFromOptions(options: PeriodDigestOptions) {
 	);
 }
 
+function boundedPositiveInteger(
+	value: number | undefined,
+	fallback: number,
+	max: number,
+) {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 1) {
+		return fallback;
+	}
+	return Math.min(max, Math.floor(value));
+}
+
+function refreshPeriodDigestInputsEffect(
+	options: PeriodDigestOptions,
+	phase: {
+		timeline?: boolean;
+		mentions?: boolean;
+		threads?: boolean;
+		threadTweetIds?: string[];
+	} = {},
+): Effect.Effect<void, unknown> {
+	if (!options.liveSync) {
+		return Effect.void;
+	}
+	const includeTimeline = phase.timeline ?? true;
+	const includeMentions = phase.mentions ?? true;
+	const includeThreads = phase.threads ?? true;
+	const window = resolvePeriodDigestWindow(options);
+	const mode = options.liveSyncMode ?? "xurl";
+	const timelineLimit = boundedPositiveInteger(
+		options.liveTimelineLimit ?? options.maxTweets,
+		DEFAULT_LIVE_TIMELINE_LIMIT,
+		500,
+	);
+	const mentionsLimit = boundedPositiveInteger(
+		options.liveMentionsLimit,
+		DEFAULT_LIVE_MENTIONS_LIMIT,
+		100,
+	);
+	const threadLimit = boundedPositiveInteger(
+		options.liveThreadLimit,
+		DEFAULT_LIVE_THREAD_LIMIT,
+		100,
+	);
+	const timelineMaxPages = boundedPositiveInteger(
+		options.liveTimelineMaxPages,
+		DEFAULT_LIVE_TIMELINE_MAX_PAGES,
+		10,
+	);
+	const mentionsMaxPages = boundedPositiveInteger(
+		options.liveMentionsMaxPages,
+		DEFAULT_LIVE_MENTIONS_MAX_PAGES,
+		10,
+	);
+
+	return Effect.gen(function* () {
+		if (includeTimeline) {
+			yield* syncHomeTimelineEffect({
+				account: options.account,
+				mode,
+				limit: timelineLimit,
+				maxPages: timelineMaxPages,
+				following: true,
+				refresh: Boolean(options.refresh),
+				cacheTtlMs: 2 * 60_000,
+				timeoutMs: 30_000,
+			}).pipe(Effect.catchAll(() => Effect.void));
+		}
+		if (includeMentions) {
+			yield* syncMentionsEffect({
+				account: options.account,
+				mode: "xurl",
+				limit: mentionsLimit,
+				maxPages: mentionsMaxPages,
+				startTime: window.since,
+				refresh: Boolean(options.refresh),
+				cacheTtlMs: 2 * 60_000,
+			}).pipe(Effect.catchAll(() => Effect.void));
+		}
+		if (includeThreads) {
+			yield* syncMentionThreadsEffect({
+				account: options.account,
+				mode: "xurl",
+				limit: threadLimit,
+				tweetIds: phase.threadTweetIds,
+				delayMs: 100,
+				timeoutMs: DEFAULT_LIVE_THREAD_TIMEOUT_MS,
+				maxPages: 2,
+			}).pipe(Effect.catchAll(() => Effect.void));
+		}
+		yield* maybeAutoSyncBackupEffect().pipe(Effect.catchAll(() => Effect.void));
+	}).pipe(Effect.asVoid);
+}
+
 function digestCacheKey(
 	context: PeriodDigestContext,
 	options: PeriodDigestOptions,
@@ -565,6 +699,8 @@ function buildPrompt(context: PeriodDigestContext) {
 		liked: tweet.liked,
 		bookmarked: tweet.bookmarked,
 		needsReply: tweet.needsReply,
+		replyToId: tweet.replyToId,
+		replyToTweet: tweet.replyToTweet,
 	}));
 
 	return `Window: ${context.window.label}
@@ -579,6 +715,7 @@ Requirements:
 - Target 700-1100 words when there is enough data.
 - Start with a 2-3 sentence lead that immediately says what people are talking about.
 - Use sections named "What people are talking about", "Important links shared", and "Worth opening". Add "Worth replying to" only if there are clearly high-signal replies.
+- When a tweet has replyToTweet, use that parent context to understand what the author was replying to and whether Peter already joined the conversation.
 - Use bullets under each section. Each bullet should be specific and explain why it matters.
 - For tweets: cite every claim with inline tweet ids at the end of the relevant sentence or bullet, e.g. (tweet_123, tweet_456). These citations become hoverable source links.
 - For links: emit normal Markdown links with no space between the label and URL, e.g. [title](https://example.com), then cite the sharing tweet ids in the same bullet.
@@ -870,10 +1007,13 @@ export function streamPeriodDigestEffect(
 	handlers: PeriodDigestStreamHandlers = {},
 ): Effect.Effect<PeriodDigestRunResult, Error> {
 	return Effect.gen(function* () {
-		const context = yield* tryDigestSync(() =>
+		yield* refreshPeriodDigestInputsEffect(options, { threads: false }).pipe(
+			Effect.catchAll(() => Effect.void),
+		);
+		let context = yield* tryDigestSync(() =>
 			collectPeriodDigestContext(options),
 		);
-		const cacheKey = digestCacheKey(context, options);
+		let cacheKey = digestCacheKey(context, options);
 		const cached = options.refresh
 			? null
 			: yield* tryDigestSync(() =>
@@ -903,6 +1043,17 @@ export function streamPeriodDigestEffect(
 			handlers.onEvent?.({ type: "done", result });
 			return result;
 		}
+
+		yield* refreshPeriodDigestInputsEffect(options, {
+			timeline: false,
+			mentions: false,
+			threads: true,
+			threadTweetIds: context.tweets
+				.filter((tweet) => tweet.source === "mentions")
+				.map((tweet) => tweet.id),
+		}).pipe(Effect.catchAll(() => Effect.void));
+		context = yield* tryDigestSync(() => collectPeriodDigestContext(options));
+		cacheKey = digestCacheKey(context, options);
 
 		const apiKey = process.env.OPENAI_API_KEY;
 		if (!apiKey) {

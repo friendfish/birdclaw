@@ -99,6 +99,7 @@ export function TimelineRouteFrame({
 						kind={syncKind}
 						label={syncLabel}
 						onSynced={refreshLocalView}
+						showAccountPicker
 					/>
 				</div>
 				<div className="px-4 pb-3">

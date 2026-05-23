@@ -206,6 +206,18 @@ function parseDmSyncModeOption(
 	return undefined;
 }
 
+function parseDigestLiveModeOption(
+	value: string | undefined,
+): PeriodDigestOptions["liveSyncMode"] {
+	const normalized = (value ?? "xurl").trim().toLowerCase();
+	if (normalized === "auto" || normalized === "bird" || normalized === "xurl") {
+		return normalized;
+	}
+	printError("--live-mode must be auto, bird, or xurl");
+	process.exitCode = 1;
+	return undefined;
+}
+
 function parseArchiveImportSelect(value: string | undefined) {
 	if (value === undefined) {
 		return undefined;
@@ -280,6 +292,8 @@ function buildDigestOptions(
 		until?: string;
 		maxTweets?: string;
 		maxLinks?: string;
+		liveSync?: boolean;
+		liveMode?: string;
 	},
 ): PeriodDigestOptions | null {
 	const maxTweets = parseNonNegativeIntegerOption(
@@ -296,6 +310,10 @@ function buildDigestOptions(
 	if (options.maxLinks !== undefined && maxLinks === undefined) {
 		return null;
 	}
+	const liveSyncMode = parseDigestLiveModeOption(options.liveMode);
+	if (liveSyncMode === undefined) {
+		return null;
+	}
 	return {
 		period: parseDigestPeriod(period),
 		since: options.since,
@@ -306,6 +324,8 @@ function buildDigestOptions(
 		model: options.model,
 		maxTweets,
 		maxLinks,
+		liveSync: options.liveSync !== false,
+		liveSyncMode,
 	};
 }
 
@@ -1002,6 +1022,12 @@ program
 	.option("--refresh", "Bypass the local digest cache")
 	.option("--max-tweets <n>", "Maximum tweet context", "300")
 	.option("--max-links <n>", "Maximum linked articles", "12")
+	.option("--no-live-sync", "Use only the local database")
+	.option(
+		"--live-mode <mode>",
+		"Live timeline mode: xurl, bird, or auto",
+		"xurl",
+	)
 	.action(async (options) => {
 		await autoUpdateBeforeRead();
 		const digestOptions = buildDigestOptions("today", options);
@@ -1020,6 +1046,12 @@ program
 	.option("--refresh", "Bypass the local digest cache")
 	.option("--max-tweets <n>", "Maximum tweet context", "300")
 	.option("--max-links <n>", "Maximum linked articles", "12")
+	.option("--no-live-sync", "Use only the local database")
+	.option(
+		"--live-mode <mode>",
+		"Live timeline mode: xurl, bird, or auto",
+		"xurl",
+	)
 	.action(async (period, options) => {
 		await autoUpdateBeforeRead();
 		const digestOptions = buildDigestOptions(period, options);
@@ -1118,16 +1150,20 @@ const syncCommand = program
 
 syncCommand
 	.command("timeline")
-	.description("Refresh live home timeline through bird")
+	.description("Refresh live home timeline through xurl or bird")
 	.option("--account <accountId>", "Account id")
+	.option("--mode <mode>", "auto, xurl, or bird", "auto")
 	.option("--limit <n>", "Result limit", "100")
+	.option("--max-pages <n>", "Stop after N xurl pages", "3")
 	.option("--for-you", 'Fetch "For You" instead of chronological Following')
 	.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
 	.option("--refresh", "Bypass live-cache freshness window")
 	.action(async (options) => {
 		const result = await syncHomeTimeline({
 			account: options.account,
+			mode: options.mode,
 			limit: Number(options.limit),
+			maxPages: Number(options.maxPages),
 			following: !options.forYou,
 			refresh: Boolean(options.refresh),
 			cacheTtlMs: Number(options.cacheTtl) * 1000,

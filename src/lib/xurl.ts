@@ -598,6 +598,56 @@ export function listMentionsViaXurl(options: {
 	return runEffectPromise(listMentionsViaXurlEffect(options));
 }
 
+export function listHomeTimelineViaXurlEffect({
+	maxResults,
+	username,
+	userId,
+	paginationToken,
+	timeoutMs,
+}: {
+	maxResults: number;
+	username?: string;
+	userId?: string;
+	paginationToken?: string;
+	timeoutMs?: number;
+}): Effect.Effect<XurlMentionsResponse, Error> {
+	return Effect.gen(function* () {
+		const resolvedUserId = yield* resolveUserIdEffect({ username, userId });
+		const query = new URLSearchParams({
+			max_results: String(maxResults),
+			expansions: AUTHOR_MEDIA_EXPANSIONS,
+			"tweet.fields":
+				"created_at,conversation_id,entities,public_metrics,referenced_tweets",
+			"media.fields": MEDIA_FIELDS,
+			"user.fields": RICH_USER_FIELDS,
+		});
+		if (paginationToken) {
+			query.set("pagination_token", paginationToken);
+		}
+
+		const payload = yield* runJsonCommandEffect(
+			[
+				"--auth",
+				"oauth2",
+				...(username ? ["--username", username] : []),
+				`/2/users/${resolvedUserId}/timelines/reverse_chronological?${query.toString()}`,
+			],
+			{ timeoutMs },
+		);
+		return toXurlMentionsResponse(payload);
+	});
+}
+
+export function listHomeTimelineViaXurl(options: {
+	maxResults: number;
+	username?: string;
+	userId?: string;
+	paginationToken?: string;
+	timeoutMs?: number;
+}): Promise<XurlMentionsResponse> {
+	return runEffectPromise(listHomeTimelineViaXurlEffect(options));
+}
+
 function toXurlMentionsResponse(
 	payload: Record<string, unknown>,
 ): XurlMentionsResponse {

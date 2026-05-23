@@ -34,6 +34,16 @@ function parseOptions(url: URL): PeriodDigestOptions {
 		maxLinks: parseBoundedInteger(url.searchParams.get("maxLinks"), {
 			max: 25,
 		}),
+		liveSync: url.searchParams.get("liveSync") !== "false",
+		liveSyncMode: "xurl",
+		liveTimelineLimit: parseBoundedInteger(
+			url.searchParams.get("liveTimelineLimit"),
+			{ max: 500 },
+		),
+		liveTimelineMaxPages: parseBoundedInteger(
+			url.searchParams.get("liveTimelineMaxPages"),
+			{ max: 10 },
+		),
 	};
 }
 

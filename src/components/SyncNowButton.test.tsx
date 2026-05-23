@@ -150,6 +150,26 @@ describe("SyncNowButton", () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
+	it("waits for timeline account metadata when account selection is enabled", () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(
+			<SyncNowButton
+				kind="timeline"
+				label="Sync timeline"
+				onSynced={vi.fn()}
+				showAccountPicker
+			/>,
+		);
+
+		const button = screen.getByRole("button", { name: "Sync timeline" });
+		expect(button).toBeDisabled();
+		expect(screen.getByText("Loading account")).toBeInTheDocument();
+		fireEvent.click(button);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it("allows account-scoped syncs after an empty account list loads", async () => {
 		const fetchMock = vi.fn(
 			async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -366,7 +386,7 @@ describe("SyncNowButton", () => {
 		});
 	});
 
-	it("keeps Bird-only syncs account-neutral", async () => {
+	it("posts the default account for timeline syncs when accounts are supplied", async () => {
 		const fetchMock = vi.fn(
 			async (_input: RequestInfo | URL, init?: RequestInit) => {
 				const body = JSON.parse(String(init?.body)) as {
@@ -428,14 +448,35 @@ describe("SyncNowButton", () => {
 			expect(fetchMock).toHaveBeenCalledWith(
 				"/api/sync",
 				expect.objectContaining({
-					body: JSON.stringify({ kind: "timeline" }),
+					body: JSON.stringify({
+						kind: "timeline",
+						accountId: "acct_primary",
+					}),
 				}),
 			);
 		});
 	});
 
-	it("disables Bird-only syncs for a selected non-default account", () => {
-		const fetchMock = vi.fn();
+	it("posts selected accounts for timeline syncs", async () => {
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(
+					JSON.stringify({
+						id: "sync_timeline_1",
+						kind: "timeline",
+						status: "succeeded",
+						startedAt: "2026-05-15T12:00:00.000Z",
+						summary: "Synced 12 items",
+						inProgress: false,
+						result: {
+							ok: true,
+							kind: "timeline",
+							summary: "Synced 12 items",
+							steps: [],
+						},
+					}),
+				),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 		setStoredAccountId("acct_studio");
 
@@ -466,13 +507,21 @@ describe("SyncNowButton", () => {
 		);
 
 		const button = screen.getByRole("button", {
-			name: "Sync timeline: default account only",
+			name: "Sync timeline",
 		});
-		expect(button).toBeDisabled();
-		expect(screen.getByText("Switch to default to sync")).toBeInTheDocument();
 
 		fireEvent.click(button);
-		expect(fetchMock).not.toHaveBeenCalled();
+		await waitFor(() => {
+			expect(fetchMock).toHaveBeenCalledWith(
+				"/api/sync",
+				expect.objectContaining({
+					body: JSON.stringify({
+						kind: "timeline",
+						accountId: "acct_studio",
+					}),
+				}),
+			);
+		});
 	});
 
 	it("surfaces sync failures", async () => {

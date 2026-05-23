@@ -41,8 +41,11 @@ export function SyncNowButton({
 		[accounts],
 	);
 	const accountId = globalAccountId ?? defaultAccountId;
-	const accountAwareSync = kind !== "timeline" && kind !== "dms";
-	const waitingForAccount = accountAwareSync && accounts === undefined;
+	const accountAwareSync = kind !== "dms";
+	const waitingForAccount =
+		accountAwareSync &&
+		accounts === undefined &&
+		(showAccountPicker || kind !== "timeline");
 	const birdOnlyWrongAccount =
 		!accountAwareSync &&
 		accountId !== undefined &&

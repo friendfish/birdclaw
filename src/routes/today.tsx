@@ -51,6 +51,10 @@ function digestUrl(
 	const url = new URL("/api/period-digest", window.location.origin);
 	url.searchParams.set("period", period);
 	url.searchParams.set("includeDms", String(includeDms));
+	url.searchParams.set("maxTweets", "500");
+	url.searchParams.set("maxLinks", "20");
+	url.searchParams.set("liveTimelineLimit", "500");
+	url.searchParams.set("liveTimelineMaxPages", "5");
 	if (refresh) {
 		url.searchParams.set("refresh", "true");
 	}

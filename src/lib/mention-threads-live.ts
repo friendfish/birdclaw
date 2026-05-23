@@ -27,6 +27,7 @@ export interface SyncMentionThreadsOptions {
 	account?: string;
 	mode?: string;
 	limit?: number;
+	tweetIds?: string[];
 	delayMs?: number;
 	timeoutMs?: number;
 	all?: boolean;
@@ -247,6 +248,62 @@ function listRecentMentions(
       `,
 		)
 		.all(accountId, accountId, limit) as Array<{
+		id: string;
+		createdAt: string;
+		replyToId: string | null;
+		rawJson: string | null;
+	}>;
+
+	return rows.map((row) => {
+		const rawTweet = parseRawTweet(row.rawJson);
+		return {
+			id: row.id,
+			replyToId:
+				row.replyToId ?? (rawTweet ? getReplyToId(rawTweet) : undefined),
+			conversationId:
+				typeof rawTweet?.conversation_id === "string"
+					? rawTweet.conversation_id
+					: undefined,
+			rawTweet,
+		};
+	});
+}
+
+function listMentionsByIds(
+	db: Database,
+	accountId: string,
+	tweetIds: string[],
+	limit: number,
+): LocalMention[] {
+	const ids = [...new Set(tweetIds.filter((id) => id.trim().length > 0))].slice(
+		0,
+		limit,
+	);
+	if (ids.length === 0) return [];
+	const placeholders = ids.map(() => "?").join(", ");
+	const rows = db
+		.prepare(
+			`
+      select
+        t.id,
+        t.created_at as createdAt,
+        t.reply_to_id as replyToId,
+        coalesce(edge.raw_json, '{}') as rawJson
+      from tweets t
+      left join tweet_account_edges edge
+        on edge.tweet_id = t.id
+        and edge.account_id = ?
+        and edge.kind = 'mention'
+      where t.id in (${placeholders})
+        and (
+          edge.tweet_id is not null
+          or (t.kind = 'mention' and t.account_id = ?)
+        )
+      order by t.created_at desc
+      limit ?
+      `,
+		)
+		.all(accountId, ...ids, accountId, limit) as Array<{
 		id: string;
 		createdAt: string;
 		replyToId: string | null;
@@ -655,6 +712,7 @@ export function syncMentionThreadsEffect({
 	account,
 	mode = DEFAULT_MODE,
 	limit = DEFAULT_LIMIT,
+	tweetIds,
 	delayMs = DEFAULT_DELAY_MS,
 	timeoutMs = DEFAULT_TIMEOUT_MS,
 	all = false,
@@ -677,7 +735,14 @@ export function syncMentionThreadsEffect({
 		const db = yield* trySync(() => getNativeDb());
 		const resolvedAccount = yield* trySync(() => resolveAccount(db, account));
 		const mentions = yield* trySync(() =>
-			listRecentMentions(db, resolvedAccount.accountId, parsedLimit),
+			tweetIds
+				? listMentionsByIds(
+						db,
+						resolvedAccount.accountId,
+						tweetIds,
+						parsedLimit,
+					)
+				: listRecentMentions(db, resolvedAccount.accountId, parsedLimit),
 		);
 		const mentionIds = mentions.map((mention) => mention.id);
 		const mentionIdSet = new Set(mentionIds);
@@ -810,6 +875,7 @@ export function syncMentionThreadsEffect({
 				all,
 				maxPages: parsedMaxPages ?? null,
 				maxFallbackDepth: DEFAULT_FALLBACK_DEPTH,
+				tweetIds: tweetIds ?? null,
 			},
 			results,
 			failures,

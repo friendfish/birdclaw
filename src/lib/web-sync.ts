@@ -131,12 +131,17 @@ function summarizeSteps(steps: WebSyncStep[]) {
 const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 	timeline: {
 		label: "Home timeline",
-		accountAware: false,
+		accountAware: true,
 		run: (account) =>
 			Effect.gen(function* () {
 				const result = yield* syncHomeTimelineEffect({
 					account,
+					mode:
+						!account || account === resolveDefaultSyncAccountId()
+							? "auto"
+							: "xurl",
 					limit: 100,
+					maxPages: 3,
 					following: true,
 					refresh: true,
 				});
