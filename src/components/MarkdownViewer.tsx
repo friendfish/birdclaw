@@ -370,7 +370,7 @@ export function MarkdownViewer({
 		if (listItems.length === 0) return;
 		nodes.push(
 			<ul
-				className="my-3 flex list-disc flex-col gap-2 pl-5 marker:text-[var(--ink-soft)]"
+				className="my-2.5 flex list-disc flex-col gap-1.5 pl-5 first:mt-0 marker:text-[var(--ink-soft)]"
 				key={`list-${String(nodes.length)}`}
 			>
 				{listItems.map((item, index) => (
@@ -391,7 +391,7 @@ export function MarkdownViewer({
 			flushList();
 			nodes.push(
 				<h3
-					className="mt-6 mb-2 text-[14px] font-bold uppercase tracking-wide text-[var(--ink-soft)]"
+					className="mt-5 mb-1.5 text-[14px] font-bold uppercase tracking-wide text-[var(--ink-soft)] first:mt-0"
 					key={`h3-${String(nodes.length)}`}
 				>
 					{renderInline(trimmed.slice(4), lookup)}
@@ -403,7 +403,7 @@ export function MarkdownViewer({
 			flushList();
 			nodes.push(
 				<h2
-					className="mt-7 mb-2 text-[18px] font-bold text-[var(--ink)]"
+					className="mt-6 mb-2 text-[18px] font-bold text-[var(--ink)] first:mt-0"
 					key={`h2-${String(nodes.length)}`}
 				>
 					{renderInline(trimmed.slice(3), lookup)}
@@ -415,7 +415,7 @@ export function MarkdownViewer({
 			flushList();
 			nodes.push(
 				<h1
-					className="mt-2 mb-3 text-[20px] font-bold text-[var(--ink)]"
+					className="mt-0 mb-2.5 text-[20px] font-bold text-[var(--ink)]"
 					key={`h1-${String(nodes.length)}`}
 				>
 					{renderInline(trimmed.slice(2), lookup)}
@@ -430,7 +430,7 @@ export function MarkdownViewer({
 		flushList();
 		nodes.push(
 			<p
-				className="my-3 whitespace-pre-wrap [overflow-wrap:anywhere]"
+				className="my-2.5 whitespace-pre-wrap first:mt-0 [overflow-wrap:anywhere]"
 				key={`p-${String(nodes.length)}`}
 			>
 				{renderInline(trimmed, lookup)}
@@ -442,7 +442,7 @@ export function MarkdownViewer({
 	return (
 		<article
 			className={cx(
-				"max-w-none px-4 py-4 text-[15px] leading-7 text-[var(--ink)]",
+				"max-w-none px-4 py-3 text-[15px] leading-[1.55] text-[var(--ink)]",
 				className,
 			)}
 		>

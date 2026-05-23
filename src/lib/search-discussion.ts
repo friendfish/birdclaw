@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { Effect } from "effect";
 import { z } from "zod";
-import { runEffectPromise, tryPromise } from "./effect-runtime";
+import { prefetchCachedAvatarsForProfileIdsEffect } from "./avatar-cache";
+import {
+	runEffectBackground,
+	runEffectPromise,
+	tryPromise,
+} from "./effect-runtime";
 import { listDmConversations, listTimelineItems } from "./queries";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
 import {
@@ -38,6 +43,7 @@ export interface SearchDiscussionOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high";
 	serviceTier?: "default" | "flex" | "priority";
 	signal?: AbortSignal;
+	prefetchAvatars?: boolean;
 }
 
 export interface SearchDiscussionStreamHandlers {
@@ -353,6 +359,31 @@ export function collectSearchDiscussionContext(
 		...withoutHash,
 		hash: contextHash(withoutHash),
 	};
+}
+
+function prefetchDiscussionAvatars(context: SearchDiscussionContext) {
+	const profileIds = context.tweets
+		.filter((tweet) => tweet.authorProfile.avatarUrl)
+		.map((tweet) => tweet.authorProfile.id);
+	if (profileIds.length === 0) {
+		return;
+	}
+	runEffectBackground(
+		prefetchCachedAvatarsForProfileIdsEffect(profileIds).pipe(
+			Effect.catchAll(() =>
+				Effect.succeed({
+					requested: 0,
+					available: 0,
+					missing: 0,
+					failed: 0,
+				}),
+			),
+		),
+		{
+			onSuccess: () => {},
+			onFailure: () => {},
+		},
+	);
 }
 
 function modelFromOptions(options: SearchDiscussionOptions) {
@@ -726,6 +757,9 @@ export function streamSearchDiscussionEffect(
 				liveSearch,
 			}),
 		);
+		if (options.prefetchAvatars) {
+			prefetchDiscussionAvatars(context);
+		}
 		const cached = options.refresh
 			? null
 			: yield* trySearchSync(() =>

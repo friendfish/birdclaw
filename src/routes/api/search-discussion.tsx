@@ -124,7 +124,11 @@ export const Route = createFileRoute("/api/search-discussion")({
 
 									runEffectBackground(
 										streamSearchDiscussionEffect(
-											{ ...options, signal: abortController.signal },
+											{
+												...options,
+												signal: abortController.signal,
+												prefetchAvatars: true,
+											},
 											{ onEvent: enqueue },
 										),
 										{

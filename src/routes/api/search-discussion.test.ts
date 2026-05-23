@@ -83,6 +83,7 @@ describe("api search discussion route", () => {
 				limit: 42,
 				maxPages: 7,
 				signal: expect.any(AbortSignal),
+				prefetchAvatars: true,
 			},
 			expect.objectContaining({ onEvent: expect.any(Function) }),
 		);
@@ -106,6 +107,7 @@ describe("api search discussion route", () => {
 				includeDms: false,
 				limit: 1000,
 				maxPages: undefined,
+				prefetchAvatars: true,
 			}),
 			expect.any(Object),
 		);

@@ -91,6 +91,19 @@ const context = {
 describe("MarkdownViewer", () => {
 	afterEach(cleanup);
 
+	it("uses compact report spacing", () => {
+		const { container } = render(
+			<MarkdownViewer
+				context={context}
+				markdown={"Opening summary.\n\n## Themes\n\n- First item"}
+			/>,
+		);
+
+		expect(container.querySelector("article")).toHaveClass("leading-[1.55]");
+		expect(screen.getByText("Opening summary.")).toHaveClass("first:mt-0");
+		expect(screen.getByText("Themes")).toHaveClass("first:mt-0");
+	});
+
 	it("links generated tweet citations without showing raw ids", () => {
 		render(
 			<MarkdownViewer

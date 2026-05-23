@@ -12,6 +12,7 @@ const AVATAR_SIZE_SUFFIX =
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const MAX_AVATAR_DATA_URL_CHARS = MAX_AVATAR_BYTES * 4;
 const REMOTE_AVATAR_TIMEOUT_MS = 10_000;
+const DEFAULT_AVATAR_PREFETCH_CONCURRENCY = 8;
 const ALLOWED_REMOTE_AVATAR_HOSTS = new Set(["pbs.twimg.com"]);
 const RASTER_CONTENT_TYPES = new Set([
 	"image/jpeg",
@@ -287,6 +288,55 @@ export function readCachedAvatarEffect(profileId: string) {
 
 export function readCachedAvatar(profileId: string) {
 	return runEffectPromise(readCachedAvatarEffect(profileId));
+}
+
+function normalizePrefetchConcurrency(value: number | undefined) {
+	if (!Number.isFinite(value) || value === undefined) {
+		return DEFAULT_AVATAR_PREFETCH_CONCURRENCY;
+	}
+	return Math.max(1, Math.min(Math.floor(value), 32));
+}
+
+export function prefetchCachedAvatarsForProfileIdsEffect(
+	profileIds: string[],
+	options: { concurrency?: number } = {},
+) {
+	const uniqueProfileIds = Array.from(
+		new Set(
+			profileIds
+				.map((profileId) => profileId.trim())
+				.filter((profileId) => profileId.length > 0),
+		),
+	);
+	const concurrency = normalizePrefetchConcurrency(options.concurrency);
+
+	return Effect.forEach(
+		uniqueProfileIds,
+		(profileId) =>
+			readCachedAvatarEffect(profileId).pipe(
+				Effect.map((avatar) =>
+					avatar ? ("available" as const) : ("missing" as const),
+				),
+				Effect.catchAll(() => Effect.succeed("failed" as const)),
+			),
+		{ concurrency },
+	).pipe(
+		Effect.map((statuses) => ({
+			requested: uniqueProfileIds.length,
+			available: statuses.filter((status) => status === "available").length,
+			missing: statuses.filter((status) => status === "missing").length,
+			failed: statuses.filter((status) => status === "failed").length,
+		})),
+	);
+}
+
+export function prefetchCachedAvatarsForProfileIds(
+	profileIds: string[],
+	options: { concurrency?: number } = {},
+) {
+	return runEffectPromise(
+		prefetchCachedAvatarsForProfileIdsEffect(profileIds, options),
+	);
 }
 
 export const __test__ = {

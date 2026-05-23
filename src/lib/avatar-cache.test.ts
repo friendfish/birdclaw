@@ -8,6 +8,7 @@ import {
 	__test__,
 	getAvatarCachePath,
 	normalizeAvatarUrl,
+	prefetchCachedAvatarsForProfileIds,
 	readCachedAvatar,
 	readCachedAvatarEffect,
 } from "./avatar-cache";
@@ -223,6 +224,67 @@ describe("avatar cache", () => {
 		const effect = readCachedAvatarEffect("missing");
 
 		await expect(Effect.runPromise(effect)).resolves.toBeNull();
+	});
+
+	it("prefetches unique profile avatars and suppresses per-avatar failures", async () => {
+		const tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-avatar-"));
+		tempDirs.push(tempDir);
+		process.env.BIRDCLAW_HOME = tempDir;
+
+		const db = getNativeDb();
+		db.prepare(
+			"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, avatar_url, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
+		).run(
+			"profile_data",
+			"data",
+			"Data",
+			"",
+			0,
+			18,
+			"data:image/png;base64,aGk=",
+			"2026-03-08T12:00:00.000Z",
+		);
+		db.prepare(
+			"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, created_at) values (?, ?, ?, ?, ?, ?, ?)",
+		).run(
+			"profile_none",
+			"none",
+			"None",
+			"",
+			0,
+			18,
+			"2026-03-08T12:00:00.000Z",
+		);
+		db.prepare(
+			"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, avatar_url, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
+		).run(
+			"profile_bad",
+			"bad",
+			"Bad",
+			"",
+			0,
+			18,
+			"data:image/png",
+			"2026-03-08T12:00:00.000Z",
+		);
+
+		const result = await prefetchCachedAvatarsForProfileIds(
+			[
+				"profile_data",
+				"profile_data",
+				"profile_none",
+				"profile_bad",
+				"missing",
+			],
+			{ concurrency: 2 },
+		);
+
+		expect(result).toEqual({
+			requested: 4,
+			available: 1,
+			missing: 2,
+			failed: 1,
+		});
 	});
 
 	it("throws when remote avatar fetch fails", async () => {

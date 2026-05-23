@@ -5,10 +5,12 @@
 ### Added
 
 - Add `birdclaw discuss <query>` and a Discuss web view for live keyword search via `bird`/`xurl`, persisted search-result tweets, and streaming OpenAI summaries with optional private DM context.
+- Prefetch cached avatars for Discuss hover citations so source previews avoid fallback initials once profile metadata includes an avatar URL.
 
 ### Fixed
 
 - Let normal Discuss web searches reuse cached AI discussions while keeping the Refresh button as the explicit forced-refresh path.
+- Tighten AI report line height and first-block spacing in Today and Discuss.
 
 ## 0.6.0 - 2026-05-22
 
