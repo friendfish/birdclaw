@@ -65,6 +65,7 @@ export interface PeriodDigestStreamHandlers {
 }
 
 export type PeriodDigestStreamEvent =
+	| { type: "status"; label: string; detail?: string }
 	| { type: "start"; context: PeriodDigestContext; cached: boolean }
 	| { type: "delta"; delta: string }
 	| { type: "done"; result: PeriodDigestRunResult }
@@ -595,6 +596,18 @@ function boundedPositiveInteger(
 	return Math.min(max, Math.floor(value));
 }
 
+function emitDigestStatus(
+	handlers: PeriodDigestStreamHandlers,
+	label: string,
+	detail?: string,
+) {
+	handlers.onEvent?.({
+		type: "status",
+		label,
+		...(detail ? { detail } : {}),
+	});
+}
+
 function refreshPeriodDigestInputsEffect(
 	options: PeriodDigestOptions,
 	phase: {
@@ -603,6 +616,7 @@ function refreshPeriodDigestInputsEffect(
 		threads?: boolean;
 		threadTweetIds?: string[];
 	} = {},
+	handlers: PeriodDigestStreamHandlers = {},
 ): Effect.Effect<void, unknown> {
 	if (!options.liveSync) {
 		return Effect.void;
@@ -638,7 +652,14 @@ function refreshPeriodDigestInputsEffect(
 
 	return Effect.gen(function* () {
 		if (includeTimeline) {
-			yield* syncHomeTimelineEffect({
+			yield* Effect.sync(() =>
+				emitDigestStatus(
+					handlers,
+					"Fetching home timeline from X",
+					"Walking the selected time window with xurl.",
+				),
+			);
+			const result = yield* syncHomeTimelineEffect({
 				account: options.account,
 				mode,
 				limit: timelineLimit,
@@ -648,10 +669,30 @@ function refreshPeriodDigestInputsEffect(
 				refresh: Boolean(options.refresh),
 				cacheTtlMs: 2 * 60_000,
 				timeoutMs: 30_000,
-			}).pipe(Effect.catchAll(() => Effect.void));
+			}).pipe(
+				Effect.match({
+					onFailure: () => null,
+					onSuccess: (value) => value,
+				}),
+			);
+			yield* Effect.sync(() =>
+				emitDigestStatus(
+					handlers,
+					result
+						? `Fetched ${String(result.count)} home tweets from ${result.source}`
+						: "Home timeline fetch failed; using local data",
+				),
+			);
 		}
 		if (includeMentions) {
-			yield* syncMentionsEffect({
+			yield* Effect.sync(() =>
+				emitDigestStatus(
+					handlers,
+					"Fetching mentions from X",
+					"Reading replies and mentions for the selected window.",
+				),
+			);
+			const result = yield* syncMentionsEffect({
 				account: options.account,
 				mode: "xurl",
 				limit: mentionsLimit,
@@ -659,10 +700,30 @@ function refreshPeriodDigestInputsEffect(
 				startTime: liveStartTime,
 				refresh: Boolean(options.refresh),
 				cacheTtlMs: 2 * 60_000,
-			}).pipe(Effect.catchAll(() => Effect.void));
+			}).pipe(
+				Effect.match({
+					onFailure: () => null,
+					onSuccess: (value) => value,
+				}),
+			);
+			yield* Effect.sync(() =>
+				emitDigestStatus(
+					handlers,
+					result
+						? `Fetched ${String(result.count)} mentions from ${result.source}`
+						: "Mention fetch failed; using local data",
+				),
+			);
 		}
 		if (includeThreads) {
-			yield* syncMentionThreadsEffect({
+			yield* Effect.sync(() =>
+				emitDigestStatus(
+					handlers,
+					"Fetching mention conversations",
+					"Pulling parent tweets so the AI sees what replies refer to.",
+				),
+			);
+			const result = yield* syncMentionThreadsEffect({
 				account: options.account,
 				mode: "xurl",
 				limit: threadLimit,
@@ -670,8 +731,24 @@ function refreshPeriodDigestInputsEffect(
 				delayMs: 100,
 				timeoutMs: DEFAULT_LIVE_THREAD_TIMEOUT_MS,
 				maxPages: 2,
-			}).pipe(Effect.catchAll(() => Effect.void));
+			}).pipe(
+				Effect.match({
+					onFailure: () => null,
+					onSuccess: (value) => value,
+				}),
+			);
+			yield* Effect.sync(() =>
+				emitDigestStatus(
+					handlers,
+					result
+						? `Fetched ${String(result.uniqueTweets)} conversation tweets`
+						: "Conversation fetch failed; using available context",
+				),
+			);
 		}
+		yield* Effect.sync(() =>
+			emitDigestStatus(handlers, "Preparing local AI context"),
+		);
 		yield* maybeAutoSyncBackupEffect().pipe(Effect.catchAll(() => Effect.void));
 	}).pipe(Effect.asVoid);
 }
@@ -1059,9 +1136,11 @@ export function streamPeriodDigestEffect(
 	handlers: PeriodDigestStreamHandlers = {},
 ): Effect.Effect<PeriodDigestRunResult, Error> {
 	return Effect.gen(function* () {
-		yield* refreshPeriodDigestInputsEffect(options, { threads: false }).pipe(
-			Effect.catchAll(() => Effect.void),
-		);
+		yield* refreshPeriodDigestInputsEffect(
+			options,
+			{ threads: false },
+			handlers,
+		).pipe(Effect.catchAll(() => Effect.void));
 		let context = yield* tryDigestSync(() =>
 			collectPeriodDigestContext(options),
 		);
@@ -1096,14 +1175,18 @@ export function streamPeriodDigestEffect(
 			return result;
 		}
 
-		yield* refreshPeriodDigestInputsEffect(options, {
-			timeline: false,
-			mentions: false,
-			threads: true,
-			threadTweetIds: context.tweets
-				.filter((tweet) => tweet.source === "mentions")
-				.map((tweet) => tweet.id),
-		}).pipe(Effect.catchAll(() => Effect.void));
+		yield* refreshPeriodDigestInputsEffect(
+			options,
+			{
+				timeline: false,
+				mentions: false,
+				threads: true,
+				threadTweetIds: context.tweets
+					.filter((tweet) => tweet.source === "mentions")
+					.map((tweet) => tweet.id),
+			},
+			handlers,
+		).pipe(Effect.catchAll(() => Effect.void));
 		context = yield* tryDigestSync(() => collectPeriodDigestContext(options));
 		cacheKey = digestCacheKey(context, options);
 
@@ -1113,6 +1196,7 @@ export function streamPeriodDigestEffect(
 		}
 
 		handlers.onEvent?.({ type: "start", context, cached: false });
+		emitDigestStatus(handlers, "Streaming AI summary");
 		const response = yield* tryDigestPromise(() =>
 			fetch("https://api.openai.com/v1/responses", {
 				method: "POST",

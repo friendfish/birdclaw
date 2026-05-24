@@ -177,6 +177,7 @@ function useDigestStream(period: PeriodOption, includeDms: boolean) {
 	const [result, setResult] = useState<PeriodDigestRunResult | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
+	const [status, setStatus] = useState("Starting digest");
 	const abortRef = useRef<AbortController | null>(null);
 	const requestIdRef = useRef(0);
 	const hydratedHandlesRef = useRef(new Set<string>());
@@ -197,6 +198,7 @@ function useDigestStream(period: PeriodOption, includeDms: boolean) {
 			setContext(null);
 			setResult(null);
 			setError(null);
+			setStatus("Starting digest");
 			setLoading(true);
 
 			fetch(digestUrl(period, includeDms, refresh), {
@@ -224,16 +226,27 @@ function useDigestStream(period: PeriodOption, includeDms: boolean) {
 								if (line) {
 									const event = JSON.parse(line) as PeriodDigestStreamEvent;
 									if (!isActiveRequest()) return;
-									if (event.type === "start") {
+									if (event.type === "status") {
+										setStatus(
+											event.detail
+												? `${event.label} · ${event.detail}`
+												: event.label,
+										);
+									} else if (event.type === "start") {
 										setContext(event.context);
 									} else if (event.type === "delta") {
+										setStatus("Streaming AI summary");
 										setMarkdown((current) => current + event.delta);
 									} else if (event.type === "done") {
 										setResult(event.result);
 										setContext(event.result.context);
 										setMarkdown(event.result.markdown);
+										setStatus(
+											event.result.cached ? "Loaded cached report" : "Ready",
+										);
 									} else if (event.type === "error") {
 										setError(event.error);
+										setStatus("Digest failed");
 									}
 								}
 								newline = buffer.indexOf("\n");
@@ -245,6 +258,7 @@ function useDigestStream(period: PeriodOption, includeDms: boolean) {
 				.catch((cause: unknown) => {
 					if (!isActiveRequest()) return;
 					setError(cause instanceof Error ? cause.message : "Digest failed");
+					setStatus("Digest failed");
 				})
 				.finally(() => {
 					if (isActiveRequest()) {
@@ -344,16 +358,14 @@ function useDigestStream(period: PeriodOption, includeDms: boolean) {
 		};
 	}, [result]);
 
-	return { context, error, loading, markdown, result, run };
+	return { context, error, loading, markdown, result, run, status };
 }
 
 function TodayRoute() {
 	const [period, setPeriod] = useState<PeriodOption>("today");
 	const [includeDms, setIncludeDms] = useState(false);
-	const { context, error, loading, markdown, result, run } = useDigestStream(
-		period,
-		includeDms,
-	);
+	const { context, error, loading, markdown, result, run, status } =
+		useDigestStream(period, includeDms);
 	const sourceLabel = useMemo(
 		() => formatCounts(result?.context ?? context),
 		[context, result],
@@ -421,7 +433,7 @@ function TodayRoute() {
 						<Sparkles className="size-4" aria-hidden="true" />
 					)}
 					{loading
-						? "Streaming report"
+						? status
 						: result
 							? `${result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
 							: "Ready"}
@@ -435,7 +447,7 @@ function TodayRoute() {
 				/>
 			) : (
 				<div className="px-4 py-5 text-[14px] text-[var(--ink-soft)]">
-					Waiting for the first tokens...
+					{loading ? status : "Waiting for the first tokens..."}
 				</div>
 			)}
 		</div>

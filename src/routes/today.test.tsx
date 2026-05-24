@@ -1,4 +1,5 @@
 import {
+	act,
 	cleanup,
 	fireEvent,
 	render,
@@ -249,6 +250,65 @@ describe("today route", () => {
 			await screen.findByText(
 				"Digest request failed (403): Remote API access requires BIRDCLAW_ALLOW_REMOTE_WEB=1 for a trusted private proxy, or BIRDCLAW_WEB_TOKEN for tokened access",
 			),
+		).toBeInTheDocument();
+	});
+
+	it("shows fetch status before the first markdown token", async () => {
+		let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+		const encoder = new TextEncoder();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input));
+				if (url.pathname === "/api/profile-hydrate") {
+					return new Response(JSON.stringify({ ok: true, results: [] }), {
+						headers: { "content-type": "application/json" },
+					});
+				}
+				return new Response(
+					new ReadableStream<Uint8Array>({
+						start(streamController) {
+							controller = streamController;
+							streamController.enqueue(
+								encoder.encode(
+									`${JSON.stringify({
+										type: "status",
+										label: "Fetching home timeline from X",
+									})}\n`,
+								),
+							);
+						},
+					}),
+					{ headers: { "content-type": "application/x-ndjson" } },
+				);
+			}),
+		);
+
+		render(<TodayRoute />);
+
+		expect(
+			await screen.findAllByText("Fetching home timeline from X"),
+		).not.toHaveLength(0);
+
+		const markdown = "# Today\n\nDone.";
+		await act(async () => {
+			controller?.enqueue(
+				encoder.encode(
+					[
+						JSON.stringify({ type: "delta", delta: markdown }),
+						JSON.stringify({
+							type: "done",
+							result: digestResult("Today", markdown),
+						}),
+						"",
+					].join("\n"),
+				),
+			);
+			controller?.close();
+		});
+
+		expect(
+			await screen.findByRole("heading", { name: "Today", level: 1 }),
 		).toBeInTheDocument();
 	});
 
