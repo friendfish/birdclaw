@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
 	QueryEnvelope,
 	ReplyFilter,
@@ -11,6 +11,8 @@ import {
 	postAction,
 } from "#/lib/api-client";
 import { useSelectedAccountId } from "./account-selection";
+
+const PAGE_SIZE = 50;
 
 interface UseTimelineRouteDataOptions {
 	resource: Exclude<ResourceKind, "dms">;
@@ -35,7 +37,14 @@ export function useTimelineRouteData({
 	const [error, setError] = useState<string | null>(null);
 	const [replyError, setReplyError] = useState<string | null>(null);
 	const [refreshTick, setRefreshTick] = useState(0);
+	const [hasMore, setHasMore] = useState(false);
+	const [loadingMore, setLoadingMore] = useState(false);
 	const selectedAccountId = useSelectedAccountId(meta?.accounts);
+	// Bumped whenever the active filters change. A `loadMore` request that
+	// resolves against a stale generation is discarded so its older page is
+	// never appended to a freshly loaded feed.
+	const generationRef = useRef(0);
+	const loadMoreControllerRef = useRef<AbortController | null>(null);
 
 	async function loadStatus() {
 		setMeta(await fetchQueryEnvelope());
@@ -45,10 +54,14 @@ export function useTimelineRouteData({
 		void loadStatus();
 	}, []);
 
-	useEffect(() => {
+	// Build the /api/query URL for the current filters. Passing the last item's
+	// (createdAt, id) requests the next (older) page via the server's keyset
+	// cursor, which is deterministic across duplicate timestamps.
+	function buildQueryUrl(until?: string, untilId?: string) {
 		const url = new URL("/api/query", window.location.origin);
 		url.searchParams.set("resource", resource);
 		url.searchParams.set("refresh", String(refreshTick));
+		url.searchParams.set("limit", String(PAGE_SIZE));
 		if (selectedAccountId) {
 			url.searchParams.set("account", selectedAccountId);
 		}
@@ -64,16 +77,29 @@ export function useTimelineRouteData({
 		if (search.trim()) {
 			url.searchParams.set("search", search.trim());
 		}
+		if (until) {
+			url.searchParams.set("until", until);
+		}
+		if (untilId) {
+			url.searchParams.set("untilId", untilId);
+		}
+		return url;
+	}
 
+	useEffect(() => {
+		generationRef.current += 1;
+		loadMoreControllerRef.current?.abort();
 		const controller = new AbortController();
 		let active = true;
 		setError(null);
 		setLoading(true);
-		fetchQueryResponse(url, { signal: controller.signal })
+		setLoadingMore(false);
+		fetchQueryResponse(buildQueryUrl(), { signal: controller.signal })
 			.then((data) => {
-				if (active) {
-					setItems(data.items as TimelineItem[]);
-				}
+				if (!active) return;
+				const next = data.items as TimelineItem[];
+				setItems(next);
+				setHasMore(next.length >= PAGE_SIZE);
 			})
 			.catch((fetchError: unknown) => {
 				if (
@@ -87,6 +113,7 @@ export function useTimelineRouteData({
 					fetchError instanceof Error ? fetchError.message : errorFallback,
 				);
 				setItems([]);
+				setHasMore(false);
 			})
 			.finally(() => {
 				if (active) {
@@ -108,6 +135,44 @@ export function useTimelineRouteData({
 		search,
 		selectedAccountId,
 	]);
+
+	async function loadMore() {
+		if (loading || loadingMore || !hasMore || items.length === 0) return;
+		const lastItem = items[items.length - 1];
+		const until = lastItem?.createdAt;
+		const untilId = lastItem?.id;
+		if (!until || !untilId) return;
+		const generation = generationRef.current;
+		const controller = new AbortController();
+		loadMoreControllerRef.current = controller;
+		setLoadingMore(true);
+		try {
+			const data = await fetchQueryResponse(buildQueryUrl(until, untilId), {
+				signal: controller.signal,
+			});
+			// Discard if the filters changed (new generation) while in flight.
+			if (generation !== generationRef.current) return;
+			const page = data.items as TimelineItem[];
+			setItems((prev) => {
+				const seen = new Set(prev.map((item) => item.id));
+				return [...prev, ...page.filter((item) => !seen.has(item.id))];
+			});
+			setHasMore(page.length >= PAGE_SIZE);
+		} catch (loadError) {
+			if (
+				loadError instanceof DOMException &&
+				loadError.name === "AbortError"
+			) {
+				return;
+			}
+			if (generation !== generationRef.current) return;
+			setError(loadError instanceof Error ? loadError.message : errorFallback);
+		} finally {
+			if (generation === generationRef.current) {
+				setLoadingMore(false);
+			}
+		}
+	}
 
 	function retry() {
 		setRefreshTick((value) => value + 1);
@@ -149,5 +214,8 @@ export function useTimelineRouteData({
 		refreshLocalView,
 		replyToTweet,
 		selectedAccountId,
+		hasMore,
+		loadingMore,
+		loadMore,
 	};
 }
