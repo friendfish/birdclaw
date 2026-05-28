@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Keep `birdclaw init` alive when the macOS Downloads scan is blocked, falling back to the other archive discovery paths. (#44 - thanks @peetzweg)
 - Show live Today fetch progress while Birdclaw pulls X home timeline, mentions, and reply context before the first AI tokens arrive.
 - Include live fetch counts and page/thread progress in Today status messages before AI summary streaming begins.
 - Recover live `xurl` sync when the valid OAuth token is stored under a different local xurl username label than the Birdclaw account handle.
