@@ -124,6 +124,7 @@ afterEach(() => {
 	delete process.env.BIRDCLAW_PROFILE_ANALYSIS_CONVERSATION_DELAY_MS;
 	delete process.env.BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_RETRY_MS;
 	delete process.env.BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_MAX_RETRIES;
+	delete process.env.BIRDCLAW_PROFILE_ANALYSIS_ACCOUNT;
 	vi.unstubAllGlobals();
 	for (const tempRoot of tempRoots.splice(0)) {
 		rmSync(tempRoot, { recursive: true, force: true });
@@ -212,6 +213,39 @@ describe("profile analysis", () => {
 			{ tweet_id: "reply_1", count: 1 },
 			{ tweet_id: "tweet_1", count: 1 },
 		]);
+	});
+
+	it("uses the configured profile analysis account by id or handle", async () => {
+		getNativeDb()
+			.prepare(
+				"insert into accounts (id, name, handle, transport, is_default, created_at) values (?, ?, ?, ?, ?, ?)",
+			)
+			.run(
+				"acct_openclaw",
+				"OpenClaw",
+				"@openclaw",
+				"archive",
+				0,
+				"2026-05-31T00:00:00.000Z",
+			);
+		process.env.BIRDCLAW_PROFILE_ANALYSIS_ACCOUNT = "openclaw";
+
+		await streamProfileAnalysis({
+			handle: "alice",
+			maxPages: 1,
+			maxTweets: 1,
+			maxConversations: 1,
+			maxConversationPages: 1,
+		});
+
+		expect(mocks.lookupUsersByHandlesEffect).toHaveBeenCalledWith(
+			["alice"],
+			expect.objectContaining({ username: "@openclaw" }),
+		);
+		expect(mocks.listUserTweetsEffect).toHaveBeenCalledWith(
+			"42",
+			expect.objectContaining({ username: "@openclaw" }),
+		);
 	});
 
 	it("summarizes with partial context when conversation search is rate limited", async () => {

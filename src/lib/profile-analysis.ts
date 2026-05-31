@@ -245,11 +245,27 @@ function rateLimitMaxRetriesFromOptions(options: ProfileAnalysisOptions) {
 	);
 }
 
+function normalizeAccountSelector(value: string | undefined) {
+	const selector = value?.trim();
+	if (!selector) return undefined;
+	return selector;
+}
+
 function resolveAccount(db: Database, accountId?: string) {
-	const row = accountId
+	const selector = normalizeAccountSelector(
+		accountId ?? process.env.BIRDCLAW_PROFILE_ANALYSIS_ACCOUNT,
+	);
+	const row = selector
 		? (db
-				.prepare("select id, handle from accounts where id = ?")
-				.get(accountId) as { id: string; handle: string } | undefined)
+				.prepare(
+					`
+          select id, handle
+          from accounts
+          where id = ? or lower(trim(handle, '@')) = lower(trim(?, '@'))
+          limit 1
+          `,
+				)
+				.get(selector, selector) as { id: string; handle: string } | undefined)
 		: (db
 				.prepare(
 					`
@@ -261,7 +277,7 @@ function resolveAccount(db: Database, accountId?: string) {
 				)
 				.get() as { id: string; handle: string } | undefined);
 	if (!row) {
-		throw new Error(`Unknown account: ${accountId ?? "default"}`);
+		throw new Error(`Unknown account: ${selector ?? "default"}`);
 	}
 	return row;
 }
@@ -509,7 +525,7 @@ function contextCacheKey(options: {
 	maxConversationPages: number;
 }) {
 	return [
-		"profile-analysis:context:v1",
+		"profile-analysis:context",
 		options.accountId,
 		options.handle.toLowerCase(),
 		String(options.maxTweets),
@@ -541,7 +557,7 @@ function resultCacheKey(
 	options: ProfileAnalysisOptions,
 ) {
 	return [
-		"profile-analysis:result:v1",
+		"profile-analysis:result",
 		modelFromOptions(options),
 		reasoningEffortFromOptions(options),
 		serviceTierFromOptions(options),

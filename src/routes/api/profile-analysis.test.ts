@@ -93,4 +93,30 @@ describe("api profile analysis route", () => {
 			expect.objectContaining({ onEvent: expect.any(Function) }),
 		);
 	});
+
+	it("opens the stream before backup auto-update completes", async () => {
+		let resolveBackup: ((value: unknown) => void) | undefined;
+		maybeAutoUpdateBackupMock.mockReturnValue(
+			new Promise((resolve) => {
+				resolveBackup = resolve;
+			}),
+		);
+
+		const response = await GET({
+			request: new Request(
+				"http://localhost/api/profile-analysis?handle=alice&maxTweets=1",
+			),
+		});
+		const reader = response.body?.getReader();
+		expect(reader).toBeDefined();
+
+		const first = await reader!.read();
+		const text = new TextDecoder().decode(first.value);
+		expect(text).toContain('"type":"status"');
+		expect(text).toContain("Starting profile analysis");
+		expect(streamProfileAnalysisMock).not.toHaveBeenCalled();
+
+		resolveBackup?.({ skipped: true });
+		await reader!.cancel();
+	});
 });

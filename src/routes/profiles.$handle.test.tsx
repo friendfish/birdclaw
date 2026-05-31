@@ -93,7 +93,7 @@ describe("profile route", () => {
 			>;
 			const firstInput = calls[0]?.[0];
 			expect(firstInput).toBeDefined();
-			const url = new URL(String(firstInput));
+			const url = new URL(String(firstInput), "http://localhost");
 			expect(url.pathname).toBe("/api/profile-analysis");
 			expect(url.searchParams.get("handle")).toBe("steipete");
 		});

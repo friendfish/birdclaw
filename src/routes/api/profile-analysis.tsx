@@ -70,7 +70,6 @@ export const Route = createFileRoute("/api/profile-analysis")({
 						const denied = sensitiveRequestErrorResponse(request);
 						if (denied) return denied;
 
-						yield* maybeAutoUpdateBackupEffect();
 						const url = new URL(request.url);
 						const options = parseOptions(url);
 						let abortAnalysis: (() => void) | undefined;
@@ -107,15 +106,22 @@ export const Route = createFileRoute("/api/profile-analysis")({
 											close();
 										}
 									};
+									enqueue({
+										type: "status",
+										label: "Starting profile analysis",
+									});
 
 									runEffectBackground(
-										streamProfileAnalysisEffect(
-											{
-												...options,
-												signal: abortController.signal,
-											},
-											{ onEvent: enqueue },
-										),
+										Effect.gen(function* () {
+											yield* maybeAutoUpdateBackupEffect();
+											return yield* streamProfileAnalysisEffect(
+												{
+													...options,
+													signal: abortController.signal,
+												},
+												{ onEvent: enqueue },
+											);
+										}),
 										{
 											onSuccess: closeController,
 											onFailure: (error) => {

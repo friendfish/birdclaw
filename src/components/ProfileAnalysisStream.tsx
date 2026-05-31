@@ -37,19 +37,16 @@ export function profileAnalysisUrl(
 	handle: string,
 	options: ProfileAnalysisRequestOptions,
 ) {
-	const url = new URL("/api/profile-analysis", window.location.origin);
-	url.searchParams.set("handle", handle);
-	url.searchParams.set("maxTweets", String(options.maxTweets));
-	url.searchParams.set("maxPages", String(options.maxPages));
-	url.searchParams.set("maxConversations", String(options.maxConversations));
-	url.searchParams.set(
-		"maxConversationPages",
-		String(options.maxConversationPages),
-	);
+	const params = new URLSearchParams();
+	params.set("handle", handle);
+	params.set("maxTweets", String(options.maxTweets));
+	params.set("maxPages", String(options.maxPages));
+	params.set("maxConversations", String(options.maxConversations));
+	params.set("maxConversationPages", String(options.maxConversationPages));
 	if (options.refresh) {
-		url.searchParams.set("refresh", "true");
+		params.set("refresh", "true");
 	}
-	return url;
+	return `/api/profile-analysis?${params.toString()}`;
 }
 
 export async function profileAnalysisRequestError(response: Response) {
