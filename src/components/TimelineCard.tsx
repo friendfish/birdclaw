@@ -448,9 +448,7 @@ export function TimelineCard({
 						<a
 							aria-label={`Analyse @${displayAuthor.handle}`}
 							className={feedActionButtonClass}
-							href={`/profile-analyze?handle=${encodeURIComponent(
-								displayAuthor.handle,
-							)}`}
+							href={`/profiles/${encodeURIComponent(displayAuthor.handle)}`}
 							onClick={(event) => {
 								event.stopPropagation();
 							}}

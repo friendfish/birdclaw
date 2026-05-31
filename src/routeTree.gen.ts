@@ -21,6 +21,7 @@ import { Route as DiscussRouteImport } from './routes/discuss'
 import { Route as BookmarksRouteImport } from './routes/bookmarks'
 import { Route as BlocksRouteImport } from './routes/blocks'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ProfilesHandleRouteImport } from './routes/profiles.$handle'
 import { Route as ApiXurlRateLimitsRouteImport } from './routes/api/xurl-rate-limits'
 import { Route as ApiSyncRouteImport } from './routes/api/sync'
 import { Route as ApiStatusRouteImport } from './routes/api/status'
@@ -95,6 +96,11 @@ const BlocksRoute = BlocksRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfilesHandleRoute = ProfilesHandleRouteImport.update({
+  id: '/profiles/$handle',
+  path: '/profiles/$handle',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiXurlRateLimitsRoute = ApiXurlRateLimitsRouteImport.update({
@@ -201,6 +207,7 @@ export interface FileRoutesByFullPath {
   '/api/status': typeof ApiStatusRoute
   '/api/sync': typeof ApiSyncRoute
   '/api/xurl-rate-limits': typeof ApiXurlRateLimitsRoute
+  '/profiles/$handle': typeof ProfilesHandleRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -230,6 +237,7 @@ export interface FileRoutesByTo {
   '/api/status': typeof ApiStatusRoute
   '/api/sync': typeof ApiSyncRoute
   '/api/xurl-rate-limits': typeof ApiXurlRateLimitsRoute
+  '/profiles/$handle': typeof ProfilesHandleRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -260,6 +268,7 @@ export interface FileRoutesById {
   '/api/status': typeof ApiStatusRoute
   '/api/sync': typeof ApiSyncRoute
   '/api/xurl-rate-limits': typeof ApiXurlRateLimitsRoute
+  '/profiles/$handle': typeof ProfilesHandleRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -291,6 +300,7 @@ export interface FileRouteTypes {
     | '/api/status'
     | '/api/sync'
     | '/api/xurl-rate-limits'
+    | '/profiles/$handle'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -320,6 +330,7 @@ export interface FileRouteTypes {
     | '/api/status'
     | '/api/sync'
     | '/api/xurl-rate-limits'
+    | '/profiles/$handle'
   id:
     | '__root__'
     | '/'
@@ -349,6 +360,7 @@ export interface FileRouteTypes {
     | '/api/status'
     | '/api/sync'
     | '/api/xurl-rate-limits'
+    | '/profiles/$handle'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -379,6 +391,7 @@ export interface RootRouteChildren {
   ApiStatusRoute: typeof ApiStatusRoute
   ApiSyncRoute: typeof ApiSyncRoute
   ApiXurlRateLimitsRoute: typeof ApiXurlRateLimitsRoute
+  ProfilesHandleRoute: typeof ProfilesHandleRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -465,6 +478,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profiles/$handle': {
+      id: '/profiles/$handle'
+      path: '/profiles/$handle'
+      fullPath: '/profiles/$handle'
+      preLoaderRoute: typeof ProfilesHandleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/xurl-rate-limits': {
@@ -603,6 +623,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiStatusRoute: ApiStatusRoute,
   ApiSyncRoute: ApiSyncRoute,
   ApiXurlRateLimitsRoute: ApiXurlRateLimitsRoute,
+  ProfilesHandleRoute: ProfilesHandleRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
