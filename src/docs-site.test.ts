@@ -71,4 +71,34 @@ describe("docs site", () => {
 			`<a href="${url.replace("&", "&amp;")}">${url.replace("&", "&amp;")}</a>`,
 		);
 	});
+
+	it("preserves angle-bracket Markdown link destinations", () => {
+		const url = "https://example.test/path_with_value?a=1&b=2";
+
+		expect(renderInline(`[X](<${url}>)`, "auth.md")).toBe(
+			`<a href="${url.replace("&", "&amp;")}">X</a>`,
+		);
+	});
+
+	it("preserves parentheses in angle-bracket Markdown link destinations", () => {
+		const url = "https://example.test/Foo_(bar)";
+
+		expect(renderInline(`[X](<${url}>)`, "auth.md")).toBe(
+			`<a href="${url}">X</a>`,
+		);
+	});
+
+	it("preserves code-formatted Markdown link labels", () => {
+		expect(
+			renderInline("[`xurl`](https://github.com/xdevplatform/xurl)", "auth.md"),
+		).toBe(
+			'<a href="https://github.com/xdevplatform/xurl"><code>xurl</code></a>',
+		);
+	});
+
+	it("normalizes line breaks and escaped pipes in Markdown link labels", () => {
+		expect(renderInline("[a<br>b\\|c](https://example.test)", "auth.md")).toBe(
+			'<a href="https://example.test">a<br>b|c</a>',
+		);
+	});
 });
