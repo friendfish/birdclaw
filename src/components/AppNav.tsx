@@ -3,6 +3,9 @@ import {
 	Bell,
 	Bookmark,
 	CalendarDays,
+	Database,
+	Gauge,
+	Globe2,
 	Heart,
 	Home,
 	Inbox,
@@ -10,6 +13,7 @@ import {
 	Mail,
 	MessagesSquare,
 	ShieldOff,
+	UserSearch,
 } from "lucide-react";
 import {
 	cx,
@@ -38,11 +42,15 @@ const links = [
 	{ to: "/inbox", label: "Inbox", icon: Inbox },
 	{ to: "/today", label: "Today", icon: CalendarDays },
 	{ to: "/discuss", label: "Discuss", icon: MessagesSquare },
+	{ to: "/profile-analyze", label: "Analyse", icon: UserSearch },
+	{ to: "/network-map", label: "Map", icon: Globe2 },
+	{ to: "/data-sources", label: "Sources", icon: Database },
 	{ to: "/", label: "Home", icon: Home },
 	{ to: "/mentions", label: "Mentions", icon: Bell },
 	{ to: "/likes", label: "Likes", icon: Heart },
 	{ to: "/bookmarks", label: "Bookmarks", icon: Bookmark },
 	{ to: "/links", label: "Links", icon: LinkIcon },
+	{ to: "/rate-limits", label: "Rate Limits", icon: Gauge },
 	{ to: "/dms", label: "DMs", icon: Mail },
 	{ to: "/blocks", label: "Blocks", icon: ShieldOff },
 ] as const;

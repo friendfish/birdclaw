@@ -4,6 +4,7 @@ import {
 	existsSync,
 	mkdirSync,
 	readFileSync,
+	writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,7 +17,7 @@ export interface BirdclawPaths {
 	configPath: string;
 }
 
-export type MentionsDataSource = "birdclaw" | "xurl" | "bird";
+export type MentionsDataSource = "birdclaw" | "auto" | "xurl" | "bird";
 export type ActionsTransport = "auto" | "bird" | "xurl";
 
 export interface BirdclawConfig {
@@ -82,11 +83,37 @@ export function getBirdclawConfig(): BirdclawConfig {
 	return cachedConfig;
 }
 
+function getConfigPath() {
+	return process.env.BIRDCLAW_CONFIG?.trim() || getBirdclawPaths().configPath;
+}
+
+export function writeBirdclawConfig(config: BirdclawConfig) {
+	const configPath = getConfigPath();
+	mkdirSync(path.dirname(configPath), { recursive: true });
+	writeFileSync(configPath, `${JSON.stringify(config, null, "\t")}\n`, "utf8");
+	cachedConfig = config;
+	return configPath;
+}
+
+export function setActionsTransport(transport: ActionsTransport) {
+	const config = getBirdclawConfig();
+	const nextConfig: BirdclawConfig = {
+		...config,
+		actions: {
+			...config.actions,
+			transport,
+		},
+	};
+	const configPath = writeBirdclawConfig(nextConfig);
+	return { configPath, transport };
+}
+
 export function resolveMentionsDataSource(
 	requestedMode?: string,
 ): MentionsDataSource {
 	if (
 		requestedMode === "birdclaw" ||
+		requestedMode === "auto" ||
 		requestedMode === "xurl" ||
 		requestedMode === "bird"
 	) {
@@ -94,13 +121,19 @@ export function resolveMentionsDataSource(
 	}
 
 	const envMode = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE?.trim();
-	if (envMode === "birdclaw" || envMode === "xurl" || envMode === "bird") {
+	if (
+		envMode === "birdclaw" ||
+		envMode === "auto" ||
+		envMode === "xurl" ||
+		envMode === "bird"
+	) {
 		return envMode;
 	}
 
 	const configMode = getBirdclawConfig().mentions?.dataSource;
 	if (
 		configMode === "birdclaw" ||
+		configMode === "auto" ||
 		configMode === "xurl" ||
 		configMode === "bird"
 	) {

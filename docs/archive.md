@@ -13,9 +13,17 @@ By default, archive import is a full archive replay. It refreshes archive-owned 
 
 ## Get an archive
 
-Twitter / X publishes account archives at <https://x.com/settings/your_archive>. Requesting one takes ~24 hours; you receive a download link in email.
+On a fresh Birdclaw database, archive import establishes the account identity required by live sync. Do not sync a newly initialized demo database before importing your archive. An archive is optional only when restoring an existing Birdclaw database or backup that already contains the correct account.
 
-Save the ZIP somewhere autodiscovery can find it (`~/Downloads` is fastest), or pass an explicit path.
+Request flow:
+
+1. Sign in to x.com and go to <https://x.com/settings/download_your_data> (also reachable via *Settings and privacy → Your account → Download an archive of your data*).
+2. Re-enter your password and complete 2FA if prompted.
+3. Click *Request archive*. X queues the export and emails a download link when it is ready. [X Help](https://help.x.com/en/managing-your-account/how-to-download-your-x-archive) says preparation may take a few days.
+4. When the email arrives (subject: *Your X data is ready to download*), open the link, sign in again, and download the ZIP. Typical filename: `twitter-YYYY-MM-DD-<hash>.zip`.
+5. Save the ZIP into `~/Downloads` so autodiscovery picks it up, or note its path and pass it explicitly to `import archive`.
+
+The archive is a point-in-time snapshot. You can request a fresh one later and use `--select` (see below) to refresh a single slice without wiping the rest of your local store.
 
 ## Autodiscovery
 

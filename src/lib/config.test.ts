@@ -11,6 +11,7 @@ import {
 	resetBirdclawPathsForTests,
 	resolveActionsTransport,
 	resolveMentionsDataSource,
+	setActionsTransport,
 } from "./config";
 
 const tempRoots: string[] = [];
@@ -105,6 +106,34 @@ describe("config", () => {
 		expect(resolveMentionsDataSource()).toBe("xurl");
 		expect(resolveActionsTransport()).toBe("bird");
 		expect(getBirdCommand()).toBe("/tmp/env-bird");
+	});
+
+	it("sets actions transport in the active config file", () => {
+		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
+		tempRoots.push(tempRoot);
+		process.env.BIRDCLAW_HOME = tempRoot;
+		writeFileSync(
+			path.join(tempRoot, "config.json"),
+			JSON.stringify({
+				mentions: {
+					dataSource: "bird",
+				},
+			}),
+		);
+
+		expect(setActionsTransport("xurl")).toEqual({
+			configPath: path.join(tempRoot, "config.json"),
+			transport: "xurl",
+		});
+		expect(getBirdclawConfig()).toEqual({
+			actions: {
+				transport: "xurl",
+			},
+			mentions: {
+				dataSource: "bird",
+			},
+		});
+		expect(resolveActionsTransport()).toBe("xurl");
 	});
 
 	it("defaults bird command to PATH lookup", () => {

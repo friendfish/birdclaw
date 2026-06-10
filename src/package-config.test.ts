@@ -86,6 +86,9 @@ describe("package configuration", () => {
 			"src/routeTree.gen.ts",
 			"src/styles.css",
 			"src/lib/types.ts",
+			"src/routes/*.tsx",
+			"src/routes/api/data-sources.tsx",
+			"src/routes/api/network-map.tsx",
 		]);
 	});
 });

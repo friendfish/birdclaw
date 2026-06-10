@@ -11,6 +11,7 @@ import { listTimelineItems } from "./queries";
 const listMentionsViaBirdMock = vi.fn();
 const listMentionsViaXurlMock = vi.fn();
 const lookupUsersByHandlesMock = vi.fn();
+const getAuthenticatedBirdAccountMock = vi.fn();
 
 vi.mock("./bird", async () => {
 	const { Effect } = await import("effect");
@@ -20,6 +21,11 @@ vi.mock("./bird", async () => {
 		listMentionsViaBirdEffect: (...args: unknown[]) =>
 			Effect.tryPromise({
 				try: () => listMentionsViaBirdMock(...args),
+				catch: (error) => error,
+			}),
+		getAuthenticatedBirdAccountEffect: () =>
+			Effect.tryPromise({
+				try: () => getAuthenticatedBirdAccountMock(),
 				catch: (error) => error,
 			}),
 	};
@@ -91,7 +97,12 @@ describe("cached live mentions", () => {
 		listMentionsViaBirdMock.mockReset();
 		listMentionsViaXurlMock.mockReset();
 		lookupUsersByHandlesMock.mockReset();
+		getAuthenticatedBirdAccountMock.mockReset();
 		lookupUsersByHandlesMock.mockResolvedValue([{ id: "25401953" }]);
+		getAuthenticatedBirdAccountMock.mockResolvedValue({
+			id: "25401953",
+			username: "steipete",
+		});
 	});
 
 	afterEach(() => {
@@ -177,6 +188,122 @@ describe("cached live mentions", () => {
 				done: true,
 			}),
 		]);
+	});
+
+	it("falls back from xurl to bird in auto mention sync", async () => {
+		makeTempHome();
+		listMentionsViaXurlMock.mockRejectedValueOnce(new Error("xurl down"));
+		listMentionsViaBirdMock.mockResolvedValueOnce({
+			data: [
+				{
+					id: "tweet_auto_fallback",
+					author_id: "42",
+					text: "auto fallback",
+					created_at: "2026-03-09T02:00:00.000Z",
+				},
+			],
+			includes: {
+				users: [{ id: "42", username: "sam", name: "Sam" }],
+			},
+			meta: { result_count: 1 },
+		});
+		const { syncMentions } = await import("./mentions-live");
+
+		const result = await syncMentions({
+			account: "acct_primary",
+			mode: "auto",
+			limit: 5,
+			refresh: true,
+		});
+
+		expect(result).toMatchObject({ source: "bird", count: 1 });
+		expect(listMentionsViaXurlMock).toHaveBeenCalledTimes(1);
+		expect(listMentionsViaBirdMock).toHaveBeenCalledTimes(1);
+
+		listMentionsViaXurlMock.mockResolvedValueOnce({
+			data: [
+				{
+					id: "tweet_explicit_xurl_after_fallback",
+					author_id: "42",
+					text: "explicit xurl after fallback",
+					created_at: "2026-03-09T02:01:00.000Z",
+				},
+			],
+			includes: {
+				users: [{ id: "42", username: "sam", name: "Sam" }],
+			},
+			meta: { result_count: 1 },
+		});
+
+		const explicitXurl = await syncMentions({
+			account: "acct_primary",
+			mode: "xurl",
+			limit: 5,
+		});
+
+		expect(explicitXurl).toMatchObject({ source: "xurl", count: 1 });
+		expect(listMentionsViaXurlMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("rejects bird auto fallback when the authenticated bird account mismatches", async () => {
+		makeTempHome();
+		listMentionsViaXurlMock.mockRejectedValueOnce(new Error("xurl down"));
+		getAuthenticatedBirdAccountMock.mockResolvedValueOnce({
+			id: "25401953",
+			username: "steipete",
+		});
+		const { syncMentions } = await import("./mentions-live");
+
+		await expect(
+			syncMentions({
+				account: "acct_studio",
+				mode: "auto",
+				limit: 5,
+				refresh: true,
+			}),
+		).rejects.toThrow(
+			"bird is authenticated as @steipete; refusing to sync into acct_studio (@birdclaw_lab)",
+		);
+		expect(listMentionsViaBirdMock).not.toHaveBeenCalled();
+	});
+
+	it("does not use one-page bird fallback for paged auto mention exports", async () => {
+		makeTempHome();
+		listMentionsViaXurlMock.mockRejectedValueOnce(new Error("xurl down"));
+		const { exportMentionsViaCachedAuto } = await import("./mentions-live");
+
+		await expect(
+			exportMentionsViaCachedAuto({
+				account: "acct_primary",
+				limit: 5,
+				all: true,
+				maxPages: 9,
+				refresh: true,
+			}),
+		).rejects.toThrow("xurl down");
+		expect(listMentionsViaBirdMock).not.toHaveBeenCalled();
+	});
+
+	it("allows bird fallback for auto mention sync with account-job page caps", async () => {
+		makeTempHome();
+		insertLocalMentionBaseline();
+		listMentionsViaXurlMock.mockRejectedValueOnce(new Error("xurl down"));
+		listMentionsViaBirdMock.mockResolvedValueOnce({
+			data: [],
+			meta: { result_count: 0 },
+		});
+		const { syncMentions } = await import("./mentions-live");
+
+		const result = await syncMentions({
+			account: "acct_primary",
+			mode: "auto",
+			limit: 5,
+			maxPages: 3,
+			refresh: true,
+		});
+
+		expect(result).toMatchObject({ source: "bird", count: 0 });
+		expect(listMentionsViaBirdMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("fetches live mentions, caches them, and syncs them into the local timeline", async () => {
@@ -1818,7 +1945,7 @@ describe("cached live mentions", () => {
 				mode: "weird",
 				limit: 5,
 			}),
-		).rejects.toThrow("--mode must be bird or xurl");
+		).rejects.toThrow("--mode must be auto, bird, or xurl");
 		await expect(
 			syncMentions({
 				account: "acct_primary",

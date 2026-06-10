@@ -209,12 +209,14 @@ describe("web sync dispatcher", () => {
 		const result = await runWebSync("mentions");
 
 		expect(syncMentionsMock).toHaveBeenCalledWith({
-			mode: "xurl",
+			account: undefined,
+			mode: "auto",
 			limit: 100,
 			maxPages: 3,
 			refresh: true,
 		});
 		expect(syncMentionThreadsMock).toHaveBeenCalledWith({
+			account: undefined,
 			mode: "xurl",
 			limit: 30,
 			delayMs: 1500,

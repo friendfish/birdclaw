@@ -1,6 +1,13 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PeriodDigestContext } from "#/lib/period-digest";
+import type { ProfileAnalysisContext } from "#/lib/profile-analysis";
 import { MarkdownViewer } from "./MarkdownViewer";
 
 const authorProfile = {
@@ -38,7 +45,18 @@ const context = {
 			name: "Strata",
 			authorProfile,
 			createdAt: "2026-05-18T09:12:00.000Z",
-			text: "@GOATNetwork @openclaw oh nice, autonomous agents running on goAT",
+			text: "@GOATNetwork @openclaw oh nice, autonomous agents running on goAT https://t.co/goat",
+			entities: {
+				urls: [
+					{
+						url: "https://t.co/goat",
+						expandedUrl: "https://goat.network/agents",
+						displayUrl: "goat.network/agents",
+						start: 66,
+						end: 83,
+					},
+				],
+			},
 			likeCount: 0,
 			liked: false,
 			bookmarked: false,
@@ -88,6 +106,95 @@ const context = {
 	hash: "demo",
 } satisfies PeriodDigestContext;
 
+const profileAnalysisContext = {
+	handle: "steipete",
+	accountId: "account_steipete",
+	accountHandle: "steipete",
+	profile: {
+		id: "profile_steipete",
+		handle: "steipete",
+		displayName: "Peter Steinberger",
+		bio: "Builder",
+		followersCount: 123,
+		avatarHue: 18,
+		createdAt: "2009-03-19T22:54:05.000Z",
+	},
+	profiles: [
+		{
+			id: "profile_openai",
+			handle: "OpenAI",
+			displayName: "OpenAI",
+			bio: "AI research and products.",
+			followersCount: 7_000_000,
+			avatarHue: 160,
+			avatarUrl: "https://pbs.twimg.com/profile_images/openai_normal.jpg",
+			createdAt: "2015-12-11T00:00:00.000Z",
+		},
+	],
+	externalUserId: "123",
+	tweets: [
+		{
+			id: "2055621934319030779",
+			url: "https://x.com/steipete/status/2055621934319030779",
+			author: "steipete",
+			createdAt: "2026-05-28T09:12:00.000Z",
+			text: "I work at OpenAI and build coding agents.",
+			likeCount: 50,
+			replyCount: 4,
+			retweetCount: 3,
+			quoteCount: 1,
+			bookmarkedCount: 9,
+		},
+	],
+	conversations: [
+		{
+			id: "2055858095759229148",
+			url: "https://x.com/openclaw/status/2055858095759229148",
+			author: "openclaw",
+			createdAt: "2026-05-28T10:12:00.000Z",
+			text: "OpenClaw Foundation/team context.",
+			likeCount: 12,
+			replyCount: 2,
+			retweetCount: 1,
+			quoteCount: 0,
+			bookmarkedCount: 3,
+			conversationRootId: "2055858095759229148",
+			profileId: "profile_user_42",
+			name: "OpenClaw",
+			bio: "Agent tooling",
+			followersCount: 456,
+			avatarUrl: "https://pbs.twimg.com/profile_images/openclaw_normal.jpg",
+		},
+		{
+			id: "2061001416454439313",
+			url: "https://x.com/vincent_koc/status/2061001416454439313",
+			author: "vincent_koc",
+			createdAt: "2026-05-30T10:12:00.000Z",
+			text: "Users ask for support in replies.",
+			likeCount: 3,
+			replyCount: 1,
+			retweetCount: 0,
+			quoteCount: 0,
+			bookmarkedCount: 1,
+			conversationRootId: "2061001416454439313",
+			profileId: "profile_user_99",
+			name: "Vincent Koc",
+			bio: "Builder",
+			followersCount: 789,
+			avatarUrl: "https://pbs.twimg.com/profile_images/vincent_normal.jpg",
+		},
+	],
+	counts: {
+		tweets: 1,
+		tweetPages: 1,
+		conversationsScanned: 1,
+		conversationTweets: 1,
+		conversationPages: 1,
+	},
+	fetchCached: true,
+	hash: "profile-demo",
+} satisfies ProfileAnalysisContext;
+
 describe("MarkdownViewer", () => {
 	afterEach(cleanup);
 
@@ -130,6 +237,40 @@ describe("MarkdownViewer", () => {
 				name: "“autonomous agents running on goAT”",
 			}),
 		).not.toHaveClass("font-mono");
+	});
+
+	it("links profile analysis numeric citations from its profile context", () => {
+		render(
+			<MarkdownViewer
+				context={profileAnalysisContext}
+				markdown={
+					"Peter explicitly says he works at OpenAI and describes the OpenClaw team structure (2055621934319030779) (2055858095759229148)."
+				}
+			/>,
+		);
+
+		expect(screen.queryByText(/2055621934319030779/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/2055858095759229148/)).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("link", {
+				name: "Peter explicitly says he works at OpenAI",
+			}),
+		).toHaveAttribute(
+			"href",
+			"https://x.com/steipete/status/2055621934319030779",
+		);
+		expect(
+			screen.getByRole("link", {
+				name: "describes the OpenClaw team structure",
+			}),
+		).toHaveAttribute(
+			"href",
+			"https://x.com/openclaw/status/2055858095759229148",
+		);
+		expect(screen.getByAltText("OpenClaw")).toHaveAttribute(
+			"src",
+			"/api/avatar?profileId=profile_user_42&v=https%3A%2F%2Fpbs.twimg.com%2Fprofile_images%2Fopenclaw_normal.jpg",
+		);
 	});
 
 	it("renders normal markdown links without changing the surrounding text font", () => {
@@ -202,16 +343,21 @@ describe("MarkdownViewer", () => {
 		).not.toBeInTheDocument();
 		expect(
 			screen.getByRole("link", {
-				name: "with BYOK access to Opus, GPT-5.5, Gemini 3, and 500+ models at provider cost",
+				name: "says StepFun is widely used, with BYOK access to Opus, GPT-5.5, Gemini 3",
 			}),
 		).toHaveAttribute(
 			"href",
 			"https://x.com/kilocode/status/2057574939775938900",
 		);
-		expect(screen.getByRole("link", { name: "source 2" })).toHaveAttribute(
+		expect(
+			screen.getByRole("link", {
+				name: "500+ models at provider cost",
+			}),
+		).toHaveAttribute(
 			"href",
 			"https://x.com/kilocode/status/2057578665408434460",
 		);
+		expect(screen.queryByRole("link", { name: "source 2" })).toBeNull();
 	});
 
 	it("keeps mixed unresolved grouped tweet citations visible", () => {
@@ -230,6 +376,223 @@ describe("MarkdownViewer", () => {
 			}),
 		).toBeInTheDocument();
 		expect(screen.queryByRole("link", { name: "source 2" })).toBeNull();
+	});
+
+	it("keeps adjacent mixed unresolved tweet citations visible", () => {
+		render(
+			<MarkdownViewer
+				context={context}
+				markdown={
+					"@kilocode says StepFun is widely used (tweet_2057574939775938900) (tweet_missing)."
+				}
+			/>,
+		);
+
+		expect(
+			screen.queryByText(/tweet_2057574939775938900/),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByText("(tweet_missing)", { exact: false }),
+		).toBeInTheDocument();
+	});
+
+	it("links unresolved numeric citations without leaking raw ids", () => {
+		render(
+			<MarkdownViewer
+				context={profileAnalysisContext}
+				markdown={
+					"People ask for product support inline source (2069999999999999999) source source."
+				}
+			/>,
+		);
+
+		expect(screen.queryByText(/2069999999999999999/)).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("link", {
+				name: "People ask for product support inline source",
+			}),
+		).toHaveAttribute("href", "https://x.com/i/status/2069999999999999999");
+		expect(screen.queryByText(" source source.")).toBeNull();
+	});
+
+	it("links unresolved prefixed tweet citations without leaking raw ids", () => {
+		const { container } = render(
+			<MarkdownViewer
+				context={context}
+				markdown={
+					"- **“Don’t trust the agent blindly” became the dominant AI-coding take.** Systems understanding still matters. (tweet_2060088112257372610, tweet_2060279326134747518, tweet_2060263961975480675)"
+				}
+			/>,
+		);
+
+		expect(screen.queryByText(/tweet_2060088112257372610/)).toBeNull();
+		expect(screen.queryByText(/tweet_2060279326134747518/)).toBeNull();
+		expect(screen.queryByText(/tweet_2060263961975480675/)).toBeNull();
+		expect(
+			container.querySelector(
+				'a[href="https://x.com/i/status/2060088112257372610"]',
+			),
+		).not.toBeNull();
+		expect(
+			container.querySelector(
+				'a[href="https://x.com/i/status/2060279326134747518"]',
+			),
+		).not.toBeNull();
+		expect(
+			container.querySelector(
+				'a[href="https://x.com/i/status/2060263961975480675"]',
+			),
+		).not.toBeNull();
+	});
+
+	it("groups adjacent numeric profile citations", () => {
+		render(
+			<MarkdownViewer
+				context={profileAnalysisContext}
+				markdown={
+					"Peter describes OpenAI and OpenClaw roles (2055621934319030779) (2055858095759229148) (2061001416454439313)."
+				}
+			/>,
+		);
+
+		expect(screen.queryByText(/2055621934319030779/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/2055858095759229148/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/2061001416454439313/)).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("link", {
+				name: "Peter describes OpenAI and OpenClaw roles",
+			}),
+		).toHaveAttribute(
+			"href",
+			"https://x.com/steipete/status/2055621934319030779",
+		);
+		expect(screen.getByRole("link", { name: "source 2" })).toHaveAttribute(
+			"href",
+			"https://x.com/openclaw/status/2055858095759229148",
+		);
+		expect(screen.getByRole("link", { name: "source 3" })).toHaveAttribute(
+			"href",
+			"https://x.com/vincent_koc/status/2061001416454439313",
+		);
+		expect(screen.queryByRole("link", { name: "source" })).toBeNull();
+	});
+
+	it("links adjacent profile citations to readable clauses when possible", () => {
+		render(
+			<MarkdownViewer
+				context={profileAnalysisContext}
+				markdown={
+					"Peter discusses OpenAI, OpenClaw, and support workflows (2055621934319030779) (2055858095759229148) (2061001416454439313)."
+				}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("link", { name: "Peter discusses OpenAI" }),
+		).toHaveAttribute(
+			"href",
+			"https://x.com/steipete/status/2055621934319030779",
+		);
+		expect(screen.getByRole("link", { name: "OpenClaw" })).toHaveAttribute(
+			"href",
+			"https://x.com/openclaw/status/2055858095759229148",
+		);
+		expect(
+			screen.getByRole("link", { name: "support workflows" }),
+		).toHaveAttribute(
+			"href",
+			"https://x.com/vincent_koc/status/2061001416454439313",
+		);
+		expect(screen.queryByRole("link", { name: "source 2" })).toBeNull();
+		expect(screen.queryByRole("link", { name: "source 3" })).toBeNull();
+	});
+
+	it("renders hydrated profile mentions with profile previews", () => {
+		render(
+			<MarkdownViewer
+				context={profileAnalysisContext}
+				markdown={"He works with @OpenAI and @openclaw on agent tooling."}
+			/>,
+		);
+
+		expect(screen.getByRole("link", { name: "@OpenAI" })).toHaveAttribute(
+			"href",
+			"/profiles/OpenAI",
+		);
+		expect(screen.getByRole("link", { name: "@openclaw" })).toHaveAttribute(
+			"href",
+			"/profiles/openclaw",
+		);
+		expect(screen.getByText("AI research and products.")).toBeInTheDocument();
+		expect(screen.getByText("Agent tooling")).toBeInTheDocument();
+	});
+
+	it("links standalone unresolved numeric citations", () => {
+		render(
+			<MarkdownViewer
+				context={profileAnalysisContext}
+				markdown={"**Evidence:** (2069999999999999999)"}
+			/>,
+		);
+
+		expect(screen.queryByText(/2069999999999999999/)).not.toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "source" })).toHaveAttribute(
+			"href",
+			"https://x.com/i/status/2069999999999999999",
+		);
+	});
+
+	it("keeps real source-prefixed prose after citations", () => {
+		render(
+			<MarkdownViewer
+				context={context}
+				markdown={"Claim (tweet_2056286865875935400) source code is available."}
+			/>,
+		);
+
+		expect(screen.getByText(/source code is available/)).toBeInTheDocument();
+	});
+
+	it("links full claims that legitimately end in source", () => {
+		render(
+			<MarkdownViewer
+				context={context}
+				markdown={"The project is open source (tweet_2056286865875935400)."}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("link", { name: "The project is open source" }),
+		).toHaveAttribute(
+			"href",
+			"https://x.com/ChainZenit/status/2056286865875935400",
+		);
+	});
+
+	it("links unresolved source-ending claims without collapsing the label", () => {
+		render(
+			<MarkdownViewer
+				context={profileAnalysisContext}
+				markdown={"The project is open source (2069999999999999999) source."}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("link", { name: "The project is open source" }),
+		).toHaveAttribute("href", "https://x.com/i/status/2069999999999999999");
+		expect(screen.queryByText(" source.")).toBeNull();
+	});
+
+	it("does not link arbitrary standalone long numbers", () => {
+		render(
+			<MarkdownViewer
+				context={profileAnalysisContext}
+				markdown={"Customer 123456789012345 remains pending."}
+			/>,
+		);
+
+		expect(screen.getByText(/123456789012345/)).toBeInTheDocument();
+		expect(screen.queryByRole("link")).toBeNull();
 	});
 
 	it("renders all grouped citation links when no readable text precedes", () => {
@@ -270,7 +633,7 @@ describe("MarkdownViewer", () => {
 		});
 		const wrapper = link.parentElement;
 		const preview = screen
-			.getByText(context.tweets[0].text)
+			.getByText(/https:\/\/goat\.network\/agents/)
 			.closest("[aria-hidden]");
 
 		expect(preview).toHaveAttribute("aria-hidden", "true");
@@ -281,5 +644,164 @@ describe("MarkdownViewer", () => {
 
 		fireEvent.click(link, { metaKey: true });
 		expect(preview).toHaveAttribute("aria-hidden", "true");
+	});
+
+	it("places tweet previews above the citation when the viewport is tight below", async () => {
+		const originalInnerHeight = window.innerHeight;
+		const originalRect = HTMLElement.prototype.getBoundingClientRect;
+		const originalOffsetHeight = Object.getOwnPropertyDescriptor(
+			HTMLElement.prototype,
+			"offsetHeight",
+		);
+		Object.defineProperty(window, "innerHeight", {
+			configurable: true,
+			value: 220,
+		});
+		HTMLElement.prototype.getBoundingClientRect = () =>
+			({
+				bottom: 196,
+				height: 18,
+				left: 120,
+				right: 220,
+				top: 178,
+				width: 100,
+				x: 120,
+				y: 178,
+				toJSON: () => ({}),
+			}) as DOMRect;
+		Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+			configurable: true,
+			get() {
+				return 160;
+			},
+		});
+
+		try {
+			render(
+				<MarkdownViewer
+					context={context}
+					markdown={
+						"ChainZenit reacted positively to “autonomous agents running on goAT” (tweet_2056286865875935400)."
+					}
+				/>,
+			);
+
+			const link = screen.getByRole("link", {
+				name: "“autonomous agents running on goAT”",
+			});
+			const wrapper = link.parentElement;
+			const preview = screen
+				.getByText(/https:\/\/goat\.network\/agents/)
+				.closest("[aria-hidden]");
+			expect(wrapper).not.toBeNull();
+
+			fireEvent.pointerEnter(wrapper as Element);
+
+			await waitFor(() => {
+				expect(preview).toHaveClass("bottom-[calc(100%+10px)]");
+			});
+		} finally {
+			Object.defineProperty(window, "innerHeight", {
+				configurable: true,
+				value: originalInnerHeight,
+			});
+			HTMLElement.prototype.getBoundingClientRect = originalRect;
+			if (originalOffsetHeight) {
+				Object.defineProperty(
+					HTMLElement.prototype,
+					"offsetHeight",
+					originalOffsetHeight,
+				);
+			}
+		}
+	});
+
+	it("places tweet previews above when a clipping container is tight below", async () => {
+		const originalInnerHeight = window.innerHeight;
+		const originalRect = HTMLElement.prototype.getBoundingClientRect;
+		const originalOffsetHeight = Object.getOwnPropertyDescriptor(
+			HTMLElement.prototype,
+			"offsetHeight",
+		);
+		Object.defineProperty(window, "innerHeight", {
+			configurable: true,
+			value: 800,
+		});
+		HTMLElement.prototype.getBoundingClientRect = function () {
+			if (this instanceof HTMLElement && this.dataset.testid === "clip-box") {
+				return {
+					bottom: 260,
+					height: 220,
+					left: 0,
+					right: 680,
+					top: 40,
+					width: 680,
+					x: 0,
+					y: 40,
+					toJSON: () => ({}),
+				} as DOMRect;
+			}
+			return {
+				bottom: 230,
+				height: 18,
+				left: 120,
+				right: 220,
+				top: 212,
+				width: 100,
+				x: 120,
+				y: 212,
+				toJSON: () => ({}),
+			} as DOMRect;
+		};
+		Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+			configurable: true,
+			get() {
+				return 260;
+			},
+		});
+
+		try {
+			render(
+				<div
+					data-testid="clip-box"
+					style={{ height: 220, overflowY: "hidden" }}
+				>
+					<MarkdownViewer
+						context={context}
+						markdown={
+							"ChainZenit reacted positively to “autonomous agents running on goAT” (tweet_2056286865875935400)."
+						}
+					/>
+				</div>,
+			);
+
+			const link = screen.getByRole("link", {
+				name: "“autonomous agents running on goAT”",
+			});
+			const wrapper = link.parentElement;
+			const preview = screen
+				.getByText(/https:\/\/goat\.network\/agents/)
+				.closest("[aria-hidden]");
+			expect(wrapper).not.toBeNull();
+
+			fireEvent.pointerEnter(wrapper as Element);
+
+			await waitFor(() => {
+				expect(preview).toHaveClass("bottom-[calc(100%+10px)]");
+			});
+		} finally {
+			Object.defineProperty(window, "innerHeight", {
+				configurable: true,
+				value: originalInnerHeight,
+			});
+			HTMLElement.prototype.getBoundingClientRect = originalRect;
+			if (originalOffsetHeight) {
+				Object.defineProperty(
+					HTMLElement.prototype,
+					"offsetHeight",
+					originalOffsetHeight,
+				);
+			}
+		}
 	});
 });

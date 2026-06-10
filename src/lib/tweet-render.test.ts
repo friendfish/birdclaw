@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
 	enrichFallbackUrlEntities,
+	profileDescriptionEntitiesFromXurl,
 	renderTweetMarkdown,
 	renderTweetPlainText,
+	tweetEntitiesFromXurl,
 } from "./tweet-render";
 
 describe("tweet render helpers", () => {
@@ -34,6 +36,44 @@ describe("tweet render helpers", () => {
 				],
 			}),
 		).toBe("Hi @sam https://example.com/demo #ship");
+	});
+
+	it("normalizes X API url entities for expanded preview text", () => {
+		const entities = tweetEntitiesFromXurl({
+			urls: [
+				{
+					url: "https://t.co/demo",
+					expanded_url: "https://example.com/demo",
+					display_url: "example.com/demo",
+					start: 6,
+					end: 23,
+				},
+			],
+		});
+
+		expect(renderTweetPlainText("Read: https://t.co/demo", entities)).toBe(
+			"Read: https://example.com/demo",
+		);
+	});
+
+	it("normalizes X API profile description url entities", () => {
+		const entities = profileDescriptionEntitiesFromXurl({
+			description: {
+				urls: [
+					{
+						url: "https://t.co/bio",
+						expanded_url: "https://github.com/nousresearch/hermes-agent",
+						display_url: "github.com/nousresearch/hermes-agent",
+						start: 8,
+						end: 24,
+					},
+				],
+			},
+		});
+
+		expect(renderTweetPlainText("Github: https://t.co/bio", entities)).toBe(
+			"Github: https://github.com/nousresearch/hermes-agent",
+		);
 	});
 
 	it("renders markdown with mention and url links", () => {

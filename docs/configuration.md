@@ -5,11 +5,11 @@ description: "birdclaw config files, env vars, transport precedence, and multi-a
 
 # Configuration
 
-birdclaw reads configuration from three layers, in this precedence:
+birdclaw reads configuration from these layers:
 
-1. **CLI flags** — `--db`, `--profile`, `--config`, `--json`, `--plain`, etc.
-2. **Environment variables** — `BIRDCLAW_HOME`, `BIRDCLAW_DB`, `BIRDCLAW_PROFILE`, `BIRDCLAW_TRANSPORT`, `BIRDCLAW_LOG`, `NO_COLOR`.
-3. **Config files** — project-level `./.birdclawrc.json5`, then user-level `~/.birdclaw/config.json`.
+1. **Command flags** — for example `--account`, `--mode`, and `--transport`.
+2. **Environment variables** — global paths plus feature-specific overrides.
+3. **User config** — `~/.birdclaw/config.json`, or the file selected by `BIRDCLAW_CONFIG`.
 
 ## Storage root
 
@@ -81,10 +81,8 @@ See [Backup](backup.md). When `autoSync` is enabled, read commands pull + merge 
 | Variable                       | Purpose                                                                                                                                |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `BIRDCLAW_HOME`                | Override the storage root (`~/.birdclaw` by default)                                                                                   |
-| `BIRDCLAW_DB`                  | Point at a custom SQLite file path                                                                                                     |
-| `BIRDCLAW_PROFILE`             | Pick a non-default profile/account                                                                                                     |
-| `BIRDCLAW_TRANSPORT`           | Force `auto`, `xurl`, `bird`, `official`, or `xweb` for one process                                                                    |
-| `BIRDCLAW_LOG`                 | Increase log verbosity                                                                                                                 |
+| `BIRDCLAW_CONFIG`              | Read and write config at a non-default path                                                                                            |
+| `BIRDCLAW_ACTIONS_TRANSPORT`   | Override moderation action transport with `auto`, `xurl`, or `bird` for one process                                                     |
 | `BIRDCLAW_ALLOWED_HOSTS`       | Comma-separated extra Vite dev-server hostnames for `birdclaw serve` behind a trusted reverse proxy                                    |
 | `BIRDCLAW_LOCAL_WEB`           | Internal `birdclaw serve` marker for direct local-only loopback web APIs; forwarded/proxied requests still require remote-token config |
 | `BIRDCLAW_WEB_TOKEN`           | Optional app-level token for remote web API access; send as `x-birdclaw-token` or `birdclaw_token`                                     |
@@ -98,23 +96,20 @@ See [Backup](backup.md). When `autoSync` is enabled, read commands pull + merge 
 
 ## Multi-account
 
-birdclaw was built around multiple accounts in a single shared database from day one. Pass `--account <id>` on commands that need to disambiguate (`blocks`, `mutes`, `mentions export`, `dms`), or set:
-
-```bash
-export BIRDCLAW_PROFILE=acct_primary
-```
+birdclaw was built around multiple accounts in a single shared database from day one. Pass `--account <id>` on commands that support account selection, including moderation, mentions, DMs, and live sync commands.
 
 Per-account state — cursors, transport preferences, last-sync watermarks, OpenAI score caches — lives inside the same `birdclaw.sqlite`. There is no per-account directory tree.
 
-## Transport precedence
+## Transport selection
 
-1. **archive** — local archive zip / extracted folder (read-only)
-2. **xurl** — official-API live reads/writes
-3. **bird** — cookie-backed reads/writes (DMs, mentions, block fallback)
-4. **official** — direct API client (planned)
-5. **xweb** — experimental low-level web cookie session; not used by moderation `auto` writes
+There is no single global transport order:
 
-`auto` mode walks this list in order. Force one transport for one command with `--mode <kind>` on `sync` / `mentions export`, or `--transport <kind>` on `ban` / `unban` / `mute` / `unmute`.
+- Archive imports and local reads need no live transport.
+- Sync commands select their source with `--mode`; supported modes and defaults vary by command.
+- Mentions export resolves its data source separately.
+- Moderation writes use command `--transport`, then `BIRDCLAW_ACTIONS_TRANSPORT`, then `actions.transport`, then `auto`.
+
+For moderation, `auto` tries bird first and falls back to xurl. Persist that choice with `birdclaw auth use <auto|bird|xurl>`.
 
 ## Disabling live writes
 

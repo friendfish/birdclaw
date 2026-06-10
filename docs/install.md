@@ -17,7 +17,7 @@ description: "Install birdclaw via Homebrew, npm, or from source. Optional xurl 
 Optional but encouraged:
 
 - [`xurl`](https://github.com/xdevplatform/xurl) — official-API live reads/writes (likes, bookmarks, blocks, mutes, posting)
-- [`bird`](https://github.com/steipete/bird) — cookie-backed reads/writes for surfaces where `xurl` is rate-limited or unavailable
+- [`bird`](https://github.com/steipete/bird) — browser-cookie-backed reads/writes for surfaces where `xurl` is rate-limited or unavailable
 - `OPENAI_API_KEY` — inbox scoring and low-signal filtering
 
 birdclaw still works in pure local/archive mode without any of the above.
@@ -64,25 +64,31 @@ birdclaw auth status --json
 birdclaw db stats --json
 ```
 
-`auth status` prints which transports are wired up (`archive`, `xurl`, `bird`, `xweb`) and which account is currently active.
+`auth status` runs Birdclaw's coarse xurl status probe. Verify xurl with `xurl whoami` and bird with `bird whoami`. See [Sign in](auth.md) for the complete setup and transport-selection model.
 
 ## Optional: xurl
 
-```bash
-brew install xdevplatform/tap/xurl
-xurl auth login
+```text
+# macOS
+brew install --cask xdevplatform/tap/xurl
+
+# macOS or Linux
+npm install -g @xdevplatform/xurl
+
+xurl auth oauth2 --app my-app
+xurl whoami
 ```
 
-After `xurl auth login` succeeds, `birdclaw` will pick `xurl` first for live reads and writes. No extra wiring needed — `birdclaw` shells out to `xurl` rather than owning `~/.xurl` itself.
+Alternatively, use xurl's [no-sudo install script](https://github.com/xdevplatform/xurl#installation). Register `my-app` through the [xurl authentication guide](https://github.com/xdevplatform/xurl#authentication), keeping the client secret out of shared shell history and process listings. The redirect URI configured in the X developer portal must match xurl's configured URI. Birdclaw shells out to xurl and does not own `~/.xurl`.
 
 ## Optional: bird
 
-```bash
-brew install steipete/tap/bird
-bird auth import-cookies
+```text
+npm install -g @steipete/bird
+bird whoami
 ```
 
-Once `bird` is in `PATH`, `birdclaw` uses it as the cookie-backed fallback. This matters most for DMs, mentions, blocks, and any block/unblock flow where Twitter rejects OAuth2 writes.
+bird reads cookies from a logged-in Safari, Chrome, or Firefox profile. This matters most for DMs, mentions, timeline reads, and moderation flows where X rejects OAuth2 writes.
 
 If you only run birdclaw via `launchd` (`jobs install-bookmarks-launchd`), `bird` may need its `AUTH_TOKEN`/`CT0` exported via an env file because launchd does not see your interactive browser session. See [Jobs](jobs.md#env-files-for-launchd).
 

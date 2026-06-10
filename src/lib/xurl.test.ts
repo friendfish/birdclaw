@@ -48,6 +48,8 @@ describe("xurl transport wrapper", () => {
 		execFileAsyncMock.mockReset();
 		delete process.env.BIRDCLAW_DISABLE_LIVE_WRITES;
 		delete process.env.BIRDCLAW_XURL_RETRY_BASE_MS;
+		delete process.env.BIRDCLAW_XURL_OAUTH2_APP;
+		delete process.env.BIRDCLAW_XURL_OAUTH2_USERNAME;
 	});
 
 	it("falls back to local mode when xurl is missing", async () => {
@@ -532,6 +534,90 @@ describe("xurl transport wrapper", () => {
 		]);
 	});
 
+	it("ignores configured OAuth2 overrides for recent search reads", async () => {
+		process.env.BIRDCLAW_XURL_OAUTH2_APP = "xurl-steipete";
+		process.env.BIRDCLAW_XURL_OAUTH2_USERNAME = "openclaw";
+		execFileAsyncMock.mockResolvedValueOnce({
+			stdout: JSON.stringify({ data: [] }),
+			stderr: "",
+		});
+		const { searchRecentTweets } = await import("./xurl");
+
+		await searchRecentTweets("openclaw", {
+			maxResults: 10,
+		});
+
+		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
+			"--auth",
+			"oauth2",
+			`/2/tweets/search/recent?query=openclaw&max_results=10&expansions=${AUTHOR_MEDIA_EXPANSIONS}&tweet.fields=${THREAD_TWEET_FIELDS}&media.fields=${MEDIA_FIELDS}&user.fields=${RICH_USER_FIELDS}`,
+		]);
+	});
+
+	it("ignores configured OAuth2 overrides for conversation search reads", async () => {
+		process.env.BIRDCLAW_XURL_OAUTH2_APP = "xurl-steipete";
+		process.env.BIRDCLAW_XURL_OAUTH2_USERNAME = "openclaw";
+		execFileAsyncMock.mockResolvedValueOnce({
+			stdout: JSON.stringify({ data: [] }),
+			stderr: "",
+		});
+		const { searchRecentByConversationId } = await import("./xurl");
+
+		await searchRecentByConversationId("123", {
+			maxResults: 100,
+			auth: "oauth2",
+		});
+
+		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
+			"--auth",
+			"oauth2",
+			`/2/tweets/search/recent?query=conversation_id%3A123&max_results=100&expansions=${AUTHOR_MEDIA_EXPANSIONS}&tweet.fields=${THREAD_TWEET_FIELDS}&media.fields=${MEDIA_FIELDS}&user.fields=${RICH_USER_FIELDS}`,
+		]);
+	});
+
+	it("can ignore configured OAuth2 overrides for user lookup reads", async () => {
+		process.env.BIRDCLAW_XURL_OAUTH2_APP = "xurl-steipete";
+		process.env.BIRDCLAW_XURL_OAUTH2_USERNAME = "openclaw";
+		execFileAsyncMock.mockResolvedValueOnce({
+			stdout: JSON.stringify({ data: [] }),
+			stderr: "",
+		});
+		const { lookupUsersByHandles } = await import("./xurl");
+
+		await lookupUsersByHandles(["vincent_koc"], {
+			auth: "oauth2",
+			useConfiguredCandidate: false,
+		});
+
+		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
+			"--auth",
+			"oauth2",
+			`/2/users/by?usernames=vincent_koc&user.fields=${RICH_USER_FIELDS}`,
+		]);
+	});
+
+	it("can ignore configured OAuth2 overrides for user timeline reads", async () => {
+		process.env.BIRDCLAW_XURL_OAUTH2_APP = "xurl-steipete";
+		process.env.BIRDCLAW_XURL_OAUTH2_USERNAME = "openclaw";
+		execFileAsyncMock.mockResolvedValueOnce({
+			stdout: JSON.stringify({ data: [] }),
+			stderr: "",
+		});
+		const { listUserTweets } = await import("./xurl");
+
+		await listUserTweets("42", {
+			auth: "oauth2",
+			maxResults: 5,
+			useConfiguredCandidate: false,
+		});
+
+		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", [
+			"--auth",
+			"oauth2",
+			`/2/users/42/tweets?max_results=5&expansions=${MEDIA_EXPANSION}&tweet.fields=created_at%2Cconversation_id%2Cpublic_metrics%2Creferenced_tweets&media.fields=${MEDIA_FIELDS}&exclude=retweets`,
+		]);
+	});
+
 	it("passes start_time for mention backfills when present", async () => {
 		execFileAsyncMock.mockResolvedValueOnce({
 			stdout: JSON.stringify({
@@ -985,6 +1071,50 @@ describe("xurl transport wrapper", () => {
 				data: [{ id: "tweet_1", author_id: "42", text: "hello" }],
 			});
 			expect(execFileAsyncMock).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("emits per-attempt telemetry for hidden JSON retries", async () => {
+		vi.useFakeTimers();
+		try {
+			process.env.BIRDCLAW_XURL_RETRY_BASE_MS = "500";
+			execFileAsyncMock
+				.mockRejectedValueOnce(
+					Object.assign(new Error("rate limited"), {
+						stdout: JSON.stringify({ status: 429 }),
+					}),
+				)
+				.mockResolvedValueOnce({
+					stdout: JSON.stringify({
+						data: [{ id: "tweet_1", text: "hello" }],
+					}),
+					stderr: "",
+				});
+			const { searchRecentByConversationIdEffect } = await import("./xurl");
+			const attempts: Array<{ attempt: number; status: string }> = [];
+
+			const result = Effect.runPromise(
+				searchRecentByConversationIdEffect("conversation_1", {
+					maxResults: 10,
+					timeoutMs: 2000,
+					onAttempt: (attempt) =>
+						attempts.push({
+							attempt: attempt.attempt,
+							status: attempt.status,
+						}),
+				}),
+			);
+			await vi.advanceTimersByTimeAsync(500);
+
+			await expect(result).resolves.toEqual({
+				data: [{ id: "tweet_1", text: "hello" }],
+			});
+			expect(attempts).toEqual([
+				{ attempt: 0, status: "rate_limited" },
+				{ attempt: 1, status: "ok" },
+			]);
 		} finally {
 			vi.useRealTimers();
 		}

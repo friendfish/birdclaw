@@ -129,6 +129,28 @@ textarea {
 	background: color-mix(in srgb, var(--ink-soft) 55%, transparent);
 }
 
+[data-theme="dark"] .mapboxgl-ctrl-group {
+	background: var(--bg-elevated);
+	border: 1px solid var(--line-strong);
+	box-shadow: 0 10px 28px var(--shadow);
+}
+
+[data-theme="dark"] .mapboxgl-ctrl-group button {
+	background-color: var(--bg-elevated);
+}
+
+[data-theme="dark"] .mapboxgl-ctrl-group button + button {
+	border-top-color: var(--line);
+}
+
+[data-theme="dark"] .mapboxgl-ctrl-group button:not(:disabled):hover {
+	background-color: var(--bg-hover);
+}
+
+[data-theme="dark"] .mapboxgl-ctrl-group .mapboxgl-ctrl-icon {
+	filter: invert(0.88);
+}
+
 @keyframes theme-circle-transition {
 	0% {
 		clip-path: circle(

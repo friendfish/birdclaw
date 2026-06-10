@@ -56,7 +56,8 @@ function RootDocument({ children }: { children: ReactNode }) {
 	const pathname = useRouterState({
 		select: (state) => state.location.pathname,
 	});
-	const messagesMode = pathname.startsWith("/dms");
+	const wideMode =
+		pathname.startsWith("/dms") || pathname.startsWith("/network-map");
 
 	return (
 		<html lang="en" suppressHydrationWarning>
@@ -66,11 +67,9 @@ function RootDocument({ children }: { children: ReactNode }) {
 			</head>
 			<body className={bodyClass}>
 				<ThemeProvider>
-					<div className={messagesMode ? siteShellDmClass : siteShellClass}>
-						<AppNav compact={messagesMode} />
-						<main
-							className={messagesMode ? mainColumnDmClass : mainColumnClass}
-						>
+					<div className={wideMode ? siteShellDmClass : siteShellClass}>
+						<AppNav compact={wideMode} />
+						<main className={wideMode ? mainColumnDmClass : mainColumnClass}>
 							{children}
 						</main>
 					</div>

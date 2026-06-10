@@ -117,7 +117,13 @@ export interface TweetCollectionsTable {
 export interface TweetAccountEdgesTable {
 	account_id: string;
 	tweet_id: string;
-	kind: "home" | "mention" | "authored" | "thread_context";
+	kind:
+		| "home"
+		| "mention"
+		| "authored"
+		| "search"
+		| "profile"
+		| "thread_context";
 	first_seen_at: string;
 	last_seen_at: string;
 	seen_count: number;
@@ -258,6 +264,31 @@ export interface FollowEventsTable {
 	snapshot_id: string;
 }
 
+export interface GeocodedLocationsTable {
+	normalized_key: string;
+	original: string;
+	lat: number;
+	lng: number;
+	formatted: string | null;
+	country_code: string | null;
+	confidence: number | null;
+	provider: string;
+	approx_radius_m: number | null;
+	bounds_json: string;
+	components_json: string;
+	hits: number;
+	created_at: string;
+	last_used_at: string;
+}
+
+export interface GeocodedLocationsUnresolvedTable {
+	normalized_key: string;
+	original: string;
+	reason: string;
+	last_attempted_at: string;
+	ttl_until: string | null;
+}
+
 export interface BirdclawDatabase {
 	accounts: AccountsTable;
 	profiles: ProfilesTable;
@@ -281,6 +312,8 @@ export interface BirdclawDatabase {
 	follow_snapshots: FollowSnapshotsTable;
 	follow_snapshot_members: FollowSnapshotMembersTable;
 	follow_events: FollowEventsTable;
+	geocoded_locations: GeocodedLocationsTable;
+	geocoded_locations_unresolved: GeocodedLocationsUnresolvedTable;
 }
 
 let nativeDb: Database | undefined;
@@ -563,6 +596,31 @@ const BASE_SCHEMA_SQL = `
     snapshot_id text not null
   );
 
+  create table if not exists geocoded_locations (
+    normalized_key text primary key,
+    original text not null,
+    lat real not null,
+    lng real not null,
+    formatted text,
+    country_code text,
+    confidence integer,
+    provider text not null,
+    approx_radius_m real,
+    bounds_json text not null default '{}',
+    components_json text not null default '{}',
+    hits integer not null default 1,
+    created_at text not null,
+    last_used_at text not null
+  );
+
+  create table if not exists geocoded_locations_unresolved (
+    normalized_key text primary key,
+    original text not null,
+    reason text not null,
+    last_attempted_at text not null,
+    ttl_until text
+  );
+
   create virtual table if not exists tweets_fts using fts5(
     tweet_id unindexed,
     text
@@ -611,6 +669,9 @@ const INDEX_SQL = `
   create index if not exists idx_follow_edges_profile on follow_edges(profile_id, current);
   create index if not exists idx_follow_snapshots_account on follow_snapshots(account_id, direction, completed_at desc);
   create index if not exists idx_follow_events_account on follow_events(account_id, direction, kind, event_at desc);
+  create index if not exists idx_geocoded_locations_country on geocoded_locations(country_code);
+  create index if not exists idx_geocoded_locations_last_used on geocoded_locations(last_used_at desc);
+  create index if not exists idx_geocoded_unresolved_ttl on geocoded_locations_unresolved(ttl_until desc);
 `;
 
 function getColumnNames(db: Database, tableName: string): Set<string> {

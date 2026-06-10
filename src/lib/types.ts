@@ -391,6 +391,40 @@ export interface TransportStatus {
 	rawStatus?: string;
 }
 
+export type LiveDataSourceKind = "birdclaw" | "bird" | "xurl";
+
+export interface LiveDataSourceAccount {
+	id?: string;
+	username?: string;
+	handle?: string;
+	app?: string;
+	isDefault?: boolean;
+}
+
+export interface LiveDataSourceStatus {
+	source: LiveDataSourceKind;
+	label: string;
+	works: boolean;
+	installed?: boolean;
+	status: "ok" | "warning" | "error";
+	detail: string;
+	accounts: LiveDataSourceAccount[];
+}
+
+export interface LiveDataSourceCapability {
+	key: string;
+	label: string;
+	primary: LiveDataSourceKind;
+	fallbacks: LiveDataSourceKind[];
+	notes?: string;
+}
+
+export interface LiveDataSourcesResponse {
+	generatedAt: string;
+	sources: LiveDataSourceStatus[];
+	capabilities: LiveDataSourceCapability[];
+}
+
 export type ModerationAction = "block" | "unblock" | "mute" | "unmute";
 export type ModerationTransportKind = "bird" | "xurl" | "x-web";
 

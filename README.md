@@ -219,6 +219,8 @@ birdclaw auth status --json
 birdclaw db stats --json
 ```
 
+`auth status` reports Birdclaw's coarse xurl status. Verify xurl with `xurl whoami` and bird with `bird whoami`. For setup and transport selection, see [Sign in](docs/auth.md).
+
 Find and import an archive:
 
 ```bash
@@ -226,6 +228,8 @@ birdclaw archive find --json
 birdclaw import archive --json
 birdclaw import archive ~/Downloads/twitter-archive-2025.zip --json
 ```
+
+Don't have an archive yet? Request it from <https://x.com/settings/download_your_data>; X emails a download link when it is ready, which may take a few days. A fresh Birdclaw database needs the archive import to establish account identity before live sync. See [Archive Import → Get an archive](docs/archive.md#get-an-archive).
 
 Optional profile hydration can improve bios, follower counts, and avatars, but it performs live X profile reads and can spend API credits on large archives:
 
@@ -395,6 +399,21 @@ birdclaw research --account acct_primary --out ~/research/codex.md
 birdclaw discuss "local-first" --mode bird
 birdclaw discuss "sync engine" --question "what changed over time?"
 birdclaw discuss "prototype" --include-dms --limit 500 --max-pages 5 --json
+```
+
+### Profile analysis
+
+`birdclaw profile-analyze` resolves a profile through `xurl`, walks as much of the retrievable timeline as the API allows, backfills high-signal conversations, caches both the fetched context and AI result in SQLite, and writes a Markdown profile brief.
+
+Conversation backfill uses X recent search, so Birdclaw paces those calls by default (`BIRDCLAW_PROFILE_ANALYSIS_CONVERSATION_DELAY_MS`, default `3100`) and retries a 429 once after `BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_RETRY_MS` (default `60000`) before continuing with partial context. Set `BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_MAX_RETRIES` or the matching CLI flags when you want different behavior.
+
+When `xurl` has multiple OAuth2 labels, set `BIRDCLAW_XURL_OAUTH2_APP` and `BIRDCLAW_XURL_OAUTH2_USERNAME` to force the known-good token. Set `BIRDCLAW_PROFILE_ANALYSIS_ACCOUNT` to an account id or handle when profile backfills should use a non-default Birdclaw account.
+
+The web UI uses `/profiles/<handle>` for the canonical profile page, `/profile-analyze` for the analysis/search utility page, and `/rate-limits` for observed `xurl` pressure, recent 429s, and the active Profile Analyse throttle settings.
+
+```bash
+birdclaw profile-analyze steipete
+birdclaw profile-analyse openai --max-pages 20 --max-conversations 40 --conversation-delay-ms 3100 --rate-limit-retries 2 --json
 ```
 
 ### What happened today

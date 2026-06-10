@@ -6,8 +6,10 @@ import {
 	Image,
 	MessageCircle,
 	Repeat2,
+	UserSearch,
 } from "lucide-react";
 import { formatCompactNumber, formatShortTimestamp } from "#/lib/present";
+import { normalizeTweetUrlEntityRangeForText } from "#/lib/tweet-render";
 import type {
 	TimelineItem,
 	TweetEntities,
@@ -98,10 +100,10 @@ function isUnresolvedShortUrlEntity(entry: TweetUrlEntity) {
 	return !entry.displayUrl && isShortUrl(entry.url);
 }
 
-function unresolvedShortUrlRanges(entities: TweetEntities) {
+function unresolvedShortUrlRanges(text: string, entities: TweetEntities) {
 	return (entities.urls ?? [])
 		.filter(isUnresolvedShortUrlEntity)
-		.map((entry) => ({ start: entry.start, end: entry.end }));
+		.map((entry) => normalizeTweetUrlEntityRangeForText(text, entry));
 }
 
 function textOutsideRanges(
@@ -133,7 +135,7 @@ function shouldHideUnresolvedShortUrls(
 	mediaUrls: Set<string>,
 ) {
 	if (mediaUrls.size === 0) return false;
-	const ranges = unresolvedShortUrlRanges(entities);
+	const ranges = unresolvedShortUrlRanges(text, entities);
 	if (ranges.length === 0) return false;
 	return textOutsideRanges(text, ranges).trim().length === 0;
 }
@@ -201,7 +203,7 @@ function getHiddenMediaUrlRanges(
 				isMediaUrlEntity(entry, mediaUrls, tweetId) ||
 				(hideUnresolvedShortUrls && isUnresolvedShortUrlEntity(entry)),
 		)
-		.map((entry) => ({ start: entry.start, end: entry.end }));
+		.map((entry) => normalizeTweetUrlEntityRangeForText(text, entry));
 }
 
 function getVisibleUrlCards(
@@ -444,6 +446,20 @@ export function TimelineCard({
 								<span className="text-[13px]">Reply</span>
 							</button>
 						) : null}
+						<a
+							aria-label={`Analyse @${displayAuthor.handle}`}
+							className={feedActionButtonClass}
+							href={`/profiles/${encodeURIComponent(displayAuthor.handle)}`}
+							onClick={(event) => {
+								event.stopPropagation();
+							}}
+							title={`Analyse @${displayAuthor.handle}`}
+						>
+							<span className={feedActionIconWrapClass}>
+								<UserSearch className={feedActionIconClass} strokeWidth={1.7} />
+							</span>
+							<span className="text-[13px]">Analyse</span>
+						</a>
 						{showLikeIndicator ? (
 							<span
 								aria-label={`${formatCompactNumber(displayLikeCount)} likes`}

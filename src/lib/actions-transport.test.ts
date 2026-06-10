@@ -1,4 +1,7 @@
 // @vitest-environment node
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -40,8 +43,15 @@ vi.mock("./x-web", () => ({
 }));
 
 describe("actions transport", () => {
+	let birdclawHome: string | undefined;
+
 	beforeEach(() => {
 		delete process.env.BIRDCLAW_ACTIONS_TRANSPORT;
+		delete process.env.BIRDCLAW_CONFIG;
+		birdclawHome = mkdtempSync(
+			path.join(os.tmpdir(), "birdclaw-actions-transport-"),
+		);
+		process.env.BIRDCLAW_HOME = birdclawHome;
 		delete process.env.BIRDCLAW_DISABLE_LIVE_WRITES;
 		vi.resetModules();
 		mocks.blockUserViaBird.mockReset();
@@ -105,7 +115,13 @@ describe("actions transport", () => {
 
 	afterEach(() => {
 		delete process.env.BIRDCLAW_ACTIONS_TRANSPORT;
+		delete process.env.BIRDCLAW_CONFIG;
+		delete process.env.BIRDCLAW_HOME;
 		delete process.env.BIRDCLAW_DISABLE_LIVE_WRITES;
+		if (birdclawHome) {
+			rmSync(birdclawHome, { force: true, recursive: true });
+			birdclawHome = undefined;
+		}
 	});
 
 	it("builds moderation action effects lazily", async () => {

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const ensureBirdclawDirsMock = vi.fn();
 const getBirdclawPathsMock = vi.fn();
 const resolveMentionsDataSourceMock = vi.fn();
+const setActionsTransportMock = vi.fn();
 const getQueryEnvelopeMock = vi.fn();
 const findArchivesMock = vi.fn();
 const importArchiveMock = vi.fn();
@@ -13,6 +14,7 @@ const addBlockMock = vi.fn();
 const recordBlockMock = vi.fn();
 const syncBlocksMock = vi.fn();
 const exportMentionItemsMock = vi.fn();
+const exportMentionsViaCachedAutoMock = vi.fn();
 const exportMentionsViaCachedBirdMock = vi.fn();
 const exportMentionsViaCachedXurlMock = vi.fn();
 const syncMentionsMock = vi.fn();
@@ -85,6 +87,7 @@ vi.mock("#/lib/config", () => ({
 	getBirdclawPaths: () => getBirdclawPathsMock(),
 	resolveMentionsDataSource: (...args: unknown[]) =>
 		resolveMentionsDataSourceMock(...args),
+	setActionsTransport: (...args: unknown[]) => setActionsTransportMock(...args),
 }));
 
 vi.mock("#/lib/archive-finder", () => ({
@@ -169,6 +172,8 @@ vi.mock("#/lib/mentions-export", () => ({
 }));
 
 vi.mock("#/lib/mentions-live", () => ({
+	exportMentionsViaCachedAuto: (...args: unknown[]) =>
+		exportMentionsViaCachedAutoMock(...args),
 	exportMentionsViaCachedBird: (...args: unknown[]) =>
 		exportMentionsViaCachedBirdMock(...args),
 	exportMentionsViaCachedXurl: (...args: unknown[]) =>
@@ -272,6 +277,7 @@ describe("cli", () => {
 		ensureBirdclawDirsMock.mockReset();
 		getBirdclawPathsMock.mockReset();
 		resolveMentionsDataSourceMock.mockReset();
+		setActionsTransportMock.mockReset();
 		getQueryEnvelopeMock.mockReset();
 		findArchivesMock.mockReset();
 		importArchiveMock.mockReset();
@@ -280,6 +286,7 @@ describe("cli", () => {
 		recordBlockMock.mockReset();
 		syncBlocksMock.mockReset();
 		exportMentionItemsMock.mockReset();
+		exportMentionsViaCachedAutoMock.mockReset();
 		exportMentionsViaCachedBirdMock.mockReset();
 		exportMentionsViaCachedXurlMock.mockReset();
 		syncMentionsMock.mockReset();
@@ -345,6 +352,10 @@ describe("cli", () => {
 		resolveMentionsDataSourceMock.mockImplementation(
 			(mode?: string) => mode ?? "birdclaw",
 		);
+		setActionsTransportMock.mockImplementation((transport: string) => ({
+			configPath: "/tmp/.birdclaw/config.json",
+			transport,
+		}));
 		getQueryEnvelopeMock.mockResolvedValue({
 			stats: { home: 4, mentions: 2, dms: 4, needsReply: 2, inbox: 4 },
 			transport: { statusText: "local", installed: false },
@@ -381,6 +392,11 @@ describe("cli", () => {
 		]);
 		exportMentionsViaCachedBirdMock.mockResolvedValue({
 			data: [{ id: "tweet_live_bird_1" }],
+			includes: { users: [{ id: "42", username: "sam", name: "Sam" }] },
+			meta: { result_count: 1 },
+		});
+		exportMentionsViaCachedAutoMock.mockResolvedValue({
+			data: [{ id: "tweet_live_auto_1" }],
 			includes: { users: [{ id: "42", username: "sam", name: "Sam" }] },
 			meta: { result_count: 1 },
 		});
@@ -568,6 +584,33 @@ describe("cli", () => {
 			}),
 		);
 		expect(exitMock).toHaveBeenCalledWith(0);
+	});
+
+	it("sets the preferred auth transport", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "--json", "auth", "use", "xurl"]);
+
+		expect(setActionsTransportMock).toHaveBeenCalledWith("xurl");
+		expect(consoleLogMock).toHaveBeenCalledWith(
+			expect.stringContaining('"transport": "xurl"'),
+		);
+	});
+
+	it("rejects unsupported auth transports", async () => {
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "auth", "use", "official"]);
+
+		expect(setActionsTransportMock).not.toHaveBeenCalled();
+		expect(process.exitCode).toBe(1);
+		expect(consoleErrorMock).toHaveBeenCalledWith(
+			JSON.stringify({ error: "transport must be auto, bird, or xurl" }),
+		);
+		consoleErrorMock.mockRestore();
 	});
 
 	it("dispatches link, media, and backup utility commands", async () => {
@@ -966,6 +1009,37 @@ describe("cli", () => {
 			refresh: true,
 			cacheTtlMs: 120000,
 		});
+		expect(exportMentionsViaCachedXurlMock).not.toHaveBeenCalled();
+	});
+
+	it("dispatches cached mention exports in auto mode", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"mentions",
+			"export",
+			"--mode",
+			"auto",
+			"--account",
+			"acct_primary",
+			"--refresh",
+			"--limit",
+			"8",
+		]);
+
+		expect(exportMentionsViaCachedAutoMock).toHaveBeenCalledWith({
+			account: "acct_primary",
+			search: undefined,
+			replyFilter: "all",
+			limit: 8,
+			all: false,
+			maxPages: undefined,
+			refresh: true,
+			cacheTtlMs: 120000,
+		});
+		expect(exportMentionsViaCachedBirdMock).not.toHaveBeenCalled();
 		expect(exportMentionsViaCachedXurlMock).not.toHaveBeenCalled();
 	});
 
@@ -2693,11 +2767,11 @@ describe("cli", () => {
 				question: "what changed?",
 				originalsOnly: true,
 				hideLowQuality: true,
-				mode: "auto",
+				mode: "xurl",
 				model: "gpt-5.5",
 				refresh: true,
 				limit: 25,
-				maxPages: 50,
+				maxPages: 200,
 			},
 			expect.objectContaining({ onDelta: expect.any(Function) }),
 		);
@@ -2706,10 +2780,10 @@ describe("cli", () => {
 			expect.objectContaining({
 				query: "sync",
 				source: "search",
-				mode: "auto",
+				mode: "xurl",
 				includeDms: false,
-				limit: 5000,
-				maxPages: 50,
+				limit: 20000,
+				maxPages: 200,
 			}),
 			expect.objectContaining({ onDelta: undefined }),
 		);

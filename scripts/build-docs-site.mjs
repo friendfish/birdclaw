@@ -24,7 +24,10 @@ const productDescription =
 const brewInstall = "brew install steipete/tap/birdclaw";
 
 const sections = [
-	["Start", ["index.md", "install.md", "quickstart.md", "configuration.md"]],
+	[
+		"Start",
+		["index.md", "install.md", "auth.md", "quickstart.md", "configuration.md"],
+	],
 	[
 		"Archive & Sync",
 		["archive.md", "sync.md", "media.md", "backup.md", "jobs.md"],
@@ -449,19 +452,41 @@ function inline(text, currentRel) {
 		stash.push(`<code>${escapeHtml(code)}</code>`);
 		return `\u0000${stash.length - 1}\u0000`;
 	});
-	out = escapeHtml(out)
-		.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-		.replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, "$1<em>$2</em>")
-		.replace(/(^|[^_])_([^_\s][^_]*?)_(?!_)/g, "$1<em>$2</em>")
-		.replace(
-			/\[([^\]]+)\]\(([^)]+)\)/g,
-			(_, label, href) =>
-				`<a href="${escapeAttr(rewriteHref(href, currentRel))}">${label}</a>`,
-		)
-		.replace(/&lt;(https?:\/\/[^\s<>]+)&gt;/g, '<a href="$1">$1</a>');
+	const stashLink = (label, href) => {
+		stash.push(
+			`<a href="${escapeAttr(rewriteHref(href, currentRel))}">${renderInlineText(label, stash)}</a>`,
+		);
+		return `\u0000${stash.length - 1}\u0000`;
+	};
+	out = out.replace(/\[([^\]]+)\]\(<([^<>]+)>\)/g, (_, label, href) =>
+		stashLink(label, href),
+	);
+	out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) =>
+		stashLink(label, href),
+	);
+	out = out.replace(/<(https?:\/\/[^\s<>]+)>/g, (_, url) => {
+		stash.push(`<a href="${escapeAttr(url)}">${escapeHtml(url)}</a>`);
+		return `\u0000${stash.length - 1}\u0000`;
+	});
+	return renderInlineText(out, stash);
+}
+
+function renderInlineText(text, stash) {
+	let out = formatInlineText(text);
 	out = out.replace(/\\\|/g, "|");
 	out = out.replace(/&lt;br&gt;/g, "<br>");
-	return out.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)]);
+	return restoreInlineStash(out, stash);
+}
+
+function formatInlineText(text) {
+	return escapeHtml(text)
+		.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+		.replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, "$1<em>$2</em>")
+		.replace(/(^|[^_])_([^_\s][^_]*?)_(?!_)/g, "$1<em>$2</em>");
+}
+
+function restoreInlineStash(text, stash) {
+	return text.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)]);
 }
 
 function rewriteHref(href, currentRel) {
@@ -885,6 +910,8 @@ function highlightYamlValue(rest) {
 		);
 	return escapeHtml(rest);
 }
+
+export const __test__ = { inline };
 
 function validateLinks(outputDir) {
 	const failures = [];

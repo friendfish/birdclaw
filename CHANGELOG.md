@@ -1,11 +1,20 @@
 # CHANGELOG
 
-## 0.6.1 - Unreleased
+## 0.7.1 - Unreleased
+
+## 0.7.0 - 2026-06-01
 
 ### Added
 
 - Stream live `birdclaw import archive` progress to stderr: per-slice parsing ticks (tweets, DMs, likes, bookmarks, follows, media) and chunked write-phase progress every 1,000 rows for profiles, tweets, likes+bookmarks, and DM messages. `--json` still keeps stdout clean for scripting.
 - Add `birdclaw discuss <query>` and a Discuss web view for live keyword search via `bird`/`xurl`, persisted search-result tweets, and streaming OpenAI summaries with optional private DM context.
+- Add `birdclaw profile-analyze <handle>` plus a Profile Analyse web view that backfills profile timelines and conversation context through `xurl`, caches the fetched context and AI result in SQLite, and exposes Analyse actions on tweet cards.
+- Add canonical `/profiles/:handle` pages with profile headers and cached Profile Analyse output.
+- Add a Rate Limits web view for observed `xurl` profile-analysis calls, 429s, local throttle settings, and documented X API recent-search windows.
+- Add a Network Map web view for current followers/following, with SQLite geocode caching, OpenCage refreshes, Mapbox rendering, and a local fallback map.
+- Render Network Map clusters as avatar stacks with relationship-weighted rings and avatar-rich profile/cluster overlays.
+- Make the Network Map people list follow the current viewport with an in-view search panel.
+- Add a Data Sources web view showing Birdclaw, bird, and xurl health, authenticated accounts, and automatic fallback order.
 - Prefetch cached avatars for Discuss hover citations so source previews avoid fallback initials once profile metadata includes an avatar URL.
 - Refresh Today digests from live `xurl` home timelines, mentions, and mention conversations before AI analysis so reports see more current context and reply parents.
 
@@ -15,11 +24,32 @@
 
 ### Fixed
 
+- Add accurate archive-first Sign in and archive-request onboarding, including account-binding requirements, current xurl/bird setup, scoped transport selection, and clean autolink rendering. (#46 - thanks @peetzweg)
+- Implement `birdclaw auth use <auto|bird|xurl>` so the documented command persists the preferred moderation action transport. (#45 - thanks @peetzweg)
+- Keep `birdclaw init` alive when the macOS Downloads scan is blocked, falling back to the other archive discovery paths. (#44 - thanks @peetzweg)
 - Show live Today fetch progress while Birdclaw pulls X home timeline, mentions, and reply context before the first AI tokens arrive.
 - Include live fetch counts and page/thread progress in Today status messages before AI summary streaming begins.
 - Recover live `xurl` sync when the valid OAuth token is stored under a different local xurl username label than the Birdclaw account handle.
+- Keep Profile Analyse citation hover cards linked to real tweet/avatar sources, throttle `xurl` conversation searches, and retry 429s before continuing AI summaries with partial context.
+- Open `/profiles/:handle` analysis streams immediately, use same-origin profile fetches, and let `BIRDCLAW_PROFILE_ANALYSIS_ACCOUNT` select the xurl account used for profile backfills.
+- Keep Profile Analyse headers from slicing through loaded avatars/names and turn unresolved numeric tweet citations into safe X source links without leaking raw IDs.
+- Group adjacent Profile Analyse tweet citations so cached AI reports show numbered source links instead of repeated generic `source` labels.
+- Highlight hydrated Profile Analyse `@handle` mentions with profile previews and link multi-source citations to readable clauses when possible.
+- Hydrate Profile Analyse header bio `@handle` mentions as soon as the profile context loads, so affiliation-style bios show profile hover previews.
+- Flip tweet and profile hover previews above their trigger when there is not enough room below.
+- Show expanded URLs instead of `t.co` shortlinks in tweet citation hover previews whenever tweet URL entities are available.
+- Show expanded URLs instead of `t.co` shortlinks in Profile Analyse account bios when X description URL entities are available.
+- Keep emoji-bearing profile bios and media tweets aligned with X entity ranges, and route `@handle` profile-preview links to internal `/profiles/:handle` analysis pages.
+- Make Discuss search source/mode controls look like dropdowns in one row, raise live tweet search depth to 20,000 results / 200 pages, combine bird plus xurl in auto mode, and include matching local timeline/saved tweets in Live search discussions.
+- Default Discuss live mode to xurl now that OAuth2 search is authorized.
+- Use the default authorized xurl OAuth2 user for Discuss/Profile Analyse recent-search reads instead of the selected Birdclaw account handle.
+- Keep Discuss/Profile Analyse recent-search reads from inheriting `BIRDCLAW_XURL_OAUTH2_*` overrides, so account-scoped xurl settings do not force stale app/user auth into global search calls.
 - Let normal Discuss web searches reuse cached AI discussions while keeping the Refresh button as the explicit forced-refresh path.
+- Keep Discuss Live search scoped to live/search-result tweets instead of sweeping every local timeline bucket before AI streaming starts.
+- Link unresolved model-emitted `tweet_<id>` citations in AI reports to X source URLs instead of showing raw citation tokens.
 - Tighten AI report line height and first-block spacing in Today and Discuss.
+- Keep Network Map profile positions anchored to exact geocoded locations and render dense areas through smarter avatar clusters instead of random scatter.
+- Ignore stale configured OAuth2 xurl account overrides for Profile Analyse user lookup and profile timeline reads.
 
 ## 0.6.0 - 2026-05-22
 

@@ -141,6 +141,15 @@ describe("database init", () => {
 			expect.arrayContaining(["id", "direction", "status", "result_count"]),
 		);
 
+		const geocodeColumnNames = db
+			.prepare("pragma table_info(geocoded_locations)")
+			.all() as Array<{
+			name: string;
+		}>;
+		expect(geocodeColumnNames.map((column) => column.name)).toEqual(
+			expect.arrayContaining(["normalized_key", "lat", "lng", "provider"]),
+		);
+
 		const collectionColumnNames = db
 			.prepare("pragma table_info(tweet_collections)")
 			.all() as Array<{

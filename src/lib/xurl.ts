@@ -4,6 +4,7 @@ import { Effect } from "effect";
 import { runEffectPromise } from "./effect-runtime";
 import type {
 	FollowDirection,
+	LiveDataSourceAccount,
 	TransportStatus,
 	XurlDmEventsResponse,
 	XurlFollowUsersResponse,
@@ -36,10 +37,18 @@ type TimelineCollectionEndpoint = "liked_tweets" | "bookmarks";
 type JsonCommandOptions = {
 	timeoutMs?: number;
 	deadlineMs?: number;
+	signal?: AbortSignal;
+	onAttempt?: (attempt: XurlJsonCommandAttempt) => void;
 };
+export interface XurlJsonCommandAttempt {
+	args: readonly string[];
+	attempt: number;
+	status: "ok" | "rate_limited" | "error";
+	error?: Error;
+}
 type OAuth2UsernameCandidate = {
 	app?: string;
-	username: string;
+	username?: string;
 };
 
 let transportStatusCache:
@@ -56,6 +65,10 @@ let authenticatedUserCache:
 			value?: Record<string, unknown> | null;
 	  }
 	| undefined;
+const oauth2CandidateCache = new Map<
+	string,
+	{ expiresAt: number; value: OAuth2UsernameCandidate }
+>();
 
 function liveWritesDisabled() {
 	return process.env.BIRDCLAW_DISABLE_LIVE_WRITES === "1";
@@ -143,6 +156,17 @@ function getRetryDelayMs(error: unknown, attempt: number) {
 	return Math.min(baseDelay * 2 ** attempt, 30_000);
 }
 
+function emitJsonCommandAttempt(
+	options: JsonCommandOptions,
+	attempt: XurlJsonCommandAttempt,
+) {
+	try {
+		options.onAttempt?.(attempt);
+	} catch {
+		// Telemetry observers must not affect xurl command behavior.
+	}
+}
+
 function capTimelineCollectionMaxResults(
 	collection: TimelineCollectionEndpoint,
 	maxResults: number,
@@ -159,6 +183,7 @@ export function resetTransportStatusCache() {
 
 export function resetAuthenticatedUserCache() {
 	authenticatedUserCache = undefined;
+	oauth2CandidateCache.clear();
 }
 
 function hasXurlEffect() {
@@ -299,13 +324,15 @@ function runShortcutEffect(args: string[]) {
 function execXurlJsonEffect(
 	args: string[],
 	timeoutMs?: number,
+	signal?: AbortSignal,
 ): Effect.Effect<{ stdout: string; stderr: string }, Error> {
 	return Effect.tryPromise({
 		try: () => {
 			const controller =
-				typeof timeoutMs === "number" &&
-				Number.isFinite(timeoutMs) &&
-				timeoutMs > 0
+				(typeof timeoutMs === "number" &&
+					Number.isFinite(timeoutMs) &&
+					timeoutMs > 0) ||
+				signal
 					? new AbortController()
 					: undefined;
 			if (
@@ -315,13 +342,23 @@ function execXurlJsonEffect(
 			) {
 				throw new Error("xurl command timed out");
 			}
-			const timeout = controller
-				? setTimeout(() => controller.abort(), timeoutMs)
-				: undefined;
+			if (signal?.aborted) {
+				throw new Error("xurl command aborted");
+			}
+			const onAbort = () => controller?.abort();
+			signal?.addEventListener("abort", onAbort, { once: true });
+			const timeout =
+				controller &&
+				typeof timeoutMs === "number" &&
+				Number.isFinite(timeoutMs) &&
+				timeoutMs > 0
+					? setTimeout(() => controller.abort(), timeoutMs)
+					: undefined;
 			const result = controller
 				? execFileAsync("xurl", args, { signal: controller.signal })
 				: execFileAsync("xurl", args);
 			return result.finally(() => {
+				signal?.removeEventListener("abort", onAbort);
 				if (timeout) {
 					clearTimeout(timeout);
 				}
@@ -395,11 +432,25 @@ function runJsonCommandEffect(
 		const timeoutMs = deadlineMs
 			? Math.max(0, deadlineMs - Date.now())
 			: undefined;
-		return yield* execXurlJsonEffect(args, timeoutMs).pipe(
+		return yield* execXurlJsonEffect(args, timeoutMs, options.signal).pipe(
 			Effect.flatMap(({ stdout }) => parseJsonPayloadEffect(stdout, args)),
+			Effect.tap(() =>
+				Effect.sync(() =>
+					emitJsonCommandAttempt(options, { args, attempt, status: "ok" }),
+				),
+			),
 			Effect.catchAll((error) => {
 				const retryDelayMs = getRetryDelayMs(error, attempt);
+				emitJsonCommandAttempt(options, {
+					args,
+					attempt,
+					status: retryDelayMs === null ? "error" : "rate_limited",
+					error,
+				});
 				if (retryDelayMs === null || attempt >= JSON_RETRY_LIMIT - 1) {
+					return Effect.fail(formatXurlCommandError(error, args));
+				}
+				if (options.signal?.aborted) {
 					return Effect.fail(formatXurlCommandError(error, args));
 				}
 				const remainingMs = deadlineMs
@@ -475,6 +526,24 @@ function readOAuth2UsernameCandidatesEffect(
 	);
 }
 
+export function readXurlOAuth2AccountsEffect(): Effect.Effect<
+	LiveDataSourceAccount[],
+	never
+> {
+	return readOAuth2UsernameCandidatesEffect().pipe(
+		Effect.map((candidates) =>
+			candidates.map((candidate) => ({
+				...(candidate.app ? { app: candidate.app } : {}),
+				...(candidate.username ? { username: candidate.username } : {}),
+			})),
+		),
+	);
+}
+
+export function readXurlOAuth2Accounts(): Promise<LiveDataSourceAccount[]> {
+	return runEffectPromise(readXurlOAuth2AccountsEffect());
+}
+
 function lookupOAuth2UsernameForAccountEffect(
 	expectedUsername: string,
 	attemptedUsernames: Set<string>,
@@ -519,14 +588,30 @@ function oauth2ArgsForCandidate(
 	];
 }
 
+function configuredOAuth2Candidate(primaryUsername: string | undefined) {
+	const app = cleanXurlAppLabel(process.env.BIRDCLAW_XURL_OAUTH2_APP);
+	const username = cleanXurlUsernameLabel(
+		process.env.BIRDCLAW_XURL_OAUTH2_USERNAME,
+	);
+	if (!app && !username) return undefined;
+	const effectiveUsername = username ?? primaryUsername;
+	if (!app && !effectiveUsername) return undefined;
+	return {
+		...(app ? { app } : {}),
+		...(effectiveUsername ? { username: effectiveUsername } : {}),
+	};
+}
+
 function runOAuth2JsonCommandEffect({
 	args,
 	username,
 	options,
+	useConfiguredCandidate = true,
 }: {
 	args: string[];
 	username?: string;
 	options?: JsonCommandOptions;
+	useConfiguredCandidate?: boolean;
 }) {
 	const primaryUsername = cleanXurlUsernameLabel(username);
 	return Effect.gen(function* () {
@@ -541,30 +626,49 @@ function runOAuth2JsonCommandEffect({
 		let authCandidate: OAuth2UsernameCandidate | undefined = primaryUsername
 			? { username: primaryUsername }
 			: undefined;
-		if (primaryUsername) {
-			const candidates = yield* readOAuth2UsernameCandidatesEffect(deadlineMs);
-			const primaryCandidates = candidates.filter(
-				(candidate) => candidate.username === primaryUsername,
-			);
-			if (primaryCandidates.length === 1) {
-				authCandidate = primaryCandidates[0];
-			} else if (primaryCandidates.length > 1) {
-				const verifiedUsername = yield* lookupOAuth2UsernameForAccountEffect(
-					primaryUsername,
-					new Set(),
-					deadlineMs,
-					candidates,
-				);
-				authCandidate = verifiedUsername ?? { username: primaryUsername };
+		const configuredCandidate = useConfiguredCandidate
+			? configuredOAuth2Candidate(primaryUsername)
+			: undefined;
+		if (configuredCandidate) {
+			authCandidate = configuredCandidate;
+		} else if (primaryUsername) {
+			const cacheKey = primaryUsername.toLowerCase();
+			const cachedCandidate = oauth2CandidateCache.get(cacheKey);
+			if (cachedCandidate && cachedCandidate.expiresAt > Date.now()) {
+				authCandidate = cachedCandidate.value;
 			} else {
-				const fallbackUsername = yield* lookupOAuth2UsernameForAccountEffect(
-					primaryUsername,
-					new Set(),
-					deadlineMs,
-					candidates,
+				const candidates =
+					yield* readOAuth2UsernameCandidatesEffect(deadlineMs);
+				const primaryCandidates = candidates.filter(
+					(candidate) => candidate.username === primaryUsername,
 				);
-				if (fallbackUsername) {
-					authCandidate = fallbackUsername;
+				if (primaryCandidates.length === 1) {
+					authCandidate = primaryCandidates[0];
+				} else if (primaryCandidates.length > 1) {
+					const verifiedUsername = yield* lookupOAuth2UsernameForAccountEffect(
+						primaryUsername,
+						new Set(),
+						deadlineMs,
+						candidates,
+					);
+					authCandidate = verifiedUsername ??
+						primaryCandidates[0] ?? { username: primaryUsername };
+				} else {
+					const fallbackUsername = yield* lookupOAuth2UsernameForAccountEffect(
+						primaryUsername,
+						new Set(),
+						deadlineMs,
+						candidates,
+					);
+					if (fallbackUsername) {
+						authCandidate = fallbackUsername;
+					}
+				}
+				if (authCandidate) {
+					oauth2CandidateCache.set(cacheKey, {
+						expiresAt: Date.now() + AUTHENTICATED_USER_TTL_MS,
+						value: authCandidate,
+					});
 				}
 			}
 		}
@@ -581,6 +685,7 @@ function runOAuth2JsonCommandEffect({
 				if (!primaryUsername) {
 					return Effect.fail(error);
 				}
+				oauth2CandidateCache.delete(primaryUsername.toLowerCase());
 				const attempted = new Set([
 					authCandidate
 						? `${authCandidate.app ?? "default"}:${authCandidate.username}`
@@ -598,6 +703,10 @@ function runOAuth2JsonCommandEffect({
 						if (!fallbackUsername) {
 							return Effect.fail(error);
 						}
+						oauth2CandidateCache.set(primaryUsername.toLowerCase(), {
+							expiresAt: Date.now() + AUTHENTICATED_USER_TTL_MS,
+							value: fallbackUsername,
+						});
 						return runJsonCommandEffect(
 							oauth2ArgsForCandidate(fallbackUsername, args),
 							scopedOptions,
@@ -658,7 +767,15 @@ export function lookupUsersByIds(ids: string[]) {
 	return runEffectPromise(lookupUsersByIdsEffect(ids));
 }
 
-export function lookupUsersByHandlesEffect(handles: string[]) {
+export function lookupUsersByHandlesEffect(
+	handles: string[],
+	options: {
+		auth?: "oauth2";
+		username?: string;
+		signal?: AbortSignal;
+		useConfiguredCandidate?: boolean;
+	} = {},
+) {
 	if (handles.length === 0) {
 		return Effect.succeed([]);
 	}
@@ -668,15 +785,33 @@ export function lookupUsersByHandlesEffect(handles: string[]) {
 		"user.fields":
 			"description,entities,location,public_metrics,profile_image_url,url,created_at,verified,verified_type",
 	});
-	return runJsonCommandEffect([`/2/users/by?${query.toString()}`]).pipe(
+	const args = [`/2/users/by?${query.toString()}`];
+	const command =
+		options.auth === "oauth2"
+			? runOAuth2JsonCommandEffect({
+					args,
+					username: options.username,
+					options: { signal: options.signal },
+					useConfiguredCandidate: options.useConfiguredCandidate,
+				})
+			: runJsonCommandEffect(args, { signal: options.signal });
+	return command.pipe(
 		Effect.map((payload) =>
 			Array.isArray(payload.data) ? (payload.data as XurlMentionUser[]) : [],
 		),
 	);
 }
 
-export function lookupUsersByHandles(handles: string[]) {
-	return runEffectPromise(lookupUsersByHandlesEffect(handles));
+export function lookupUsersByHandles(
+	handles: string[],
+	options: {
+		auth?: "oauth2";
+		username?: string;
+		signal?: AbortSignal;
+		useConfiguredCandidate?: boolean;
+	} = {},
+) {
+	return runEffectPromise(lookupUsersByHandlesEffect(handles, options));
 }
 
 function authenticatedUserFromPayload(payload: Record<string, unknown>) {
@@ -1132,6 +1267,10 @@ export function listUserTweetsEffect(
 		userFields,
 		mediaFields,
 		auth,
+		username,
+		signal,
+		onAttempt,
+		useConfiguredCandidate,
 	}: {
 		maxResults: number;
 		paginationToken?: string;
@@ -1143,6 +1282,10 @@ export function listUserTweetsEffect(
 		userFields?: string[];
 		mediaFields?: string[];
 		auth?: "oauth2";
+		username?: string;
+		signal?: AbortSignal;
+		onAttempt?: JsonCommandOptions["onAttempt"];
+		useConfiguredCandidate?: boolean;
 	},
 ): Effect.Effect<XurlUserTweetsResponse, Error> {
 	const query = new URLSearchParams({
@@ -1176,9 +1319,16 @@ export function listUserTweetsEffect(
 	}
 
 	const endpoint = `/2/users/${userId}/tweets?${query}`;
-	return runJsonCommandEffect(
-		auth === "oauth2" ? ["--auth", "oauth2", endpoint] : [endpoint],
-	).pipe(
+	const command =
+		auth === "oauth2"
+			? runOAuth2JsonCommandEffect({
+					args: [endpoint],
+					username,
+					options: { signal, onAttempt },
+					useConfiguredCandidate,
+				})
+			: runJsonCommandEffect([endpoint], { signal, onAttempt });
+	return command.pipe(
 		Effect.map((payload) => {
 			const data = Array.isArray(payload.data)
 				? (payload.data as XurlUserTweet[])
@@ -1215,6 +1365,10 @@ export function listUserTweets(
 		userFields?: string[];
 		mediaFields?: string[];
 		auth?: "oauth2";
+		username?: string;
+		signal?: AbortSignal;
+		onAttempt?: JsonCommandOptions["onAttempt"];
+		useConfiguredCandidate?: boolean;
 	},
 ): Promise<XurlUserTweetsResponse> {
 	return runEffectPromise(listUserTweetsEffect(userId, options));
@@ -1270,10 +1424,18 @@ export function searchRecentByConversationIdEffect(
 		maxResults,
 		paginationToken,
 		timeoutMs,
+		auth,
+		username,
+		signal,
+		onAttempt,
 	}: {
 		maxResults: number;
 		paginationToken?: string;
 		timeoutMs?: number;
+		auth?: "oauth2";
+		username?: string;
+		signal?: AbortSignal;
+		onAttempt?: JsonCommandOptions["onAttempt"];
 	},
 ): Effect.Effect<XurlTweetsResponse, Error> {
 	const query = new URLSearchParams({
@@ -1288,9 +1450,17 @@ export function searchRecentByConversationIdEffect(
 		query.set("pagination_token", paginationToken);
 	}
 
-	return runJsonCommandEffect([`/2/tweets/search/recent?${query.toString()}`], {
-		timeoutMs,
-	}).pipe(Effect.map(toXurlTweetsResponse));
+	const args = [`/2/tweets/search/recent?${query.toString()}`];
+	const command =
+		auth === "oauth2"
+			? runOAuth2JsonCommandEffect({
+					args,
+					username,
+					options: { timeoutMs, signal, onAttempt },
+					useConfiguredCandidate: false,
+				})
+			: runJsonCommandEffect(args, { timeoutMs, signal, onAttempt });
+	return command.pipe(Effect.map(toXurlTweetsResponse));
 }
 
 export function searchRecentByConversationId(
@@ -1299,6 +1469,10 @@ export function searchRecentByConversationId(
 		maxResults: number;
 		paginationToken?: string;
 		timeoutMs?: number;
+		auth?: "oauth2";
+		username?: string;
+		signal?: AbortSignal;
+		onAttempt?: JsonCommandOptions["onAttempt"];
 	},
 ): Promise<XurlTweetsResponse> {
 	return runEffectPromise(
@@ -1346,6 +1520,7 @@ export function searchRecentTweetsEffect(
 		args: [`/2/tweets/search/recent?${query.toString()}`],
 		username,
 		options: { timeoutMs },
+		useConfiguredCandidate: false,
 	}).pipe(Effect.map(toXurlTweetsResponse));
 }
 

@@ -107,4 +107,28 @@ describe("root route", () => {
 		expect(markup).toContain("birdclaw nav compact");
 		expect(appNavProps).toEqual([{ compact: true }]);
 	});
+
+	it("uses the wide shell for the network map workspace", () => {
+		routerState.path = "/network-map";
+		appNavProps.length = 0;
+		const routeOptions = Route.options as unknown as {
+			shellComponent: ({ children }: { children: ReactNode }) => ReactNode;
+		};
+		const Shell = routeOptions.shellComponent as ({
+			children,
+		}: {
+			children: ReactNode;
+		}) => ReactNode;
+
+		const markup = renderToStaticMarkup(
+			<Shell>
+				<main>map</main>
+			</Shell>,
+		);
+
+		expect(markup).toContain("max-w-[1280px]");
+		expect(markup).not.toContain("max-w-[680px]");
+		expect(markup).toContain("birdclaw nav compact");
+		expect(appNavProps).toEqual([{ compact: true }]);
+	});
 });

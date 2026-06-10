@@ -44,6 +44,7 @@ import {
 	ensureBirdclawDirs,
 	getBirdclawPaths,
 	resolveMentionsDataSource,
+	setActionsTransport,
 } from "#/lib/config";
 import { closeDatabase } from "#/lib/db";
 import {
@@ -56,6 +57,7 @@ import { fetchTweetMedia, formatMediaFetchResult } from "#/lib/media-fetch";
 import { syncMentionThreads } from "#/lib/mention-threads-live";
 import { exportMentionItems } from "#/lib/mentions-export";
 import {
+	exportMentionsViaCachedAuto,
 	exportMentionsViaCachedBird,
 	exportMentionsViaCachedXurl,
 	syncMentions,
@@ -65,6 +67,10 @@ import {
 	type PeriodDigestOptions,
 	type PeriodDigestPreset,
 } from "#/lib/period-digest";
+import {
+	streamProfileAnalysis,
+	type ProfileAnalysisOptions,
+} from "#/lib/profile-analysis";
 import {
 	getFollowGraphSummary,
 	listFollowEvents,
@@ -341,6 +347,16 @@ function resolveActionOptions(options: { transport?: string }) {
 	};
 }
 
+function parseActionsTransport(value: string | undefined) {
+	const normalized = value?.trim().toLowerCase();
+	if (normalized === "auto" || normalized === "bird" || normalized === "xurl") {
+		return normalized;
+	}
+	printError("transport must be auto, bird, or xurl");
+	process.exitCode = 1;
+	return undefined;
+}
+
 function parseDigestPeriod(value: string | undefined): PeriodDigestPreset {
 	const normalized = value?.trim().toLowerCase();
 	if (normalized === "yesterday") return "yesterday";
@@ -522,6 +538,127 @@ function runSearchDiscussionCli(options: SearchDiscussionOptions) {
 	});
 }
 
+function buildProfileAnalysisOptions(
+	handle: string,
+	options: {
+		account?: string;
+		model?: string;
+		refresh?: boolean;
+		maxTweets?: string;
+		maxPages?: string;
+		maxConversations?: string;
+		maxConversationPages?: string;
+		conversationDelayMs?: string;
+		rateLimitRetryMs?: string;
+		rateLimitRetries?: string;
+	},
+): ProfileAnalysisOptions | null {
+	const maxTweets = parsePositiveIntegerOption(
+		options.maxTweets,
+		"--max-tweets",
+	);
+	if (options.maxTweets !== undefined && maxTweets === undefined) {
+		return null;
+	}
+	const maxPages = parsePositiveIntegerOption(options.maxPages, "--max-pages");
+	if (options.maxPages !== undefined && maxPages === undefined) {
+		return null;
+	}
+	const maxConversations = parsePositiveIntegerOption(
+		options.maxConversations,
+		"--max-conversations",
+	);
+	if (
+		options.maxConversations !== undefined &&
+		maxConversations === undefined
+	) {
+		return null;
+	}
+	const maxConversationPages = parsePositiveIntegerOption(
+		options.maxConversationPages,
+		"--max-conversation-pages",
+	);
+	if (
+		options.maxConversationPages !== undefined &&
+		maxConversationPages === undefined
+	) {
+		return null;
+	}
+	const conversationDelayMs = parseNonNegativeIntegerOption(
+		options.conversationDelayMs,
+		"--conversation-delay-ms",
+	);
+	if (
+		options.conversationDelayMs !== undefined &&
+		conversationDelayMs === undefined
+	) {
+		return null;
+	}
+	const rateLimitRetryMs = parseNonNegativeIntegerOption(
+		options.rateLimitRetryMs,
+		"--rate-limit-retry-ms",
+	);
+	if (
+		options.rateLimitRetryMs !== undefined &&
+		rateLimitRetryMs === undefined
+	) {
+		return null;
+	}
+	const rateLimitMaxRetries = parseNonNegativeIntegerOption(
+		options.rateLimitRetries,
+		"--rate-limit-retries",
+	);
+	if (
+		options.rateLimitRetries !== undefined &&
+		rateLimitMaxRetries === undefined
+	) {
+		return null;
+	}
+	return {
+		handle,
+		account: options.account,
+		model: options.model,
+		refresh: Boolean(options.refresh),
+		maxTweets,
+		maxPages,
+		maxConversations,
+		maxConversationPages,
+		conversationDelayMs,
+		rateLimitRetryMs,
+		rateLimitMaxRetries,
+	};
+}
+
+function runProfileAnalysisCli(options: ProfileAnalysisOptions) {
+	const asJson = Boolean(program.opts().json);
+	return streamProfileAnalysis(options, {
+		onDelta: asJson
+			? undefined
+			: (delta) => {
+					process.stdout.write(delta);
+				},
+		onEvent: asJson
+			? undefined
+			: (event) => {
+					if (event.type === "status") {
+						process.stderr.write(
+							event.detail
+								? `${event.label}: ${event.detail}\n`
+								: `${event.label}\n`,
+						);
+					}
+				},
+	}).then((result) => {
+		if (asJson) {
+			print(result, true);
+			return;
+		}
+		if (!result.markdown.endsWith("\n")) {
+			process.stdout.write("\n");
+		}
+	});
+}
+
 async function enrichDmItems(
 	query: Parameters<typeof listDmConversations>[0],
 	options: {
@@ -625,12 +762,25 @@ program
 		);
 	});
 
-program
-	.command("auth status")
+const authCommand = program
+	.command("auth")
+	.description("Manage live transport");
+
+authCommand
+	.command("status")
 	.description("Show transport status")
 	.action(async () => {
 		const meta = await getQueryEnvelope();
 		print(meta.transport, program.opts().json ?? false);
+	});
+
+authCommand
+	.command("use <transport>")
+	.description("Set preferred moderation action transport")
+	.action((transport: string) => {
+		const parsed = parseActionsTransport(transport);
+		if (!parsed) return;
+		print(setActionsTransport(parsed), program.opts().json ?? false);
 	});
 
 program
@@ -1069,7 +1219,7 @@ program
 		"all, search, home, mentions, authored, likes, or bookmarks",
 		"search",
 	)
-	.option("--mode <mode>", "auto, bird, xurl, or local", "auto")
+	.option("--mode <mode>", "auto, bird, xurl, or local", "xurl")
 	.option("--include-dms", "Include private DM search matches")
 	.option("--since <isoDate>", "Include matches created at or after this date")
 	.option("--until <isoDate>", "Include matches created before this date")
@@ -1078,13 +1228,40 @@ program
 	.option("--hide-low-quality", "Hide RTs, tiny replies, and link-only noise")
 	.option("--model <model>", "OpenAI model id")
 	.option("--refresh", "Bypass the local discussion cache")
-	.option("--limit <n>", "Maximum tweet context", "5000")
-	.option("--max-pages <n>", "Maximum live search pages", "50")
+	.option("--limit <n>", "Maximum tweet context", "20000")
+	.option("--max-pages <n>", "Maximum live search pages", "200")
 	.action(async (query, options) => {
 		await autoUpdateBeforeRead();
 		const discussionOptions = buildSearchDiscussionOptions(query, options);
 		if (!discussionOptions) return;
 		await runSearchDiscussionCli(discussionOptions);
+	});
+
+program
+	.command("profile-analyze <handle>")
+	.alias("profile-analyse")
+	.description("Backfill a profile with xurl and summarize it with AI")
+	.option("--account <accountId>", "Account id")
+	.option("--model <model>", "OpenAI model id")
+	.option("--refresh", "Bypass profile fetch and analysis caches")
+	.option("--max-tweets <n>", "Maximum profile tweets", "10000")
+	.option("--max-pages <n>", "Maximum profile timeline pages", "100")
+	.option("--max-conversations <n>", "Maximum conversations to backfill", "80")
+	.option("--max-conversation-pages <n>", "Maximum pages per conversation", "3")
+	.option(
+		"--conversation-delay-ms <n>",
+		"Delay between conversation search calls",
+	)
+	.option(
+		"--rate-limit-retry-ms <n>",
+		"Delay before retrying conversation 429s",
+	)
+	.option("--rate-limit-retries <n>", "Conversation 429 retry count")
+	.action(async (handle, options) => {
+		await autoUpdateBeforeRead();
+		const analysisOptions = buildProfileAnalysisOptions(handle, options);
+		if (!analysisOptions) return;
+		await runProfileAnalysisCli(analysisOptions);
 	});
 
 program
@@ -1143,7 +1320,7 @@ mentionsCommand
 	.command("export [query]")
 	.description("Return mention tweets with plain-text and markdown renderings")
 	.option("--account <accountId>", "Account id")
-	.option("--mode <mode>", "birdclaw, xurl, or bird")
+	.option("--mode <mode>", "birdclaw, auto, xurl, or bird")
 	.option("--replied", "Only replied items")
 	.option("--unreplied", "Only unreplied items")
 	.option("--refresh", "Refresh the live xurl cache before returning")
@@ -1163,23 +1340,14 @@ mentionsCommand
 				: "all";
 		const limit = Number(options.limit);
 		const mode = resolveMentionsDataSource(options.mode);
-		if (mode === "xurl") {
-			const payload = await exportMentionsViaCachedXurl({
-				account: options.account,
-				search: query,
-				replyFilter,
-				limit,
-				all: Boolean(options.all) || options.maxPages !== undefined,
-				maxPages: options.maxPages ? Number(options.maxPages) : undefined,
-				refresh: Boolean(options.refresh),
-				cacheTtlMs: Number(options.cacheTtl) * 1000,
-			});
-			await autoSyncAfterWrite();
-			print(payload, true);
-			return;
-		}
-		if (mode === "bird") {
-			const payload = await exportMentionsViaCachedBird({
+		if (mode === "xurl" || mode === "bird" || mode === "auto") {
+			const exportFn =
+				mode === "xurl"
+					? exportMentionsViaCachedXurl
+					: mode === "bird"
+						? exportMentionsViaCachedBird
+						: exportMentionsViaCachedAuto;
+			const payload = await exportFn({
 				account: options.account,
 				search: query,
 				replyFilter,
@@ -1252,7 +1420,7 @@ syncCommand
 	.command("mentions")
 	.description("Refresh live mentions through xurl or bird")
 	.option("--account <accountId>", "Account id")
-	.option("--mode <mode>", "bird or xurl", "xurl")
+	.option("--mode <mode>", "auto, bird, or xurl", "auto")
 	.option("--limit <n>", "Result limit per page", "20")
 	.option("--max-pages <n>", "Stop after N pages")
 	.option("--since-id <id>", "Fetch mentions newer than this tweet id")

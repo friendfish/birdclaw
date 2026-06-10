@@ -277,12 +277,14 @@ async function runStep({
 			};
 		}
 		if (kind === "mentions") {
-			if (!allowBirdAccount) {
+			if (mode === "bird" && !allowBirdAccount) {
 				return { kind, ok: false, count: 0, error: birdAccountError(kind) };
 			}
+			const mentionMode =
+				mode === "auto" ? (allowBirdAccount ? "auto" : "xurl") : mode;
 			const result = await syncMentions({
 				account,
-				mode: "bird",
+				mode: mentionMode,
 				limit,
 				maxPages,
 				refresh,

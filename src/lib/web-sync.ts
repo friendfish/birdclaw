@@ -162,7 +162,7 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 			Effect.gen(function* () {
 				const mentions = yield* syncMentionsEffect({
 					account,
-					mode: "xurl",
+					mode: "auto",
 					limit: 100,
 					maxPages: 3,
 					refresh: true,

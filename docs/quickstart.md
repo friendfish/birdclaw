@@ -1,11 +1,11 @@
 ---
 title: Quickstart
-description: "Five minutes from a clean machine to a working birdclaw setup with one Twitter account."
+description: "Install birdclaw, import your X archive to establish account identity, connect live transports, and start the local web app."
 ---
 
 # Quickstart
 
-Five minutes from a clean machine to a local SQLite store full of your tweets, DMs, likes, and bookmarks — plus a working web UI.
+Set up a local SQLite workspace for your tweets, DMs, likes, and bookmarks, then connect live transports and start the web UI. Installation is quick; first-time account setup depends on having an X archive, which X may take a few days to prepare.
 
 ## 1. Install
 
@@ -26,11 +26,11 @@ birdclaw db stats --json
 
 `init` creates `~/.birdclaw/`, opens the shared SQLite database, writes a default config when none exists, and probes for `xurl` and `bird` on `PATH`.
 
-`auth status` prints which transports are available and which account is active. Right after `init`, no account is configured yet — that comes in step 4.
+`auth status` runs Birdclaw's coarse xurl status probe. Verify xurl with `xurl whoami` and bird with `bird whoami`. If you want live sync, follow [Sign in](auth.md); skip it if you only need archive import.
 
 ## 3. Find and import an archive
 
-If you downloaded your Twitter/X archive from <https://x.com/settings/your_archive>, point birdclaw at it. On macOS, autodiscovery looks in `~/Downloads` and Spotlight first.
+If you downloaded your Twitter/X archive from <https://x.com/settings/download_your_data>, point birdclaw at it. On macOS, autodiscovery looks in `~/Downloads` and Spotlight first.
 
 ```bash
 birdclaw archive find --json
@@ -54,9 +54,11 @@ birdclaw import archive ~/Downloads/twitter-archive-2026.zip --select directMess
 
 Valid slices: `tweets`, `likes`, `bookmarks`, `profiles`, `directMessages`, `followers`, `following`. Use `dms` as a short alias for `directMessages`.
 
-No archive yet? Skip to step 4 — birdclaw is fully usable in live-only mode.
+No archive yet? Request one and wait for X to prepare it. Do not run live sync against a freshly initialized database: `auth status` and `auth use` do not replace the bundled demo account identity.
 
 ## 4. Sync live state
+
+Run this step only after archive import has established your account.
 
 `auto` tries `xurl` first, then falls back to `bird`. Use `bird` directly for surfaces where the API path is rate-limited.
 
@@ -67,7 +69,7 @@ birdclaw sync timeline --limit 100 --refresh --json
 birdclaw sync mention-threads --limit 30 --delay-ms 1500 --json
 ```
 
-Without `xurl` or `bird`, sync stays in archive-only mode and just verifies the local cache.
+Without `xurl` or `bird`, use the imported archive and local search/read workflows.
 
 ## 5. Start the web app
 
