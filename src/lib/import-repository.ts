@@ -8,6 +8,14 @@ export type ImportFtsTable =
 export class ImportRepository {
 	constructor(readonly db: Database) {}
 
+	readRows<T>(sql: string, ...parameters: unknown[]) {
+		return this.db.prepare(sql).all(...parameters) as T[];
+	}
+
+	readRow<T>(sql: string, ...parameters: unknown[]) {
+		return this.db.prepare(sql).get(...parameters) as T | undefined;
+	}
+
 	insertRows(sql: string, rows: readonly ImportRow[], keys: readonly string[]) {
 		const statement = this.db.prepare(sql);
 		for (const row of rows) {

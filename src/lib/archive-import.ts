@@ -12,6 +12,11 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { Effect } from "effect";
+import {
+	ArchiveImportPlan,
+	type ArchiveMessageRow,
+	type ArchiveProfileRow,
+} from "./archive-import-plan";
 import { getBirdclawPaths } from "./config";
 import { getNativeDb } from "./db";
 import { databaseWriteEffect } from "./database-writer";
@@ -779,47 +784,21 @@ function importArchiveInternalEffect(
 			parseArchiveArray(accountContent)[0] ?? null,
 			parseArchiveArray(profileContent)[0] ?? null,
 		);
-
-		const mentionDirectory = new Map<
-			string,
-			{ handle?: string; displayName?: string }
-		>();
-		const tweetRows: Array<{
-			id: string;
-			kind: "home" | "like" | "bookmark";
-			authorProfileId: string;
-			text: string;
-			createdAt: string;
-			isReplied: number;
-			replyToId: string | null;
-			likeCount: number;
-			mediaCount: number;
-			bookmarked: number;
-			liked: number;
-			entitiesJson: string;
-			mediaJson: string;
-			quotedTweetId: string | null;
-		}> = [];
-		const collectionRows: Array<{
-			tweetId: string;
-			kind: "likes" | "bookmarks";
-			collectedAt: string | null;
-			source: string;
-			rawJson: string;
-		}> = [];
-		const tweetRowsById = new Map<string, (typeof tweetRows)[number]>();
-
-		function addTweetRow(row: (typeof tweetRows)[number]) {
-			const existing = tweetRowsById.get(row.id);
-			if (existing) {
-				existing.bookmarked = Math.max(existing.bookmarked, row.bookmarked);
-				existing.liked = Math.max(existing.liked, row.liked);
-				if (!existing.text && row.text) existing.text = row.text;
-				return;
-			}
-			tweetRows.push(row);
-			tweetRowsById.set(row.id, row);
-		}
+		const db = getNativeDb();
+		const repository = getImportRepository(db);
+		const plan = new ArchiveImportPlan();
+		const {
+			mentionDirectory,
+			tweets: tweetRows,
+			collections: collectionRows,
+			profiles,
+			conversations,
+			dmMessages,
+			followers: followerRows,
+			following: followingRows,
+			followerIds,
+			followingIds,
+		} = plan;
 
 		if (tweetEntries.length > 0) {
 			onProgress({
@@ -857,7 +836,7 @@ function importArchiveInternalEffect(
 					});
 				}
 
-				addTweetRow({
+				plan.addTweet({
 					id: String(tweet.id_str ?? tweet.id),
 					kind: "home",
 					authorProfileId: "profile_me",
@@ -906,7 +885,7 @@ function importArchiveInternalEffect(
 				const noteTweet = asRecord(wrapper.noteTweet);
 				if (!noteTweet) return;
 				const core = asRecord(noteTweet.core);
-				addTweetRow({
+				plan.addTweet({
 					id: String(noteTweet.noteTweetId ?? noteTweet.id ?? randomUUID()),
 					kind: "home",
 					authorProfileId: "profile_me",
@@ -939,38 +918,7 @@ function importArchiveInternalEffect(
 		}
 		const authoredTweetCount = tweetRows.length;
 
-		type MessageRow = {
-			id: string;
-			conversationId: string;
-			senderProfileId: string;
-			text: string;
-			createdAt: string;
-			direction: "inbound" | "outbound";
-			mediaCount: number;
-		};
-
-		const profiles = new Map<
-			string,
-			{
-				id: string;
-				handle: string;
-				displayName: string;
-				bio: string;
-				followersCount: number;
-				followingCount: number;
-				publicMetricsJson: string;
-				avatarHue: number;
-				avatarUrl: string | null;
-				location: string | null;
-				url: string | null;
-				verifiedType: string | null;
-				entitiesJson: string;
-				rawJson: string;
-				createdAt: string;
-			}
-		>();
-		type ProfileRow =
-			typeof profiles extends Map<string, infer Value> ? Value : never;
+		type ProfileRow = ArchiveProfileRow;
 		const defaultProfileMetadata = {
 			publicMetricsJson: "{}",
 			location: null,
@@ -979,25 +927,6 @@ function importArchiveInternalEffect(
 			entitiesJson: "{}",
 			rawJson: "{}",
 		};
-		const conversations = new Map<
-			string,
-			{
-				id: string;
-				title: string;
-				accountId: string;
-				participantProfileId: string;
-				lastMessageAt: string;
-				unreadCount: number;
-				needsReply: number;
-			}
-		>();
-		const dmMessages: MessageRow[] = [];
-		const followerRows: Array<{ profileId: string; externalUserId: string }> =
-			[];
-		const followingRows: Array<{ profileId: string; externalUserId: string }> =
-			[];
-		const followerIds = new Set<string>();
-		const followingIds = new Set<string>();
 		type ExistingProfileRow = {
 			id: string;
 			handle: string;
@@ -1016,18 +945,14 @@ function importArchiveInternalEffect(
 			created_at: string;
 		};
 		const existingProfiles = new Map(
-			(
-				getNativeDb()
-					.prepare(
-						`
+			repository
+				.readRows<ExistingProfileRow>(`
 	        select id, handle, display_name, bio, followers_count, following_count,
 	          public_metrics_json, avatar_hue, avatar_url, location, url,
 	          verified_type, entities_json, raw_json, created_at
 	        from profiles
-	      `,
-					)
-					.all() as ExistingProfileRow[]
-			).map((profile) => [profile.id, profile]),
+	      `)
+				.map((profile) => [profile.id, profile]),
 		);
 		const existingProfilesByHandle = new Map(
 			[...existingProfiles.values()].map((profile) => [
@@ -1035,11 +960,13 @@ function importArchiveInternalEffect(
 				profile,
 			]),
 		);
-		const existingPrimaryAccount = getNativeDb()
-			.prepare("select handle, external_user_id from accounts where id = ?")
-			.get("acct_primary") as
-			| { handle: string; external_user_id: string | null }
-			| undefined;
+		const existingPrimaryAccount = repository.readRow<{
+			handle: string;
+			external_user_id: string | null;
+		}>(
+			"select handle, external_user_id from accounts where id = ?",
+			"acct_primary",
+		);
 		const profileIdAliases = new Map<string, string>();
 
 		type ArchiveProfileTier =
@@ -1525,7 +1452,7 @@ function importArchiveInternalEffect(
 							direction:
 								senderId === accountPayload.accountId ? "outbound" : "inbound",
 							mediaCount: asArray(messageCreate.mediaUrls).length,
-						} satisfies MessageRow;
+						} satisfies ArchiveMessageRow;
 					})
 					.sort((left, right) =>
 						compareIsoTimestamp(left.createdAt, right.createdAt),
@@ -1589,7 +1516,7 @@ function importArchiveInternalEffect(
 					source: "archive",
 					rawJson: JSON.stringify(like),
 				});
-				addTweetRow({
+				plan.addTweet({
 					id: tweet.id,
 					kind: "like",
 					authorProfileId: "profile_unknown",
@@ -1640,7 +1567,7 @@ function importArchiveInternalEffect(
 						source: "archive",
 						rawJson: JSON.stringify(bookmark),
 					});
-					addTweetRow({
+					plan.addTweet({
 						id: tweet.id,
 						kind: "bookmark",
 						authorProfileId: "profile_unknown",
@@ -1756,25 +1683,21 @@ function importArchiveInternalEffect(
 		if (includeFollowing && followingEntries.length === 0) {
 			clearedFollowDirections.add("following");
 		}
-		const retainedFollowProfiles = getNativeDb()
-			.prepare(
-				`
-      select direction, profile_id, external_user_id, source, null as snapshot_id, null as snapshot_source
-      from follow_edges
-      union
-      select ev.direction, ev.profile_id, ev.external_user_id, null as source, ev.snapshot_id, snap.source as snapshot_source
-      from follow_events ev
-      left join follow_snapshots snap on snap.id = ev.snapshot_id
-      `,
-			)
-			.all() as Array<{
+		const retainedFollowProfiles = repository.readRows<{
 			direction: ArchiveFollowDirection;
 			profile_id: string;
 			external_user_id: string;
 			source: string | null;
 			snapshot_id: string | null;
 			snapshot_source: string | null;
-		}>;
+		}>(`
+      select direction, profile_id, external_user_id, source, null as snapshot_id, null as snapshot_source
+      from follow_edges
+      union
+      select ev.direction, ev.profile_id, ev.external_user_id, null as source, ev.snapshot_id, snap.source as snapshot_source
+      from follow_events ev
+      left join follow_snapshots snap on snap.id = ev.snapshot_id
+      `);
 		for (const row of retainedFollowProfiles) {
 			const isClearedArchiveRow =
 				clearedFollowDirections.has(row.direction) &&
@@ -1812,8 +1735,6 @@ function importArchiveInternalEffect(
 			);
 		}
 
-		const db = getNativeDb();
-		const repository = getImportRepository(db);
 		const insertAccount = db.prepare(`
     insert into accounts (id, name, handle, external_user_id, transport, is_default, created_at)
     values (?, ?, ?, ?, ?, 1, ?)
