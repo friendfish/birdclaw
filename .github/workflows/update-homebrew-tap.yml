@@ -64,8 +64,19 @@ jobs:
           for _ in {1..20}; do
             run_id="$(gh run list --repo steipete/homebrew-tap --workflow update-formula.yml --json databaseId,displayTitle --jq '.[] | select(.displayTitle | contains(env.REQUEST_ID)) | .databaseId' | head -n1)"
             if [[ -n "$run_id" ]]; then
-              gh run watch "$run_id" --repo steipete/homebrew-tap --exit-status
-              exit 0
+              for _ in {1..270}; do
+                state="$(gh run view "$run_id" --repo steipete/homebrew-tap --json status,conclusion --jq '[.status, (.conclusion // "")] | @tsv' 2>/dev/null || true)"
+                if [[ "$state" == completed$'\t'success ]]; then
+                  exit 0
+                fi
+                if [[ "$state" == completed$'\t'* ]]; then
+                  echo "Tap update failed: $state" >&2
+                  exit 1
+                fi
+                sleep 10
+              done
+              echo "Timed out waiting for tap workflow $run_id." >&2
+              exit 1
             fi
             sleep 5
           done
