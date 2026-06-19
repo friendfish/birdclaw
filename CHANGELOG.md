@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Preserve backup JSONL rows containing Unicode line or paragraph separators during export and import. (#62 - thanks @uwe-schwarz)
 - Derive unauthenticated local API access from the production server peer socket so spoofed host headers cannot bypass remote-access controls.
 - Normalize legacy stored media types at the API boundary so older archives and backups remain readable through typed response contracts.
 

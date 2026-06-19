@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { runEffectPromise } from "./effect-runtime";
@@ -6,6 +9,7 @@ import {
 	ingestStreamInBatchesEffect,
 	ingestSourcesInBatchesEffect,
 	streamAssignedJsonArray,
+	streamJsonLines,
 } from "./streaming-ingestion";
 
 async function collect<T>(source: AsyncIterable<T>) {
@@ -15,6 +19,28 @@ async function collect<T>(source: AsyncIterable<T>) {
 }
 
 describe("streaming ingestion", () => {
+	it("preserves unicode separators in physical JSONL records", async () => {
+		const directory = mkdtempSync(path.join(os.tmpdir(), "birdclaw-jsonl-"));
+		const filePath = path.join(directory, "legacy.jsonl");
+		const first = {
+			text: `${"x".repeat(65_526)}\u2028line\u2029paragraph`,
+		};
+		const second = { text: "final record" };
+		try {
+			writeFileSync(
+				filePath,
+				`${JSON.stringify(first)}\r\n\n${JSON.stringify(second)}`,
+			);
+
+			await expect(collect(streamJsonLines(filePath))).resolves.toEqual([
+				{ lineNumber: 1, value: first },
+				{ lineNumber: 3, value: second },
+			]);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
 	it("parses assigned JSON arrays across chunk boundaries", async () => {
 		const source = Readable.from([
 			'window.YTD.tweets.part0 = [{"tweet":{"id":"1",',
