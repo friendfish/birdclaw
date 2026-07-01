@@ -285,30 +285,26 @@ html.theme-transition::view-transition-new(theme-toggle) {
 }
 
 @media print {
-	@page {
-		margin: 16mm;
-	}
-
-	html,
-	body {
+	html.today-pdf-route,
+	html.today-pdf-route body {
 		min-height: auto !important;
 		background: #fff !important;
 		color: #0f1419 !important;
 	}
 
-	body * {
+	html.today-pdf-route body * {
 		box-shadow: none !important;
 		text-shadow: none !important;
 	}
 
-	aside,
-	button,
-	input,
-	.today-screen-only {
+	html.today-pdf-route aside,
+	html.today-pdf-route button,
+	html.today-pdf-route input,
+	html.today-pdf-route .today-screen-only {
 		display: none !important;
 	}
 
-	main {
+	html.today-pdf-route main {
 		width: 100% !important;
 		max-width: none !important;
 		border: 0 !important;

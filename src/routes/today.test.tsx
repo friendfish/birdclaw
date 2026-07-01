@@ -252,6 +252,26 @@ describe("today route", () => {
 		expect(document.title).toBe("birdclaw");
 	});
 
+	it("does not export a partial digest after the stream fails", async () => {
+		const printMock = vi.spyOn(window, "print").mockImplementation(() => {});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				ndjsonResponse([
+					{ type: "delta", delta: "# Partial digest" },
+					{ type: "error", error: "Digest generation failed" },
+				]),
+			),
+		);
+
+		render(<TodayRoute />);
+
+		await screen.findByRole("heading", { name: "Partial digest", level: 1 });
+		await screen.findByRole("alert");
+		expect(screen.queryByRole("button", { name: "Export PDF" })).toBeNull();
+		expect(printMock).not.toHaveBeenCalled();
+	});
+
 	it("shows request errors", async () => {
 		vi.stubGlobal(
 			"fetch",

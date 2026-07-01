@@ -353,6 +353,11 @@ export function TodayRouteView({
 	const { period, includeDms } = searchState;
 	const { context, error, loading, markdown, result, run, status } =
 		useDigestStream(period, includeDms);
+	useEffect(() => {
+		const root = document.documentElement;
+		root.classList.add("today-pdf-route");
+		return () => root.classList.remove("today-pdf-route");
+	}, []);
 	const sourceLabel = useMemo(
 		() => formatCounts(result?.context ?? context),
 		[context, result],
@@ -361,7 +366,7 @@ export function TodayRouteView({
 		result?.context.window.label ??
 		context?.window.label ??
 		periodLabel(period);
-	const canExportPdf = Boolean(markdown.trim()) && !loading;
+	const canExportPdf = Boolean(result?.markdown.trim()) && !loading;
 	const exportTitle = `BirdClaw ${digestLabel} digest`;
 	const exportUpdatedAt = result
 		? new Date(result.updatedAt).toLocaleString(undefined, {
@@ -383,15 +388,16 @@ export function TodayRouteView({
 						<p className={pageSubtitleClass}>{sourceLabel}</p>
 					</div>
 					<div className={cx("today-screen-only", pageHeaderActionsClass)}>
-						<button
-							type="button"
-							className={secondaryButtonClass}
-							onClick={handleExportPdf}
-							disabled={!canExportPdf}
-						>
-							<FileDown className="size-4" aria-hidden="true" />
-							Export PDF
-						</button>
+						{canExportPdf ? (
+							<button
+								type="button"
+								className={secondaryButtonClass}
+								onClick={handleExportPdf}
+							>
+								<FileDown className="size-4" aria-hidden="true" />
+								Export PDF
+							</button>
+						) : null}
 						<button
 							type="button"
 							className={secondaryButtonClass}
