@@ -31,7 +31,7 @@ export function TimelineFeedHeader({
 }) {
 	return (
 		<header className={pageHeaderClass}>
-			<div className={pageHeaderRowClass}>
+			<div className={`${pageHeaderRowClass} flex-wrap`}>
 				<div className="flex min-w-0 flex-col">
 					<h1 className={pageTitleClass}>{title}</h1>
 					{subtitles}

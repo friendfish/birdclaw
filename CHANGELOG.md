@@ -2,6 +2,10 @@
 
 ## 0.8.6 - Unreleased
 
+### Added
+
+- Add opt-in, per-account Home and Mentions auto-sync with persisted intervals, overlap protection, hidden-page pauses, visible status, and failure backoff. (#73 - thanks @Gatsby1s)
+
 ### Fixed
 
 - Add completed Today digest PDF export with route-scoped print styling, while excluding partial failed streams. (#77 - thanks @Gatsby1s)
