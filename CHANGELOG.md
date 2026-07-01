@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Make the Today digest's selected period visually distinct and expose its pressed state to assistive technology. (#72 - thanks @Gatsby1s)
 - Keep backup Git commits inside the configured repository root and pin hashed backup text files to LF line endings. (#79 - thanks @rodriguez46p-ui)
 - Persist profile avatars exposed by Bird's full live-sync payloads. (#75 - thanks @RajvardhanPatil07)
 - Persist quoted tweet payloads returned by Bird-backed live syncs so quote cards render without a separate hydrate. (#76 - thanks @lukaskawerau)
