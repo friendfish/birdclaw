@@ -18,6 +18,7 @@
 - Keep backup Git commits inside the configured repository root and pin hashed backup text files to LF line endings. (#79 - thanks @rodriguez46p-ui)
 - Persist profile avatars exposed by Bird's full live-sync payloads. (#75 - thanks @RajvardhanPatil07)
 - Persist quoted tweet payloads returned by Bird-backed live syncs so quote cards render without a separate hydrate. (#76 - thanks @lukaskawerau)
+- Keep included quote-only replies out of local replied/unreplied state during collection and thread-context syncs. (#76 - thanks @lukaskawerau)
 - Show full tweet text in Today citation popovers instead of truncating long posts after six lines.
 - Show inline tweet images in Today citation popovers instead of leaving media-only `t.co` links in the preview text.
 

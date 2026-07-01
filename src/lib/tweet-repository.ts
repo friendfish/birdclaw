@@ -100,12 +100,15 @@ export function ingestTweetPayload(
 				: ensureStubProfileForXUser(db, tweet.author_id);
 			const replyToId = getReferencedTweetId(tweet, "replied_to");
 			const quotedTweetId = getReferencedTweetId(tweet, "quoted");
+			// Included tweets are reference data, not members of the caller's result set.
+			const shouldMarkReplied =
+				isPrimaryTweet && markRepliesAsReplied && Boolean(replyToId);
 			upsertTweet.run(
 				tweet.id,
 				profile.profile.id,
 				tweet.text,
 				tweet.created_at,
-				markRepliesAsReplied && replyToId ? 1 : 0,
+				shouldMarkReplied ? 1 : 0,
 				replyToId,
 				Number(tweet.public_metrics?.like_count ?? 0),
 				countTweetMedia(tweet),
