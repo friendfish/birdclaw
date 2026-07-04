@@ -2,6 +2,10 @@
 
 ## 0.9.4 - Unreleased
 
+### Fixed
+
+- `search tweets` now returns in well under a second on large archives (previously ~60s, minutes for common terms): the FTS5 match set is materialized once instead of SQLite re-running the MATCH scan per timeline edge row, the join order adapts to term frequency, the LIMIT is resolved on an id-only inner query, and snippets are computed only for returned rows.
+
 ## 0.9.3 - 2026-07-04
 
 ### Changed
