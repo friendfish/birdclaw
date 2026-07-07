@@ -59,6 +59,7 @@ export interface ProfileAnalysisOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high";
 	serviceTier?: "default" | "flex" | "priority";
 	signal?: AbortSignal;
+	language?: string;
 }
 
 export interface ProfileAnalysisStreamHandlers {
@@ -569,6 +570,7 @@ function resultCacheKey(
 		modelFromOptions(options),
 		reasoningEffortFromOptions(options),
 		serviceTierFromOptions(options),
+		options.language || "en",
 		context.hash,
 	].join(":");
 }
@@ -1111,8 +1113,18 @@ function fitPromptDataset(context: ProfileAnalysisContext) {
 	};
 }
 
-function buildPrompt(context: ProfileAnalysisContext) {
+function buildPrompt(
+	context: ProfileAnalysisContext,
+	options: ProfileAnalysisOptions,
+) {
 	const { dataset, tweetCount, conversationCount } = fitPromptDataset(context);
+	const language = options.language || "en";
+	const isChinese = language === "zh-CN" || language === "zh" || language.startsWith("zh");
+
+	const langInstruction = isChinese
+		? "\n- Output all analysis content (including markdown sections, the JSON 'title', 'summary', 'voice', theme 'title' and 'summary', 'conversationStyle', etc.) in Simplified Chinese (简体中文). Keep the JSON keys and structure exactly as specified in English."
+		: "";
+
 	return `Profile: @${context.handle}
 Account cache: ${context.accountId} (${context.accountHandle})
 Fetched profile tweets: ${String(context.counts.tweets)} across ${String(context.counts.tweetPages)} pages
@@ -1130,7 +1142,7 @@ Requirements:
 - Do not overstate beyond the supplied data.
 - If conversation context is sparse, say so.
 - After Markdown, output a blank line, a line containing only three hyphens, then one compact JSON object.
-- JSON shape: { "title": string, "summary": string, "voice": string, "themes": [{ "title": string, "summary": string, "tweetIds": string[], "handles": string[] }], "conversationStyle": string, "notableSignals": string[], "risks": string[], "followUps": string[], "sourceTweetIds": string[], "sourceHandles": string[] }
+- JSON shape: { "title": string, "summary": string, "voice": string, "themes": [{ "title": string, "summary": string, "tweetIds": string[], "handles": string[] }], "conversationStyle": string, "notableSignals": string[], "risks": string[], "followUps": string[], "sourceTweetIds": string[], "sourceHandles": string[] }${langInstruction}
 
 Dataset:
 ${JSON.stringify(dataset)}`;
@@ -1181,7 +1193,7 @@ function createOpenAIRequestBody(
 		settings: resolveAnalysisModelSettings(options),
 		system:
 			"You are a precise X/Twitter profile analyst. Use only supplied data. Return Markdown plus the requested JSON after the delimiter.",
-		prompt: buildPrompt(context),
+		prompt: buildPrompt(context, options),
 		stream: false,
 	});
 }

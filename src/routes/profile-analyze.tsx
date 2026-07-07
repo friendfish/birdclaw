@@ -33,8 +33,10 @@ function ProfileAnalyzeRoute() {
 	const search = Route.useSearch();
 	const [handle, setHandle] = useState(cleanProfileHandle(search.handle));
 	const submittedHandle = useMemo(() => cleanProfileHandle(handle), [handle]);
-	const analysis = useProfileAnalysisStream(submittedHandle);
+	const [language, setLanguage] = useState("zh-CN");
+	const analysis = useProfileAnalysisStream(submittedHandle, language);
 	const autoRunHandleRef = useRef("");
+	const autoRunLangRef = useRef("");
 	const runAnalysisRef = useRef(analysis.run);
 
 	useEffect(() => {
@@ -44,11 +46,12 @@ function ProfileAnalyzeRoute() {
 	useEffect(() => {
 		const urlHandle = cleanProfileHandle(search.handle);
 		setHandle(urlHandle);
-		if (urlHandle && autoRunHandleRef.current !== urlHandle) {
+		if (urlHandle && (autoRunHandleRef.current !== urlHandle || autoRunLangRef.current !== language)) {
 			autoRunHandleRef.current = urlHandle;
+			autoRunLangRef.current = language;
 			runAnalysisRef.current(false, urlHandle);
 		}
-	}, [search.handle]);
+	}, [search.handle, language]);
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
@@ -66,6 +69,18 @@ function ProfileAnalyzeRoute() {
 						</p>
 					</div>
 					<div className={pageHeaderActionsClass}>
+						<select
+							className={`${secondaryButtonClass} cursor-pointer bg-[var(--bg)] pr-8 appearance-none bg-no-repeat bg-[right_12px_center] text-[14px] font-bold`}
+							style={{
+								backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
+								backgroundSize: "1.25rem",
+							}}
+							value={language}
+							onChange={(e) => setLanguage(e.target.value)}
+						>
+							<option value="zh-CN">简体中文</option>
+							<option value="en">English</option>
+						</select>
 						<button
 							className={secondaryButtonClass}
 							disabled={!submittedHandle || analysis.loading}

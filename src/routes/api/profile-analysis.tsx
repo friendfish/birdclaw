@@ -36,6 +36,7 @@ function parseOptions(url: URL): ProfileAnalysisOptions {
 		account: url.searchParams.get("account") ?? undefined,
 		refresh: parseBoolean(url.searchParams.get("refresh")),
 		model: url.searchParams.get("model") === "gpt-5.5" ? "gpt-5.5" : undefined,
+		language: url.searchParams.get("language") ?? undefined,
 		maxTweets: parseBoundedInteger(url.searchParams.get("maxTweets"), {
 			max: 20_000,
 		}),
