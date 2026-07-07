@@ -201,8 +201,12 @@ function hasXurlEffect() {
 }
 
 function isUnauthenticatedXurlStatus(status: string) {
-	return /no apps registered|no authenticated user|not authenticated|not logged in/i.test(
-		status,
+	return (
+		/no apps registered|no authenticated user|not authenticated|not logged in/i.test(
+			status,
+		) ||
+		/oauth2:\s*\(none\)/i.test(status) ||
+		/\(no credentials\)/i.test(status)
 	);
 }
 
