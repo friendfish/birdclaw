@@ -136,10 +136,7 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 			Effect.gen(function* () {
 				const result = yield* syncHomeTimelineEffect({
 					account,
-					mode:
-						!account || account === resolveDefaultSyncAccountId(runtime)
-							? "auto"
-							: "xurl",
+					mode: "bird",
 					limit: 100,
 					maxPages: 3,
 					following: true,
@@ -162,7 +159,7 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 			Effect.gen(function* () {
 				const mentions = yield* syncMentionsEffect({
 					account,
-					mode: "auto",
+					mode: "bird",
 					limit: 100,
 					maxPages: 3,
 					refresh: true,
@@ -179,7 +176,7 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 
 				const threads = yield* syncMentionThreadsEffect({
 					account,
-					mode: "xurl",
+					mode: "bird",
 					limit: 30,
 					delayMs: 1500,
 					timeoutMs: 15000,
@@ -247,12 +244,10 @@ function syncSavedCollection(
 	runtime: ServerRuntimeServices,
 ): Effect.Effect<WebSyncStep[], unknown> {
 	return Effect.gen(function* () {
-		const isNonDefaultAccount =
-			account !== undefined && account !== resolveDefaultSyncAccountId(runtime);
 		const result = yield* syncTimelineCollectionEffect({
 			kind,
 			account,
-			mode: isNonDefaultAccount ? "xurl" : "auto",
+			mode: "bird",
 			limit: 100,
 			maxPages: 5,
 			refresh: true,
