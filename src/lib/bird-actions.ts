@@ -158,17 +158,55 @@ export function lookupProfileViaBirdEffect(query: string) {
 			try: () => safeBirdProfileArg(query),
 			catch: toError,
 		});
-		const payload = yield* runBirdJsonCommandEffect([
+
+		const payloadResult = yield* runBirdJsonCommandEffect([
 			"user",
 			safeQuery,
 			"-n",
 			"1",
 			"--json",
-		]);
-		return yield* Effect.try({
-			try: () => toBirdLookupUser(payload),
-			catch: toError,
-		});
+		]).pipe(
+			Effect.map((payload) => ({ ok: true as const, payload })),
+			Effect.catchAll(() => Effect.succeed({ ok: false as const }))
+		);
+
+		if (payloadResult.ok) {
+			return yield* Effect.try({
+				try: () => toBirdLookupUser(payloadResult.payload),
+				catch: toError,
+			});
+		}
+
+		// Fallback to user-tweets for bird 0.8.0 which does not support "user" command
+		const tweetsPayloadResult = yield* runBirdJsonCommandEffect([
+			"user-tweets",
+			safeQuery,
+			"-n",
+			"1",
+			"--json",
+		]).pipe(
+			Effect.map((payload) => ({ ok: true as const, payload })),
+			Effect.catchAll(() => Effect.succeed({ ok: false as const }))
+		);
+
+		if (tweetsPayloadResult.ok) {
+			const parsed = tweetsPayloadResult.payload;
+			if (Array.isArray(parsed) && parsed.length > 0) {
+				const tweet = parsed[0];
+				if (tweet && tweet.author && tweet.authorId) {
+					return {
+						id: String(tweet.authorId),
+						name: String(tweet.author.name || tweet.author.username || safeQuery),
+						username: String(tweet.author.username || safeQuery),
+						public_metrics: {
+							followers_count: 0,
+						},
+					};
+				}
+			}
+		}
+
+		return null;
 	}).pipe(Effect.catchAll(() => Effect.succeed(null)));
 }
 
