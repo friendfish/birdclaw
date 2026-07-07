@@ -32,10 +32,16 @@ import { buildExternalProfileId, upsertProfileFromXUser } from "./x-profile";
 import { recordXurlRateLimitEventSafe } from "./xurl-rate-limits";
 import type { XurlJsonCommandAttempt } from "./xurl";
 import {
+	getTransportStatusEffect,
 	listUserTweetsEffect,
 	lookupUsersByHandlesEffect,
 	searchRecentByConversationIdEffect,
 } from "./xurl";
+import {
+	listUserTweetsViaBirdEffect,
+	listThreadViaBirdEffect,
+	lookupProfileViaBirdEffect,
+} from "./bird";
 
 export interface ProfileAnalysisOptions {
 	handle: string;
@@ -781,11 +787,28 @@ export function collectProfileAnalysisContextEffect(
 
 		emitStatus(handlers, "Resolving profile", `@${handle}`);
 		yield* abortIfRequestedEffect(options.signal);
-		const [user] = yield* lookupUsersByHandlesEffect([handle], {
-			auth: "oauth2",
-			signal: options.signal,
-			useConfiguredCandidate: false,
-		});
+
+		let user: XurlMentionUser | undefined;
+		const transport = yield* getTransportStatusEffect();
+
+		if (transport.availableTransport === "xurl") {
+			const [xurlUser] = yield* lookupUsersByHandlesEffect([handle], {
+				auth: "oauth2",
+				signal: options.signal,
+				useConfiguredCandidate: false,
+			}).pipe(
+				Effect.catchAll(() => Effect.succeed([undefined]))
+			);
+			user = xurlUser;
+		}
+
+		if (!user) {
+			const birdResult = yield* lookupProfileViaBirdEffect(handle).pipe(
+				Effect.catchAll(() => Effect.succeed(null))
+			);
+			user = birdResult ?? undefined;
+		}
+
 		yield* abortIfRequestedEffect(options.signal);
 		if (!user) {
 			return yield* Effect.fail(new Error(`Could not resolve @${handle}`));
@@ -794,69 +817,91 @@ export function collectProfileAnalysisContextEffect(
 			upsertProfileFromXUser(db, user),
 		);
 
-		const tweetResponses: XurlTweetsResponse[] = [];
-		let nextToken: string | undefined;
-		let tweetPages = 0;
-		let fetchedTweets = 0;
-		for (
-			let page = 0;
-			page < maxPages && fetchedTweets < maxTweets;
-			page += 1
-		) {
-			yield* abortIfRequestedEffect(options.signal);
-			const remaining = maxTweets - fetchedTweets;
-			emitStatus(
-				handlers,
-				"Fetching profile tweets",
-				`page ${String(page + 1)} · ${String(fetchedTweets)} tweets`,
+		let profilePayload: XurlTweetsResponse;
+
+		if (transport.availableTransport === "xurl") {
+			const tweetResponses: XurlTweetsResponse[] = [];
+			let nextToken: string | undefined;
+			let tweetPages = 0;
+			let fetchedTweets = 0;
+			for (
+				let page = 0;
+				page < maxPages && fetchedTweets < maxTweets;
+				page += 1
+			) {
+				yield* abortIfRequestedEffect(options.signal);
+				const remaining = maxTweets - fetchedTweets;
+				emitStatus(
+					handlers,
+					"Fetching profile tweets",
+					`page ${String(page + 1)} · ${String(fetchedTweets)} tweets`,
+				);
+				const response = yield* listUserTweetsEffect(resolved.externalUserId, {
+					maxResults: Math.max(5, Math.min(XURL_PAGE_SIZE, remaining)),
+					paginationToken: nextToken,
+					excludeRetweets: false,
+					auth: "oauth2",
+					tweetFields: [
+						"created_at",
+						"conversation_id",
+						"entities",
+						"public_metrics",
+						"referenced_tweets",
+						"in_reply_to_user_id",
+						"attachments",
+					],
+					expansions: ["author_id", "attachments.media_keys"],
+					userFields: [
+						"description",
+						"entities",
+						"location",
+						"public_metrics",
+						"profile_image_url",
+						"url",
+						"created_at",
+						"verified",
+						"verified_type",
+					],
+					signal: options.signal,
+					onAttempt: recordTimelineAttempt,
+					useConfiguredCandidate: false,
+				});
+				yield* abortIfRequestedEffect(options.signal);
+				const limitedResponse =
+					response.items.length > remaining
+						? { ...response, items: response.items.slice(0, remaining) }
+						: response;
+				tweetPages += 1;
+				fetchedTweets += limitedResponse.items.length;
+				tweetResponses.push(
+					userTimelineToTweetsResponse(limitedResponse, resolved.externalUserId),
+				);
+				nextToken =
+					fetchedTweets < maxTweets
+						? (response.nextToken ?? undefined)
+						: undefined;
+				if (!nextToken || limitedResponse.items.length === 0) break;
+			}
+			profilePayload = mergeResponses(tweetResponses);
+		} else {
+			emitStatus(handlers, "Fetching profile tweets via bird", `@${handle}`);
+			const birdResult = yield* listUserTweetsViaBirdEffect({
+				handle,
+				maxResults: maxTweets,
+			}).pipe(
+				Effect.catchAll((err) => {
+					console.error("bird user-tweets failed:", err);
+					return Effect.succeed({ data: [] as XurlMentionData[] });
+				})
 			);
-			const response = yield* listUserTweetsEffect(resolved.externalUserId, {
-				maxResults: Math.max(5, Math.min(XURL_PAGE_SIZE, remaining)),
-				paginationToken: nextToken,
-				excludeRetweets: false,
-				auth: "oauth2",
-				tweetFields: [
-					"created_at",
-					"conversation_id",
-					"entities",
-					"public_metrics",
-					"referenced_tweets",
-					"in_reply_to_user_id",
-					"attachments",
-				],
-				expansions: ["author_id", "attachments.media_keys"],
-				userFields: [
-					"description",
-					"entities",
-					"location",
-					"public_metrics",
-					"profile_image_url",
-					"url",
-					"created_at",
-					"verified",
-					"verified_type",
-				],
-				signal: options.signal,
-				onAttempt: recordTimelineAttempt,
-				useConfiguredCandidate: false,
-			});
-			yield* abortIfRequestedEffect(options.signal);
-			const limitedResponse =
-				response.items.length > remaining
-					? { ...response, items: response.items.slice(0, remaining) }
-					: response;
-			tweetPages += 1;
-			fetchedTweets += limitedResponse.items.length;
-			tweetResponses.push(
-				userTimelineToTweetsResponse(limitedResponse, resolved.externalUserId),
-			);
-			nextToken =
-				fetchedTweets < maxTweets
-					? (response.nextToken ?? undefined)
-					: undefined;
-			if (!nextToken || limitedResponse.items.length === 0) break;
+			profilePayload = {
+				data: birdResult.data,
+				includes: birdResult.includes,
+				meta: {
+					result_count: birdResult.data.length,
+				},
+			};
 		}
-		const profilePayload = mergeResponses(tweetResponses);
 		yield* tryProfileSync(() =>
 			mergeXurlTweetsIntoLocalStore(
 				db,
@@ -875,80 +920,110 @@ export function collectProfileAnalysisContextEffect(
 		let conversationPages = 0;
 		let conversationRateLimited = false;
 		let conversationRequestCount = 0;
-		for (const [index, conversationId] of conversationRoots.entries()) {
-			if (conversationRateLimited) break;
-			let conversationNextToken: string | undefined;
-			for (let page = 0; page < maxConversationPages; page += 1) {
-				yield* abortIfRequestedEffect(options.signal);
-				if (conversationRequestCount > 0 && conversationDelayMs > 0) {
-					emitStatus(
-						handlers,
-						"Throttling conversation fetch",
-						`${String(conversationDelayMs)}ms`,
-					);
-					yield* sleepWithAbortEffect(conversationDelayMs, options.signal);
-				}
-				emitStatus(
-					handlers,
-					"Fetching conversations",
-					`${String(index + 1)}/${String(conversationRoots.length)} · page ${String(page + 1)}`,
-				);
-				let response: XurlTweetsResponse | null = null;
-				for (let attempt = 0; attempt <= rateLimitMaxRetries; attempt += 1) {
-					conversationRequestCount += 1;
-					response = yield* searchRecentByConversationIdEffect(conversationId, {
-						maxResults: XURL_PAGE_SIZE,
-						paginationToken: conversationNextToken,
-						timeoutMs: 30_000,
-						auth: "oauth2",
-						signal: options.signal,
-						onAttempt: recordConversationAttempt,
-					}).pipe(
-						Effect.catchAll((error) => {
-							if (!isXurlRateLimitError(error)) {
-								return Effect.fail(error);
-							}
-							if (attempt < rateLimitMaxRetries) {
-								emitStatus(
-									handlers,
-									"Conversation fetch rate limited",
-									`retrying in ${String(rateLimitRetryMs)}ms`,
-								);
-								return sleepWithAbortEffect(
-									rateLimitRetryMs,
-									options.signal,
-								).pipe(Effect.as(null));
-							}
-							conversationRateLimited = true;
-							emitStatus(
-								handlers,
-								"Conversation fetch rate limited",
-								"using partial profile context",
-							);
-							return Effect.succeed(null);
-						}),
-					);
-					if (response || conversationRateLimited) {
-						break;
-					}
-					if (conversationDelayMs > 0) {
+
+		if (transport.availableTransport === "xurl") {
+			for (const [index, conversationId] of conversationRoots.entries()) {
+				if (conversationRateLimited) break;
+				let conversationNextToken: string | undefined;
+				for (let page = 0; page < maxConversationPages; page += 1) {
+					yield* abortIfRequestedEffect(options.signal);
+					if (conversationRequestCount > 0 && conversationDelayMs > 0) {
 						emitStatus(
 							handlers,
-							"Throttling conversation retry",
+							"Throttling conversation fetch",
 							`${String(conversationDelayMs)}ms`,
 						);
 						yield* sleepWithAbortEffect(conversationDelayMs, options.signal);
 					}
+					emitStatus(
+						handlers,
+						"Fetching conversations",
+						`${String(index + 1)}/${String(conversationRoots.length)} · page ${String(page + 1)}`,
+					);
+					let response: XurlTweetsResponse | null = null;
+					for (let attempt = 0; attempt <= rateLimitMaxRetries; attempt += 1) {
+						conversationRequestCount += 1;
+						response = yield* searchRecentByConversationIdEffect(conversationId, {
+							maxResults: XURL_PAGE_SIZE,
+							paginationToken: conversationNextToken,
+							timeoutMs: 30_000,
+							auth: "oauth2",
+							signal: options.signal,
+							onAttempt: recordConversationAttempt,
+						}).pipe(
+							Effect.catchAll((error) => {
+								if (!isXurlRateLimitError(error)) {
+									return Effect.fail(error);
+								}
+								if (attempt < rateLimitMaxRetries) {
+									emitStatus(
+										handlers,
+										"Conversation fetch rate limited",
+										`retrying in ${String(rateLimitRetryMs)}ms`,
+									);
+									return sleepWithAbortEffect(
+										rateLimitRetryMs,
+										options.signal,
+									).pipe(Effect.as(null));
+								}
+								conversationRateLimited = true;
+								emitStatus(
+									handlers,
+									"Conversation fetch rate limited",
+									"using partial profile context",
+								);
+								return Effect.succeed(null);
+							}),
+						);
+						if (response || conversationRateLimited) {
+							break;
+						}
+						if (conversationDelayMs > 0) {
+							emitStatus(
+								handlers,
+								"Throttling conversation retry",
+								`${String(conversationDelayMs)}ms`,
+							);
+							yield* sleepWithAbortEffect(conversationDelayMs, options.signal);
+						}
+					}
+					if (!response) break;
+					yield* abortIfRequestedEffect(options.signal);
+					conversationPages += 1;
+					conversationResponses.push(response);
+					conversationNextToken =
+						typeof response.meta?.next_token === "string"
+							? String(response.meta.next_token)
+							: undefined;
+					if (!conversationNextToken || response.data.length === 0) break;
 				}
-				if (!response) break;
+			}
+		} else {
+			for (const [index, conversationId] of conversationRoots.entries()) {
 				yield* abortIfRequestedEffect(options.signal);
-				conversationPages += 1;
-				conversationResponses.push(response);
-				conversationNextToken =
-					typeof response.meta?.next_token === "string"
-						? String(response.meta.next_token)
-						: undefined;
-				if (!conversationNextToken || response.data.length === 0) break;
+				emitStatus(
+					handlers,
+					"Fetching conversation via bird",
+					`${String(index + 1)}/${String(conversationRoots.length)} · ID ${conversationId}`,
+				);
+				const birdResult = yield* listThreadViaBirdEffect({
+					tweetId: conversationId,
+					timeoutMs: 30_000,
+				}).pipe(
+					Effect.catchAll((err) => {
+						console.error("bird thread fetch failed:", err);
+						return Effect.succeed(null);
+					})
+				);
+				if (birdResult) {
+					conversationResponses.push({
+						data: birdResult.data,
+						includes: birdResult.includes,
+						meta: {
+							result_count: birdResult.data.length,
+						},
+					});
+				}
 			}
 		}
 		const conversationPayload = mergeResponses(conversationResponses);
