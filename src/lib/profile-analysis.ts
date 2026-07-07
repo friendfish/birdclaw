@@ -818,11 +818,11 @@ export function collectProfileAnalysisContextEffect(
 		);
 
 		let profilePayload: XurlTweetsResponse;
+		let tweetResponses: XurlTweetsResponse[] = [];
+		let tweetPages = 0;
 
 		if (transport.availableTransport === "xurl") {
-			const tweetResponses: XurlTweetsResponse[] = [];
 			let nextToken: string | undefined;
-			let tweetPages = 0;
 			let fetchedTweets = 0;
 			for (
 				let page = 0;
@@ -901,6 +901,8 @@ export function collectProfileAnalysisContextEffect(
 					result_count: birdResult.data.length,
 				},
 			};
+			tweetResponses = [profilePayload];
+			tweetPages = 1;
 		}
 		yield* tryProfileSync(() =>
 			mergeXurlTweetsIntoLocalStore(
@@ -1016,6 +1018,7 @@ export function collectProfileAnalysisContextEffect(
 					})
 				);
 				if (birdResult) {
+					conversationPages += 1;
 					conversationResponses.push({
 						data: birdResult.data,
 						includes: birdResult.includes,
