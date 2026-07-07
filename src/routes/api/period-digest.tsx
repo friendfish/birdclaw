@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 import { periodDigestStreamEventSchema } from "#/lib/client-stream-contracts";
 import { maybeAutoUpdateBackupEffect } from "#/lib/backup";
+import { getBirdclawConfig } from "#/lib/config";
 import {
 	jsonResponse,
 	parseBoundedInteger,
@@ -39,7 +40,8 @@ function parseOptions(url: URL): PeriodDigestOptions {
 			max: 25,
 		}),
 		liveSync: url.searchParams.get("liveSync") !== "false",
-		liveSyncMode: "xurl",
+		liveSyncMode:
+			getBirdclawConfig().mentions?.dataSource === "bird" ? "bird" : "xurl",
 		liveTimelineLimit: parseBoundedInteger(
 			url.searchParams.get("liveTimelineLimit"),
 			{ max: 100_000 },
