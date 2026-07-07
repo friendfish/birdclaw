@@ -49,7 +49,10 @@ function profileStreamError(cause: unknown) {
 	return cause instanceof Error ? cause.message : "Analysis failed";
 }
 
-export function useProfileAnalysisStream(handle: string): ProfileAnalysisState {
+export function useProfileAnalysisStream(
+	handle: string,
+	language?: string,
+): ProfileAnalysisState {
 	const queryClient = useQueryClient();
 	const [markdown, setMarkdown] = useState("");
 	const [context, setContext] = useState<ProfileAnalysisContext | null>(null);
@@ -67,11 +70,12 @@ export function useProfileAnalysisStream(handle: string): ProfileAnalysisState {
 			fetch(
 				profileAnalysisUrl(trimmed, {
 					refresh,
+					language,
 					...DEFAULT_PROFILE_ANALYSIS_LIMITS,
 				}),
 				{ signal },
 			),
-		[],
+		[language],
 	);
 	const onEvent = useCallback(
 		(event: ProfileAnalysisStreamEvent, runContext: NdjsonRunContext) => {
