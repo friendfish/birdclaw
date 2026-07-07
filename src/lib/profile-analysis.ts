@@ -32,10 +32,12 @@ import { buildExternalProfileId, upsertProfileFromXUser } from "./x-profile";
 import { recordXurlRateLimitEventSafe } from "./xurl-rate-limits";
 import type { XurlJsonCommandAttempt } from "./xurl";
 import {
+	getTransportStatusEffect,
 	listUserTweetsEffect,
 	lookupUsersByHandlesEffect,
 	searchRecentByConversationIdEffect,
 } from "./xurl";
+import { lookupProfileViaBirdEffect } from "./bird";
 
 export interface ProfileAnalysisOptions {
 	handle: string;
@@ -781,11 +783,28 @@ export function collectProfileAnalysisContextEffect(
 
 		emitStatus(handlers, "Resolving profile", `@${handle}`);
 		yield* abortIfRequestedEffect(options.signal);
-		const [user] = yield* lookupUsersByHandlesEffect([handle], {
-			auth: "oauth2",
-			signal: options.signal,
-			useConfiguredCandidate: false,
-		});
+
+		let user: XurlMentionUser | undefined;
+		const transport = yield* getTransportStatusEffect();
+
+		if (transport.availableTransport === "xurl") {
+			const [xurlUser] = yield* lookupUsersByHandlesEffect([handle], {
+				auth: "oauth2",
+				signal: options.signal,
+				useConfiguredCandidate: false,
+			}).pipe(
+				Effect.catchAll(() => Effect.succeed([undefined]))
+			);
+			user = xurlUser;
+		}
+
+		if (!user) {
+			const birdResult = yield* lookupProfileViaBirdEffect(handle).pipe(
+				Effect.catchAll(() => Effect.succeed(null))
+			);
+			user = birdResult ?? undefined;
+		}
+
 		yield* abortIfRequestedEffect(options.signal);
 		if (!user) {
 			return yield* Effect.fail(new Error(`Could not resolve @${handle}`));
