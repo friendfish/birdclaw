@@ -14,6 +14,7 @@ import type { BlockListResponse } from "./api-contracts";
 import type { BlockItem, BlockSearchItem, XurlMentionUser } from "./types";
 import { upsertProfileFromXUser } from "./x-profile";
 import {
+	getTransportStatusEffect,
 	listBlockedUsersEffect,
 	lookupAuthenticatedUserFreshEffect,
 } from "./xurl";
@@ -126,6 +127,20 @@ export function syncBlocksEffect(accountId: string) {
 		);
 		const blockedAt = new Date().toISOString();
 		const remoteProfileIds: string[] = [];
+
+		const transport = yield* getTransportStatusEffect();
+		if (transport.availableTransport !== "xurl") {
+			return {
+				ok: true,
+				accountId: resolvedAccountId,
+				synced: false,
+				syncedCount: 0,
+				transport: {
+					ok: true,
+					output: "remote block sync skipped (xurl not authenticated or unavailable)",
+				},
+			};
+		}
 
 		if (remoteBlockSyncDisabled()) {
 			return {
