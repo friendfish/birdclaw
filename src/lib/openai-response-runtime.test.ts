@@ -116,6 +116,7 @@ describe("OpenAI response runtime", () => {
 				({
 					OPENAI_API_KEY: "test",
 					BIRDCLAW_OPENAI_BASE_URL: "http://localhost:11434/v1",
+					BIRDCLAW_OPENAI_API_TYPE: "responses",
 				})[name],
 		};
 		await Effect.runPromise(
