@@ -39,7 +39,7 @@ function mockBirdRejectWithStdoutOnce(
 function expectBirdCommandCall(callNumber: number, args: string[]) {
 	const call = execFileAsyncMock.mock.calls[callNumber - 1];
 	expect(call).toBeDefined();
-	expect(call[0]).toBe("/bin/bash");
+	expect(String(call[0])).toMatch(/(?:^\/bin\/bash$|bash\.exe$)/);
 	expect((call[1] as string[])[0]).toBe("-c");
 	expect((call[1] as string[]).slice(4)).toEqual(["/tmp/bird", ...args]);
 	expect(call[2]).toEqual(
@@ -72,6 +72,44 @@ describe("bird transport wrapper", () => {
 		expect(execFileAsyncMock).not.toHaveBeenCalled();
 
 		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("uses /bin/bash for the bird stdout redirect wrapper on POSIX systems", async () => {
+		const { __test__ } = await import("./bird");
+
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"linux",
+				{} as NodeJS.ProcessEnv,
+				() => false,
+			),
+		).toBe("/bin/bash");
+	});
+
+	it("uses Git Bash for the bird stdout redirect wrapper on Windows", async () => {
+		const { __test__ } = await import("./bird");
+
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{} as NodeJS.ProcessEnv,
+				(candidate) => candidate === "C:\\Program Files\\Git\\bin\\bash.exe",
+			),
+		).toBe("C:\\Program Files\\Git\\bin\\bash.exe");
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{ BIRDCLAW_BASH_COMMAND: "D:\\Git\\bin\\bash.exe" },
+				() => false,
+			),
+		).toBe("D:\\Git\\bin\\bash.exe");
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{} as NodeJS.ProcessEnv,
+				() => false,
+			),
+		).toBe("bash.exe");
 	});
 
 	it("maps bird mentions json into xurl-compatible payloads", async () => {

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -20,6 +20,11 @@ import type {
 const execFileAsync = promisify(execFile);
 const BIRD_JSON_MAX_BUFFER_BYTES = 512 * 1024 * 1024;
 const BIRD_STDOUT_REDIRECT_SCRIPT = 'out="$1"; shift; exec "$@" > "$out"';
+const WINDOWS_BASH_COMMAND_CANDIDATES = [
+	"C:\\Program Files\\Git\\bin\\bash.exe",
+	"C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+	"C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+];
 
 interface BirdTweetMedia {
 	type?: string;
@@ -291,6 +296,25 @@ function makeBirdStdoutTempEffect() {
 	);
 }
 
+function getBirdStdoutShellCommand(
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+	pathExists: (path: string) => boolean = existsSync,
+) {
+	if (env.BIRDCLAW_BASH_COMMAND) {
+		// Trust the explicit override for portable or non-standard Git installs.
+		return env.BIRDCLAW_BASH_COMMAND;
+	}
+	if (platform !== "win32") {
+		return "/bin/bash";
+	}
+	return (
+		WINDOWS_BASH_COMMAND_CANDIDATES.find((candidate) =>
+			pathExists(candidate),
+		) ?? "bash.exe"
+	);
+}
+
 export const runBirdJsonCommandEffect = Effect.fn("bird.runJsonCommand")(
 	(args: string[], timeoutMs?: number) =>
 		Effect.scoped(
@@ -304,7 +328,7 @@ export const runBirdJsonCommandEffect = Effect.fn("bird.runJsonCommand")(
 				yield* Effect.tryPromise({
 					try: () =>
 						execFileAsync(
-							"/bin/bash",
+							getBirdStdoutShellCommand(),
 							[
 								"-c",
 								BIRD_STDOUT_REDIRECT_SCRIPT,
@@ -339,7 +363,7 @@ const runBirdJsonCommandAllowFailureEffect = Effect.fn(
 			yield* Effect.tryPromise({
 				try: () =>
 					execFileAsync(
-						"/bin/bash",
+						getBirdStdoutShellCommand(),
 						[
 							"-c",
 							BIRD_STDOUT_REDIRECT_SCRIPT,
@@ -1327,5 +1351,6 @@ export const __test__ = {
 	toMediaEntities,
 	toTweetEntities,
 	toReferencedTweets,
+	getBirdStdoutShellCommand,
 	normalizeBirdTweets,
 };
