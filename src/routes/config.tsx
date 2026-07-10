@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { Save, AlertCircle, CheckCircle } from "lucide-react";
+import { Save, AlertCircle, CheckCircle, RefreshCw } from "lucide-react";
 import { fetchJson } from "#/lib/api-client";
 import { z } from "zod";
 import {
@@ -12,6 +12,7 @@ import {
 	textFieldClass,
 	selectFieldClass,
 	primaryButtonClass,
+	secondaryButtonClass,
 	mainColumnClass,
 } from "#/lib/ui";
 
@@ -29,6 +30,12 @@ const configResponseSchema = z.object({
 	}),
 });
 
+const modelsResponseSchema = z.object({
+	ok: z.boolean(),
+	models: z.array(z.string()).optional(),
+	error: z.string().optional(),
+});
+
 function ConfigRoute() {
 	const [provider, setProvider] = useState("openai");
 	const [baseUrl, setBaseUrl] = useState("");
@@ -36,6 +43,8 @@ function ConfigRoute() {
 	const [model, setModel] = useState("");
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
+	const [fetchingModels, setFetchingModels] = useState(false);
+	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [error, setError] = useState<string | null>(null);
 	const [success, setSuccess] = useState(false);
 
@@ -66,12 +75,57 @@ function ConfigRoute() {
 	// Auto-fill defaults when provider changes
 	const handleProviderChange = (nextProvider: string) => {
 		setProvider(nextProvider);
+		setAvailableModels([]); // Reset fetched models list
 		if (nextProvider === "deepseek") {
 			setBaseUrl("https://api.deepseek.com/v1");
 			setModel("deepseek-chat");
 		} else if (nextProvider === "openai") {
 			setBaseUrl("https://api.openai.com/v1");
 			setModel("gpt-4o");
+		} else if (nextProvider === "google") {
+			setBaseUrl("https://generativelanguage.googleapis.com/v1beta/openai");
+			setModel("gemini-2.5-flash");
+		} else if (nextProvider === "openrouter") {
+			setBaseUrl("https://openrouter.ai/api/v1");
+			setModel("google/gemini-2.5-flash");
+		}
+	};
+
+	const handleFetchModels = async () => {
+		if (!baseUrl.trim() || !apiKey.trim()) {
+			setError("API Base URL and API Key are required to fetch models.");
+			return;
+		}
+
+		setFetchingModels(true);
+		setError(null);
+		setAvailableModels([]);
+
+		try {
+			const response = await fetchJson(
+				"/api/config-models",
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({
+						baseUrl,
+						apiKey,
+					}),
+				},
+				modelsResponseSchema,
+				"Failed to fetch models",
+			);
+			if (response.ok && response.models) {
+				setAvailableModels(response.models);
+			} else if (response.error) {
+				setError(response.error);
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to fetch models");
+		} finally {
+			setFetchingModels(false);
 		}
 	};
 
@@ -141,6 +195,8 @@ function ConfigRoute() {
 							>
 								<option value="openai">OpenAI</option>
 								<option value="deepseek">DeepSeek</option>
+								<option value="google">Google Gemini (OpenAI Compat)</option>
+								<option value="openrouter">OpenRouter</option>
 								<option value="custom">Custom / Other</option>
 							</select>
 							<p className="text-[12px] text-[var(--ink-soft)]">
@@ -185,9 +241,25 @@ function ConfigRoute() {
 						</div>
 
 						<div className="flex flex-col gap-1.5">
-							<label className="text-[14px] font-bold text-[var(--ink)]">
-								Model Name
-							</label>
+							<div className="flex items-center justify-between">
+								<label className="text-[14px] font-bold text-[var(--ink)]">
+									Model Name
+								</label>
+								<button
+									type="button"
+									onClick={handleFetchModels}
+									disabled={fetchingModels || !baseUrl || !apiKey}
+									className={cx(
+										secondaryButtonClass,
+										"py-1 px-3 text-[11px] h-7 min-h-0",
+									)}
+								>
+									<RefreshCw
+										className={cx("size-3", fetchingModels && "animate-spin")}
+									/>
+									{fetchingModels ? "Fetching..." : "Fetch Models"}
+								</button>
+							</div>
 							<input
 								type="text"
 								value={model}
@@ -200,6 +272,30 @@ function ConfigRoute() {
 								The specific model identifier to target (e.g. deepseek-chat,
 								deepseek-reasoner, gpt-4o).
 							</p>
+
+							{availableModels.length > 0 ? (
+								<div className="mt-2 flex flex-col gap-1.5 rounded-md border border-[var(--line)] bg-[var(--bg-active)] p-3">
+									<label className="text-[12px] font-semibold text-[var(--ink-soft)]">
+										Select Fetched Model ({availableModels.length} models)
+									</label>
+									<select
+										onChange={(e) => {
+											if (e.target.value) setModel(e.target.value);
+										}}
+										className={selectFieldClass}
+										defaultValue=""
+									>
+										<option value="" disabled>
+											-- Select a model from provider --
+										</option>
+										{availableModels.map((m) => (
+											<option key={m} value={m}>
+												{m}
+											</option>
+										))}
+									</select>
+								</div>
+							) : null}
 						</div>
 
 						{error ? (

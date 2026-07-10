@@ -39,6 +39,7 @@ import { Route as ApiLinkInsightsRouteImport } from './routes/api/link-insights'
 import { Route as ApiInboxRouteImport } from './routes/api/inbox'
 import { Route as ApiDataSourcesRouteImport } from './routes/api/data-sources'
 import { Route as ApiConversationRouteImport } from './routes/api/conversation'
+import { Route as ApiConfigModelsRouteImport } from './routes/api/config-models'
 import { Route as ApiConfigRouteImport } from './routes/api/config'
 import { Route as ApiBlocksRouteImport } from './routes/api/blocks'
 import { Route as ApiAvatarRouteImport } from './routes/api/avatar'
@@ -194,6 +195,11 @@ const ApiConversationRoute = ApiConversationRouteImport.update({
   path: '/api/conversation',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiConfigModelsRoute = ApiConfigModelsRouteImport.update({
+  id: '/api/config-models',
+  path: '/api/config-models',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiConfigRoute = ApiConfigRouteImport.update({
   id: '/api/config',
   path: '/api/config',
@@ -235,6 +241,7 @@ export interface FileRoutesByFullPath {
   '/api/avatar': typeof ApiAvatarRoute
   '/api/blocks': typeof ApiBlocksRoute
   '/api/config': typeof ApiConfigRoute
+  '/api/config-models': typeof ApiConfigModelsRoute
   '/api/conversation': typeof ApiConversationRoute
   '/api/data-sources': typeof ApiDataSourcesRoute
   '/api/inbox': typeof ApiInboxRoute
@@ -271,6 +278,7 @@ export interface FileRoutesByTo {
   '/api/avatar': typeof ApiAvatarRoute
   '/api/blocks': typeof ApiBlocksRoute
   '/api/config': typeof ApiConfigRoute
+  '/api/config-models': typeof ApiConfigModelsRoute
   '/api/conversation': typeof ApiConversationRoute
   '/api/data-sources': typeof ApiDataSourcesRoute
   '/api/inbox': typeof ApiInboxRoute
@@ -308,6 +316,7 @@ export interface FileRoutesById {
   '/api/avatar': typeof ApiAvatarRoute
   '/api/blocks': typeof ApiBlocksRoute
   '/api/config': typeof ApiConfigRoute
+  '/api/config-models': typeof ApiConfigModelsRoute
   '/api/conversation': typeof ApiConversationRoute
   '/api/data-sources': typeof ApiDataSourcesRoute
   '/api/inbox': typeof ApiInboxRoute
@@ -346,6 +355,7 @@ export interface FileRouteTypes {
     | '/api/avatar'
     | '/api/blocks'
     | '/api/config'
+    | '/api/config-models'
     | '/api/conversation'
     | '/api/data-sources'
     | '/api/inbox'
@@ -382,6 +392,7 @@ export interface FileRouteTypes {
     | '/api/avatar'
     | '/api/blocks'
     | '/api/config'
+    | '/api/config-models'
     | '/api/conversation'
     | '/api/data-sources'
     | '/api/inbox'
@@ -418,6 +429,7 @@ export interface FileRouteTypes {
     | '/api/avatar'
     | '/api/blocks'
     | '/api/config'
+    | '/api/config-models'
     | '/api/conversation'
     | '/api/data-sources'
     | '/api/inbox'
@@ -455,6 +467,7 @@ export interface RootRouteChildren {
   ApiAvatarRoute: typeof ApiAvatarRoute
   ApiBlocksRoute: typeof ApiBlocksRoute
   ApiConfigRoute: typeof ApiConfigRoute
+  ApiConfigModelsRoute: typeof ApiConfigModelsRoute
   ApiConversationRoute: typeof ApiConversationRoute
   ApiDataSourcesRoute: typeof ApiDataSourcesRoute
   ApiInboxRoute: typeof ApiInboxRoute
@@ -684,6 +697,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiConversationRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/config-models': {
+      id: '/api/config-models'
+      path: '/api/config-models'
+      fullPath: '/api/config-models'
+      preLoaderRoute: typeof ApiConfigModelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/config': {
       id: '/api/config'
       path: '/api/config'
@@ -735,6 +755,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAvatarRoute: ApiAvatarRoute,
   ApiBlocksRoute: ApiBlocksRoute,
   ApiConfigRoute: ApiConfigRoute,
+  ApiConfigModelsRoute: ApiConfigModelsRoute,
   ApiConversationRoute: ApiConversationRoute,
   ApiDataSourcesRoute: ApiDataSourcesRoute,
   ApiInboxRoute: ApiInboxRoute,
