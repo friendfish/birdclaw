@@ -1611,6 +1611,7 @@ describe("birdclaw queries", () => {
 		expect(primary?.items).toEqual([
 			expect.objectContaining({
 				id: "scoped_thread_anchor",
+				replyToId: null,
 				liked: true,
 				bookmarked: false,
 			}),
@@ -1627,6 +1628,7 @@ describe("birdclaw queries", () => {
 			}),
 			expect.objectContaining({
 				id: "scoped_thread_anchor",
+				replyToId: "scoped_thread_secret_parent",
 				liked: false,
 				bookmarked: true,
 			}),

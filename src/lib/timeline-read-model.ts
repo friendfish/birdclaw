@@ -1024,7 +1024,7 @@ export function listTimelineItems(
 
 	const urlExpansionCache: UrlExpansionCache = new Map();
 	const profileByHandleCache: ProfileByHandleCache = new Map();
-	return rows.map((row) => {
+	const items = rows.map((row) => {
 		const author = {
 			id: String(row.profile_id),
 			handle: String(row.handle),
@@ -1132,6 +1132,19 @@ export function listTimelineItems(
 				}
 			: item;
 	});
+	if (options.literalAccountId === undefined) {
+		return items;
+	}
+	const visibleReplyIds = getAccountMemberTweetIds(
+		db,
+		items.flatMap((item) => (item.replyToId ? [item.replyToId] : [])),
+		options.literalAccountId,
+	);
+	return items.map((item) =>
+		item.replyToId && !visibleReplyIds.has(item.replyToId)
+			? { ...item, replyToId: null, replyToTweet: null }
+			: item,
+	);
 }
 
 function conversationTweetSelect(
@@ -1270,6 +1283,24 @@ function hasTweetAccountMembership(
 			)
 			.get(tweetId, accountId, accountId),
 	);
+}
+
+function getAccountMemberTweetIds(
+	db: Database,
+	tweetIds: string[],
+	accountId: string,
+) {
+	const uniqueTweetIds = Array.from(new Set(tweetIds));
+	if (uniqueTweetIds.length === 0) return new Set<string>();
+	const rows = db
+		.prepare(
+			`select tweet.id
+			 from tweets tweet
+			 where tweet.id in (${uniqueTweetIds.map(() => "?").join(", ")})
+			   and ${tweetAccountMembershipPredicate("tweet")}`,
+		)
+		.all(...uniqueTweetIds, accountId, accountId) as Array<{ id: string }>;
+	return new Set(rows.map((row) => String(row.id)));
 }
 
 export function getTweetsByIds(
@@ -1575,10 +1606,25 @@ export function getTweetConversation(
 			left.createdAt.localeCompare(right.createdAt) ||
 			left.id.localeCompare(right.id),
 	);
+	const visibleReplyIds =
+		scopedAccountId === undefined
+			? null
+			: getAccountMemberTweetIds(
+					db,
+					items.flatMap((tweet) => (tweet.replyToId ? [tweet.replyToId] : [])),
+					scopedAccountId,
+				);
+	const scopedItems = visibleReplyIds
+		? items.map((tweet) =>
+				tweet.replyToId && !visibleReplyIds.has(tweet.replyToId)
+					? { ...tweet, replyToId: null }
+					: tweet,
+			)
+		: items;
 
 	return {
 		anchorId: anchor.id,
-		items,
+		items: scopedItems,
 		truncated: ancestorTruncated || descendantTruncated,
 	};
 }

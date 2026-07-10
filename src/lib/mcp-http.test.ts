@@ -610,6 +610,15 @@ describe("Birdclaw MCP HTTP server", () => {
 			id: "secondary_secret_tweet",
 			text: "secondary-only-needle",
 		});
+		insertCachedTweet({
+			accountId: "acct_primary",
+			accountHandle: "@steipete",
+			id: "primary_reply_anchor",
+			text: "primary-visible-reply-needle",
+		});
+		getNativeDb()
+			.prepare("update tweets set reply_to_id = ? where id = ?")
+			.run("secondary_secret_tweet", "primary_reply_anchor");
 		resetDatabaseRuntimeMetricsForTests();
 
 		const search = await rpc({
@@ -639,6 +648,54 @@ describe("Birdclaw MCP HTTP server", () => {
 			},
 		});
 		expect((thread.body.result as { isError: boolean }).isError).toBe(true);
+
+		const visibleSearch = await rpc({
+			jsonrpc: "2.0",
+			id: 4,
+			method: "tools/call",
+			params: {
+				name: "search_tweets",
+				arguments: { query: "primary-visible-reply-needle", limit: 5 },
+			},
+		});
+		const visibleSearchResult = visibleSearch.body.result as {
+			structuredContent: {
+				items: Array<{ id: string; replyToId: string | null }>;
+			};
+		};
+		expect(visibleSearchResult.structuredContent.items).toEqual([
+			expect.objectContaining({
+				id: "primary_reply_anchor",
+				replyToId: null,
+			}),
+		]);
+		expect(JSON.stringify(visibleSearch.body)).not.toContain(
+			"secondary_secret_tweet",
+		);
+
+		const visibleThread = await rpc({
+			jsonrpc: "2.0",
+			id: 5,
+			method: "tools/call",
+			params: {
+				name: "get_tweet_thread",
+				arguments: { tweetId: "primary_reply_anchor", limit: 10 },
+			},
+		});
+		const visibleThreadResult = visibleThread.body.result as {
+			structuredContent: {
+				items: Array<{ id: string; replyToId: string | null }>;
+			};
+		};
+		expect(visibleThreadResult.structuredContent.items).toEqual([
+			expect.objectContaining({
+				id: "primary_reply_anchor",
+				replyToId: null,
+			}),
+		]);
+		expect(JSON.stringify(visibleThread.body)).not.toContain(
+			"secondary_secret_tweet",
+		);
 		expect(getDatabaseRuntimeMetrics().connections.writeStatements).toBe(0);
 	});
 
