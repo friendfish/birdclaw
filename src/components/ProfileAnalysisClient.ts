@@ -17,6 +17,7 @@ export interface ProfileAnalysisRequestOptions {
 	maxPages: number;
 	maxConversations: number;
 	maxConversationPages: number;
+	language?: string;
 }
 
 export const DEFAULT_PROFILE_ANALYSIS_LIMITS = {
@@ -136,6 +137,9 @@ export function profileAnalysisUrl(
 	params.set("maxConversationPages", String(options.maxConversationPages));
 	if (options.refresh) {
 		params.set("refresh", "true");
+	}
+	if (options.language) {
+		params.set("language", options.language);
 	}
 	return `/api/profile-analysis?${params.toString()}`;
 }

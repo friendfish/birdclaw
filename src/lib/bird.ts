@@ -784,6 +784,24 @@ export function listHomeTimelineViaBird(options: {
 	return runEffectPromise(listHomeTimelineViaBirdEffect(options));
 }
 
+export const listUserTweetsViaBirdEffect = Effect.fn("bird.listUserTweets")(
+	function* ({ handle, maxResults }: { handle: string; maxResults: number }) {
+		const target = handle.trim().replace(/^@/, "");
+		const cappedResults = Math.min(maxResults, 200);
+		const args = ["user-tweets", target, "-n", String(cappedResults)];
+		const stdout = yield* runBirdTweetJsonCommandEffect(args);
+		const payload = yield* parseBirdJsonEffect(stdout);
+		return yield* normalizeBirdTweetsPayloadEffect(payload, "user-tweets");
+	},
+);
+
+export function listUserTweetsViaBird(options: {
+	handle: string;
+	maxResults: number;
+}): Promise<XurlMentionsResponse> {
+	return runEffectPromise(listUserTweetsViaBirdEffect(options));
+}
+
 function normalizeBirdFollowUsers(
 	payload: unknown,
 	command: "followers" | "following" | "list-members",
@@ -1160,7 +1178,7 @@ export const lookupProfileViaBirdEffect = Effect.fn("bird.lookupProfile")(
 			return null;
 		}
 
-		const stdout = yield* runBirdJsonCommandEffect([
+		const stdoutResult = yield* runBirdJsonCommandEffect([
 			"user",
 			target,
 			"--json",
@@ -1178,11 +1196,46 @@ export const lookupProfileViaBirdEffect = Effect.fn("bird.lookupProfile")(
 					"1",
 				]);
 			}),
+			Effect.map((stdout) => ({ ok: true as const, stdout })),
+			Effect.catchAll(() => Effect.succeed({ ok: false as const })),
 		);
-		const payload = (yield* parseBirdJsonEffect(
-			stdout,
-		)) as BirdUserOverviewPayload;
-		return toXurlMentionUser(payload.user);
+
+		if (stdoutResult.ok) {
+			const payload = (yield* parseBirdJsonEffect(
+				stdoutResult.stdout,
+			)) as BirdUserOverviewPayload;
+			return toXurlMentionUser(payload.user);
+		}
+
+		// Fallback for bird 0.8.0 which does not support "bird user" command
+		const tweetsStdoutResult = yield* runBirdJsonCommandEffect([
+			"user-tweets",
+			target,
+			"-n",
+			"1",
+			"--json",
+		]).pipe(
+			Effect.map((stdout) => ({ ok: true as const, stdout })),
+			Effect.catchAll(() => Effect.succeed({ ok: false as const })),
+		);
+
+		if (tweetsStdoutResult.ok) {
+			const parsed = yield* parseBirdJsonEffect(tweetsStdoutResult.stdout).pipe(
+				Effect.catchAll(() => Effect.succeed(null)),
+			);
+			if (Array.isArray(parsed) && parsed.length > 0) {
+				const tweet = parsed[0];
+				if (tweet && tweet.author && tweet.authorId) {
+					return {
+						id: String(tweet.authorId),
+						name: String(tweet.author.name || tweet.author.username || target),
+						username: String(tweet.author.username || target),
+					} satisfies XurlMentionUser;
+				}
+			}
+		}
+
+		return null;
 	},
 );
 

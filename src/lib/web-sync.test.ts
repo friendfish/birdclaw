@@ -90,6 +90,14 @@ function deferred<T>() {
 const originalBirdclawHome = process.env.BIRDCLAW_HOME;
 const tempRoots: string[] = [];
 
+function setupTempHome() {
+	const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-web-sync-"));
+	tempRoots.push(tempRoot);
+	process.env.BIRDCLAW_HOME = tempRoot;
+	resetBirdclawPathsForTests();
+	resetDatabaseForTests();
+}
+
 function setupDefaultAccount(accountId: string) {
 	const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-web-sync-"));
 	tempRoots.push(tempRoot);
@@ -108,6 +116,7 @@ function setupDefaultAccount(accountId: string) {
 
 describe("web sync dispatcher", () => {
 	beforeEach(() => {
+		setupTempHome();
 		clearWebSyncLocksForTests();
 		vi.useRealTimers();
 		maybeAutoSyncBackupMock.mockReset();

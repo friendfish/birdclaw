@@ -13,9 +13,12 @@ const mocks = vi.hoisted(() => ({
 	listUserTweetsEffect: vi.fn(),
 	lookupUsersByHandlesEffect: vi.fn(),
 	searchRecentByConversationIdEffect: vi.fn(),
+	getTransportStatusEffect: vi.fn(),
 }));
 
 vi.mock("./xurl", () => ({
+	getTransportStatusEffect: (...args: unknown[]) =>
+		mocks.getTransportStatusEffect(...args),
 	listUserTweetsEffect: (...args: unknown[]) =>
 		mocks.listUserTweetsEffect(...args),
 	lookupUsersByHandlesEffect: (...args: unknown[]) =>
@@ -53,6 +56,14 @@ beforeEach(() => {
 	mocks.lookupUsersByHandlesEffect.mockReset();
 	mocks.listUserTweetsEffect.mockReset();
 	mocks.searchRecentByConversationIdEffect.mockReset();
+	mocks.getTransportStatusEffect.mockReset();
+	mocks.getTransportStatusEffect.mockReturnValue(
+		Effect.succeed({
+			availableTransport: "xurl",
+			installed: true,
+			statusText: "authenticated",
+		}),
+	);
 	mocks.lookupUsersByHandlesEffect.mockReturnValue(
 		Effect.succeed([profileUser]),
 	);

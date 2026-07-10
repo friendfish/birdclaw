@@ -106,9 +106,12 @@ function getXurlStatusEffect(): Effect.Effect<LiveDataSourceStatus, never> {
 	return Effect.gen(function* () {
 		const transport = yield* getTransportStatusEffect();
 		const oauth2Accounts = yield* readXurlOAuth2AccountsEffect();
-		const authenticated = yield* lookupAuthenticatedOAuth2UserEffect().pipe(
-			Effect.catchAll(() => Effect.succeed(null)),
-		);
+		const authenticated =
+			transport.availableTransport === "xurl"
+				? yield* lookupAuthenticatedOAuth2UserEffect().pipe(
+						Effect.catchAll(() => Effect.succeed(null)),
+					)
+				: null;
 		const authenticatedAccount =
 			authenticated && typeof authenticated === "object"
 				? ({
@@ -164,14 +167,14 @@ const capabilities: LiveDataSourceCapability[] = [
 	{
 		key: "timeline",
 		label: "Home timeline",
-		primary: "xurl",
-		fallbacks: ["bird"],
+		primary: "bird",
+		fallbacks: ["xurl"],
 	},
 	{
 		key: "mentions",
 		label: "Mentions",
-		primary: "xurl",
-		fallbacks: ["bird", "birdclaw"],
+		primary: "bird",
+		fallbacks: ["xurl", "birdclaw"],
 		notes: "bird fallback is skipped when a since/start cursor requires xurl.",
 	},
 	{
@@ -184,8 +187,8 @@ const capabilities: LiveDataSourceCapability[] = [
 	{
 		key: "dms",
 		label: "DMs",
-		primary: "xurl",
-		fallbacks: ["bird", "birdclaw"],
+		primary: "bird",
+		fallbacks: ["xurl", "birdclaw"],
 		notes: "message requests require bird.",
 	},
 	{

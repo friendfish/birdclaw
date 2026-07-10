@@ -10,6 +10,7 @@ import {
 	streamHybridAnalysisEffect,
 } from "./analysis-runtime";
 import { maybeAutoSyncBackupEffect } from "./backup";
+import { getBirdclawConfig } from "./config";
 import { runEffectPromise } from "./effect-runtime";
 import { getLinkInsights } from "./link-insights";
 import { syncMentionThreadsEffect } from "./mention-threads-live";
@@ -975,11 +976,28 @@ function cachedDigestResult(
 	};
 }
 
+function getDigestFreshnessMs(): number {
+	const envFreshness = process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS;
+	if (envFreshness) {
+		const parsed = Number.parseInt(envFreshness, 10);
+		if (Number.isFinite(parsed) && parsed >= 0) {
+			return parsed * 1000;
+		}
+	}
+
+	const configFreshness = getBirdclawConfig().digest?.freshnessSeconds;
+	if (typeof configFreshness === "number" && configFreshness >= 0) {
+		return configFreshness * 1000;
+	}
+
+	return DEFAULT_DIGEST_FRESHNESS_MS;
+}
+
 function isFreshDigestCache(updatedAt: string) {
 	const timestamp = Date.parse(updatedAt);
 	return (
 		Number.isFinite(timestamp) &&
-		Date.now() - timestamp <= DEFAULT_DIGEST_FRESHNESS_MS
+		Date.now() - timestamp <= getDigestFreshnessMs()
 	);
 }
 
@@ -1369,4 +1387,6 @@ export const __test__ = {
 	parseDigestFromHybridText,
 	processSseChunk,
 	resolvePeriodDigestWindow,
+	getDigestFreshnessMs,
+	isFreshDigestCache,
 };

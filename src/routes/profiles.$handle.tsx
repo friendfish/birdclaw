@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ExternalLink, Loader2, RefreshCw } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AvatarChip } from "#/components/AvatarChip";
 import { TweetRichText } from "#/components/TweetRichText";
 import {
@@ -107,8 +107,10 @@ function ProfileBioText({
 
 export function ProfileRouteView({ handle }: { handle: string }) {
 	const cleanHandle = cleanProfileHandle(handle);
-	const analysis = useProfileAnalysisStream(cleanHandle);
+	const [language, setLanguage] = useState("zh-CN");
+	const analysis = useProfileAnalysisStream(cleanHandle, language);
 	const autoRunHandleRef = useRef("");
+	const autoRunLangRef = useRef("");
 	const runAnalysisRef = useRef(analysis.run);
 	const profile = analysis.context?.profile;
 	const displayName = profile?.displayName || `@${cleanHandle}`;
@@ -120,11 +122,16 @@ export function ProfileRouteView({ handle }: { handle: string }) {
 	}, [analysis.run]);
 
 	useEffect(() => {
-		if (cleanHandle && autoRunHandleRef.current !== cleanHandle) {
+		if (
+			cleanHandle &&
+			(autoRunHandleRef.current !== cleanHandle ||
+				autoRunLangRef.current !== language)
+		) {
 			autoRunHandleRef.current = cleanHandle;
+			autoRunLangRef.current = language;
 			runAnalysisRef.current(false, cleanHandle);
 		}
-	}, [cleanHandle]);
+	}, [cleanHandle, language]);
 
 	return (
 		<section className="flex min-h-screen flex-col">
@@ -167,6 +174,18 @@ export function ProfileRouteView({ handle }: { handle: string }) {
 								>
 									<ExternalLink className="size-4" strokeWidth={1.8} />X
 								</a>
+								<select
+									className={`${profileHeaderButtonClass} cursor-pointer bg-[var(--bg)] pr-8 appearance-none bg-no-repeat bg-[right_12px_center] text-[14px] font-bold`}
+									style={{
+										backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
+										backgroundSize: "1.25rem",
+									}}
+									value={language}
+									onChange={(e) => setLanguage(e.target.value)}
+								>
+									<option value="zh-CN">简体中文</option>
+									<option value="en">English</option>
+								</select>
 								<button
 									className={profileHeaderButtonClass}
 									disabled={!cleanHandle || analysis.loading}
