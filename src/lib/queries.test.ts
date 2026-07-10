@@ -1291,21 +1291,6 @@ describe("birdclaw queries", () => {
       )
       `,
 		).run();
-		db.prepare(
-			`
-      insert into tweet_collections (
-        account_id, tweet_id, kind, collected_at, source, raw_json, updated_at
-      ) values
-        (
-          'acct_primary', 'tweet_retweeted_original', 'likes',
-          '2026-03-09T12:02:00.000Z', 'test', '{}', '2026-03-09T12:02:00.000Z'
-        ),
-        (
-          'acct_primary', 'tweet_retweeted_original', 'bookmarks',
-          '2026-03-09T12:02:00.000Z', 'test', '{}', '2026-03-09T12:02:00.000Z'
-        )
-      `,
-		).run();
 		insertTestTweet(db, {
 			id: "tweet_raw_url",
 			text: "Check it: https://t.co/peek",
@@ -1324,6 +1309,19 @@ describe("birdclaw queries", () => {
 			text: "Actual original tweet content",
 			createdAt: "2026-03-09T11:59:00.000Z",
 			likeCount: 19,
+			mediaCount: 1,
+			entitiesJson: JSON.stringify({
+				hashtags: [{ tag: "LocalFirst", start: 30, end: 41 }],
+			}),
+			mediaJson: JSON.stringify([
+				{
+					url: "https://pbs.twimg.com/media/retweet.jpg",
+					type: "image",
+					altText: "Referenced retweet media",
+					width: 1200,
+					height: 800,
+				},
+			]),
 		});
 		insertTestTweet(db, {
 			id: "tweet_retweet_ref",
@@ -1388,6 +1386,21 @@ describe("birdclaw queries", () => {
 		const replyItem = items.find((item) => item.id === "tweet_002");
 		const mediaItem = items.find((item) => item.id === "tweet_003");
 		const quotedItem = items.find((item) => item.id === "tweet_006");
+		const referencedMembership = db
+			.prepare(
+				`select count(*) as count
+				 from (
+					select tweet_id from tweet_account_edges where account_id = ? and tweet_id = ?
+					union all
+					select tweet_id from tweet_collections where account_id = ? and tweet_id = ?
+				 )`,
+			)
+			.get(
+				"acct_primary",
+				"tweet_retweeted_original",
+				"acct_primary",
+				"tweet_retweeted_original",
+			) as { count: number };
 
 		expect(rawUrlItem?.entities.urls?.[0]).toMatchObject({
 			url: "https://t.co/peek",
@@ -1405,16 +1418,29 @@ describe("birdclaw queries", () => {
 				displayName: "Dominik Hauser",
 			},
 		});
+		expect(referencedMembership.count).toBe(0);
 		expect(retweetItem?.retweetedTweet).toMatchObject({
 			id: "tweet_retweeted_original",
 			text: "Actual original tweet content",
 			likeCount: 19,
-			mediaCount: 0,
-			bookmarked: true,
-			liked: true,
+			mediaCount: 1,
+			bookmarked: false,
+			liked: false,
 			author: {
 				handle: "Dimillian",
+				followersCount: 42000,
 			},
+			entities: {
+				hashtags: [{ tag: "LocalFirst", start: 30, end: 41 }],
+			},
+			media: [
+				{
+					type: "image",
+					altText: "Referenced retweet media",
+					width: 1200,
+					height: 800,
+				},
+			],
 		});
 		expect(missingRetweetItem?.retweetedTweet).toMatchObject({
 			id: "tweet_retweet_missing_ref:retweeted",

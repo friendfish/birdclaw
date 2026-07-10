@@ -350,12 +350,14 @@ function buildRetweetedTweet(
 	const retweetedId = getRetweetedTweetIdFromRaw(row.edge_raw_json);
 	const accountId = String(row.account_id);
 	if (retweetedId) {
+		// The visible retweet edge is the account-scoped evidence for its referenced
+		// tweet. Project this account's state without requiring a second membership row.
 		const tweet = getTweetById(
 			db,
 			urlExpansionCache,
 			retweetedId,
 			resolveProfileByHandle,
-			accountId,
+			{ stateAccountId: accountId },
 		);
 		if (tweet) {
 			return tweet;
@@ -1209,23 +1211,33 @@ function tweetAccountMembershipPredicate(tweetAlias: "child" | "t" | "tweet") {
 	)`;
 }
 
+interface TweetLookupOptions {
+	stateAccountId?: string;
+	membershipAccountId?: string;
+}
+
 function getTweetById(
 	db: Database,
 	urlExpansionCache: UrlExpansionCache,
 	tweetId: string,
 	resolveProfileByHandle?: (handle: string) => ProfileRecord,
-	accountId?: string,
+	options: TweetLookupOptions = {},
 ): EmbeddedTweet | null {
-	const stateParams = accountId !== undefined ? [accountId, accountId] : [];
+	const stateParams =
+		options.stateAccountId !== undefined
+			? [options.stateAccountId, options.stateAccountId]
+			: [];
 	const membershipClause =
-		accountId !== undefined
+		options.membershipAccountId !== undefined
 			? ` and ${tweetAccountMembershipPredicate("t")}`
 			: "";
 	const membershipParams =
-		accountId !== undefined ? [accountId, accountId] : [];
+		options.membershipAccountId !== undefined
+			? [options.membershipAccountId, options.membershipAccountId]
+			: [];
 	const row = db
 		.prepare(
-			`${conversationTweetSelect(accountId)} where t.id = ?${membershipClause}`,
+			`${conversationTweetSelect(options.stateAccountId)} where t.id = ?${membershipClause}`,
 		)
 		.get(...stateParams, tweetId, ...membershipParams) as
 		| Record<string, unknown>
@@ -1289,7 +1301,10 @@ export function getTweetsByIds(
 			urlExpansionCache,
 			normalized,
 			resolveProfileByHandle,
-			scopedAccountId,
+			{
+				stateAccountId: scopedAccountId,
+				membershipAccountId: scopedAccountId,
+			},
 		);
 		if (tweet) tweets.push(tweet);
 	}
@@ -1461,7 +1476,10 @@ export function getTweetConversation(
 		urlExpansionCache,
 		tweetId,
 		resolveProfileByHandle,
-		scopedAccountId,
+		{
+			stateAccountId: scopedAccountId,
+			membershipAccountId: scopedAccountId,
+		},
 	);
 	if (!anchor) return null;
 
@@ -1476,7 +1494,10 @@ export function getTweetConversation(
 			urlExpansionCache,
 			current.replyToId,
 			resolveProfileByHandle,
-			scopedAccountId,
+			{
+				stateAccountId: scopedAccountId,
+				membershipAccountId: scopedAccountId,
+			},
 		);
 		if (!parent) break;
 		if (ancestorIds.has(parent.id)) {
@@ -1493,7 +1514,10 @@ export function getTweetConversation(
 			urlExpansionCache,
 			current.replyToId,
 			resolveProfileByHandle,
-			scopedAccountId,
+			{
+				stateAccountId: scopedAccountId,
+				membershipAccountId: scopedAccountId,
+			},
 		);
 		if (omittedParent) ancestorTruncated = true;
 	}
