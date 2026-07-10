@@ -37,6 +37,12 @@ export interface BirdclawConfig {
 		autoSync?: boolean;
 		staleAfterSeconds?: number;
 	};
+	ai?: {
+		provider?: string;
+		baseUrl?: string;
+		apiKey?: string;
+		model?: string;
+	};
 }
 
 let cachedPaths: BirdclawPaths | undefined;

@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { tryPromise } from "./effect-runtime";
+import { getBirdclawConfig } from "./config";
 import {
 	defaultRuntimeServices,
 	type RuntimeServices,
@@ -280,11 +281,13 @@ export function requestOpenAIResponseEffect({
 	runtime?: RuntimeServices;
 }): Effect.Effect<Response, Error> {
 	return Effect.gen(function* () {
-		const apiKey = runtime.env("OPENAI_API_KEY");
+		const aiConfig = getBirdclawConfig().ai || {};
+		const apiKey = aiConfig.apiKey?.trim() || runtime.env("OPENAI_API_KEY");
 		if (!apiKey) {
 			return yield* Effect.fail(new Error("OPENAI_API_KEY is not set"));
 		}
-		const baseUrl = resolveOpenAIBaseUrl(runtime.env);
+		const baseUrl =
+			aiConfig.baseUrl?.trim() || resolveOpenAIBaseUrl(runtime.env);
 		const apiType = runtime
 			.env("BIRDCLAW_OPENAI_API_TYPE")
 			?.trim()
@@ -292,6 +295,7 @@ export function requestOpenAIResponseEffect({
 		const isChatCompletion =
 			apiType === "chat" ||
 			apiType === "chat/completions" ||
+			aiConfig.provider === "deepseek" ||
 			(baseUrl !== DEFAULT_OPENAI_BASE_URL && apiType !== "responses");
 
 		const url = isChatCompletion

@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { tryPromise } from "./effect-runtime";
+import { getBirdclawConfig } from "./config";
 import {
 	readOpenAIResponseStreamEffect,
 	requestOpenAIResponseEffect,
@@ -46,7 +47,11 @@ export function resolveAnalysisModelSettings(
 	runtime: RuntimeServices = defaultRuntimeServices,
 ): AnalysisModelSettings {
 	return {
-		model: options.model ?? runtime.env("BIRDCLAW_AI_MODEL") ?? DEFAULT_MODEL,
+		model:
+			options.model ??
+			getBirdclawConfig().ai?.model ??
+			runtime.env("BIRDCLAW_AI_MODEL") ??
+			DEFAULT_MODEL,
 		reasoningEffort:
 			options.reasoningEffort ??
 			(runtime.env(
@@ -114,7 +119,9 @@ export function parseHybridAnalysis<T>({
 	return { markdown, value: fallback(markdown) };
 }
 
-export function extractOpenAIResponseText(payload: Record<string, unknown>): string {
+export function extractOpenAIResponseText(
+	payload: Record<string, unknown>,
+): string {
 	if (typeof payload.output_text === "string") {
 		return payload.output_text;
 	}
