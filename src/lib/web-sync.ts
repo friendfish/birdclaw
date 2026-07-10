@@ -12,6 +12,7 @@ import {
 import NativeSqliteDatabase from "./sqlite";
 import { syncTimelineCollectionEffect } from "./timeline-collections-live";
 import { syncHomeTimelineEffect } from "./timeline-live";
+import { getBirdclawConfig } from "./config";
 
 import type { WebSyncKind } from "./api-enums";
 export type { WebSyncKind } from "./api-enums";
@@ -137,9 +138,11 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 				const result = yield* syncHomeTimelineEffect({
 					account,
 					mode:
-						!account || account === resolveDefaultSyncAccountId(runtime)
-							? "auto"
-							: "xurl",
+						getBirdclawConfig().mentions?.dataSource === "bird"
+							? "bird"
+							: !account || account === resolveDefaultSyncAccountId(runtime)
+								? "auto"
+								: "xurl",
 					limit: 100,
 					maxPages: 3,
 					following: true,
@@ -162,7 +165,10 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 			Effect.gen(function* () {
 				const mentions = yield* syncMentionsEffect({
 					account,
-					mode: "auto",
+					mode:
+						getBirdclawConfig().mentions?.dataSource === "bird"
+							? "bird"
+							: "auto",
 					limit: 100,
 					maxPages: 3,
 					refresh: true,
@@ -179,7 +185,10 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 
 				const threads = yield* syncMentionThreadsEffect({
 					account,
-					mode: "xurl",
+					mode:
+						getBirdclawConfig().mentions?.dataSource === "bird"
+							? "bird"
+							: "xurl",
 					limit: 30,
 					delayMs: 1500,
 					timeoutMs: 15000,
@@ -252,7 +261,12 @@ function syncSavedCollection(
 		const result = yield* syncTimelineCollectionEffect({
 			kind,
 			account,
-			mode: isNonDefaultAccount ? "xurl" : "auto",
+			mode:
+				getBirdclawConfig().mentions?.dataSource === "bird"
+					? "bird"
+					: isNonDefaultAccount
+						? "xurl"
+						: "auto",
 			limit: 100,
 			maxPages: 5,
 			refresh: true,

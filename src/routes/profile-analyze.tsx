@@ -46,7 +46,11 @@ function ProfileAnalyzeRoute() {
 	useEffect(() => {
 		const urlHandle = cleanProfileHandle(search.handle);
 		setHandle(urlHandle);
-		if (urlHandle && (autoRunHandleRef.current !== urlHandle || autoRunLangRef.current !== language)) {
+		if (
+			urlHandle &&
+			(autoRunHandleRef.current !== urlHandle ||
+				autoRunLangRef.current !== language)
+		) {
 			autoRunHandleRef.current = urlHandle;
 			autoRunLangRef.current = language;
 			runAnalysisRef.current(false, urlHandle);

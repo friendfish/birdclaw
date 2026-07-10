@@ -28,6 +28,9 @@ export interface BirdclawConfig {
 	actions?: {
 		transport?: ActionsTransport;
 	};
+	digest?: {
+		freshnessSeconds?: number;
+	};
 	backup?: {
 		repoPath?: string;
 		remote?: string;

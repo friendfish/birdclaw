@@ -114,9 +114,22 @@ export function parseHybridAnalysis<T>({
 	return { markdown, value: fallback(markdown) };
 }
 
-export function extractOpenAIResponseText(payload: Record<string, unknown>) {
+export function extractOpenAIResponseText(payload: Record<string, unknown>): string {
 	if (typeof payload.output_text === "string") {
 		return payload.output_text;
+	}
+	if (Array.isArray(payload.choices)) {
+		const choice = payload.choices[0];
+		if (choice && typeof choice === "object") {
+			const message = (choice as Record<string, unknown>).message;
+			if (
+				message &&
+				typeof message === "object" &&
+				typeof (message as Record<string, unknown>).content === "string"
+			) {
+				return (message as Record<string, unknown>).content as string;
+			}
+		}
 	}
 	const output = Array.isArray(payload.output) ? payload.output : [];
 	const parts: string[] = [];

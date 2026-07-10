@@ -122,7 +122,11 @@ export function ProfileRouteView({ handle }: { handle: string }) {
 	}, [analysis.run]);
 
 	useEffect(() => {
-		if (cleanHandle && (autoRunHandleRef.current !== cleanHandle || autoRunLangRef.current !== language)) {
+		if (
+			cleanHandle &&
+			(autoRunHandleRef.current !== cleanHandle ||
+				autoRunLangRef.current !== language)
+		) {
 			autoRunHandleRef.current = cleanHandle;
 			autoRunLangRef.current = language;
 			runAnalysisRef.current(false, cleanHandle);

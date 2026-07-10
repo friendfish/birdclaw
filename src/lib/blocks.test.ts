@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 	lookupUsersByIds: vi.fn(),
 	unblockUserViaBird: vi.fn(),
 	unblockUserViaXurl: vi.fn(),
+	getTransportStatus: vi.fn(),
 }));
 
 vi.mock("./bird-actions", async () => {
@@ -34,6 +35,7 @@ vi.mock("./xurl", async () => {
 	const { effectFromMock: fromMock } = await import("../test/effect-mocks");
 	return {
 		blockUserViaXurlEffect: fromMock(mocks.blockUserViaXurl),
+		getTransportStatusEffect: fromMock(mocks.getTransportStatus),
 		listBlockedUsersEffect: fromMock(mocks.listBlockedUsers),
 		lookupAuthenticatedUserEffect: fromMock(mocks.lookupAuthenticatedUser),
 		lookupAuthenticatedUserFreshEffect: fromMock(mocks.lookupAuthenticatedUser),
@@ -68,6 +70,7 @@ afterEach(() => {
 	mocks.lookupUsersByIds.mockReset();
 	mocks.unblockUserViaBird.mockReset();
 	mocks.unblockUserViaXurl.mockReset();
+	mocks.getTransportStatus.mockReset();
 
 	for (const tempRoot of tempRoots.splice(0)) {
 		rmSync(tempRoot, { recursive: true, force: true });
@@ -77,6 +80,11 @@ afterEach(() => {
 describe("blocklist", () => {
 	beforeEach(() => {
 		delete process.env.BIRDCLAW_DISABLE_LIVE_WRITES;
+		mocks.getTransportStatus.mockResolvedValue({
+			availableTransport: "xurl",
+			installed: true,
+			statusText: "authenticated",
+		});
 		mocks.lookupProfileViaBird.mockResolvedValue(null);
 		mocks.lookupAuthenticatedUser.mockResolvedValue({
 			id: "25401953",

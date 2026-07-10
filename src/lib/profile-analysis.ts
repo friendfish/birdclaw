@@ -798,15 +798,13 @@ export function collectProfileAnalysisContextEffect(
 				auth: "oauth2",
 				signal: options.signal,
 				useConfiguredCandidate: false,
-			}).pipe(
-				Effect.catchAll(() => Effect.succeed([undefined]))
-			);
+			}).pipe(Effect.catchAll(() => Effect.succeed([undefined])));
 			user = xurlUser;
 		}
 
 		if (!user) {
 			const birdResult = yield* lookupProfileViaBirdEffect(handle).pipe(
-				Effect.catchAll(() => Effect.succeed(null))
+				Effect.catchAll(() => Effect.succeed(null)),
 			);
 			user = birdResult ?? undefined;
 		}
@@ -876,7 +874,10 @@ export function collectProfileAnalysisContextEffect(
 				tweetPages += 1;
 				fetchedTweets += limitedResponse.items.length;
 				tweetResponses.push(
-					userTimelineToTweetsResponse(limitedResponse, resolved.externalUserId),
+					userTimelineToTweetsResponse(
+						limitedResponse,
+						resolved.externalUserId,
+					),
 				);
 				nextToken =
 					fetchedTweets < maxTweets
@@ -893,8 +894,8 @@ export function collectProfileAnalysisContextEffect(
 			}).pipe(
 				Effect.catchAll((err) => {
 					console.error("bird user-tweets failed:", err);
-					return Effect.succeed({ data: [] as XurlMentionData[] });
-				})
+					return Effect.succeed({ data: [] } as XurlTweetsResponse);
+				}),
 			);
 			profilePayload = {
 				data: birdResult.data,
@@ -947,14 +948,17 @@ export function collectProfileAnalysisContextEffect(
 					let response: XurlTweetsResponse | null = null;
 					for (let attempt = 0; attempt <= rateLimitMaxRetries; attempt += 1) {
 						conversationRequestCount += 1;
-						response = yield* searchRecentByConversationIdEffect(conversationId, {
-							maxResults: XURL_PAGE_SIZE,
-							paginationToken: conversationNextToken,
-							timeoutMs: 30_000,
-							auth: "oauth2",
-							signal: options.signal,
-							onAttempt: recordConversationAttempt,
-						}).pipe(
+						response = yield* searchRecentByConversationIdEffect(
+							conversationId,
+							{
+								maxResults: XURL_PAGE_SIZE,
+								paginationToken: conversationNextToken,
+								timeoutMs: 30_000,
+								auth: "oauth2",
+								signal: options.signal,
+								onAttempt: recordConversationAttempt,
+							},
+						).pipe(
 							Effect.catchAll((error) => {
 								if (!isXurlRateLimitError(error)) {
 									return Effect.fail(error);
@@ -1017,7 +1021,7 @@ export function collectProfileAnalysisContextEffect(
 					Effect.catchAll((err) => {
 						console.error("bird thread fetch failed:", err);
 						return Effect.succeed(null);
-					})
+					}),
 				);
 				if (birdResult) {
 					conversationPages += 1;
@@ -1119,7 +1123,8 @@ function buildPrompt(
 ) {
 	const { dataset, tweetCount, conversationCount } = fitPromptDataset(context);
 	const language = options.language || "en";
-	const isChinese = language === "zh-CN" || language === "zh" || language.startsWith("zh");
+	const isChinese =
+		language === "zh-CN" || language === "zh" || language.startsWith("zh");
 
 	const langInstruction = isChinese
 		? "\n- Output all analysis content (including markdown sections, the JSON 'title', 'summary', 'voice', theme 'title' and 'summary', 'conversationStyle', etc.) in Simplified Chinese (简体中文). Keep the JSON keys and structure exactly as specified in English."

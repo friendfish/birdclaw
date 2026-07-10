@@ -178,13 +178,41 @@ export function processOpenAIResponseSseChunk(
 			.join("\n");
 		if (data && data !== "[DONE]") {
 			try {
-				handleOpenAIEvent(
-					state,
-					JSON.parse(data) as Record<string, unknown>,
-					onDelta,
-					delimiterPattern,
-					delimiterHold,
-				);
+				let parsed = JSON.parse(data) as Record<string, unknown>;
+				let shouldHandle = true;
+				if (Array.isArray(parsed.choices)) {
+					const choice = parsed.choices[0] as
+						| Record<string, unknown>
+						| undefined;
+					if (choice) {
+						const delta = choice.delta as Record<string, unknown> | undefined;
+						if (delta && typeof delta.content === "string") {
+							parsed = {
+								type: "response.output_text.delta",
+								delta: delta.content,
+							};
+						} else if (choice.finish_reason || parsed.usage) {
+							parsed = {
+								type: "response.completed",
+								response: {
+									id: typeof parsed.id === "string" ? parsed.id : "chatcmpl",
+									usage: parsed.usage,
+								},
+							};
+						} else {
+							shouldHandle = false;
+						}
+					}
+				}
+				if (shouldHandle) {
+					handleOpenAIEvent(
+						state,
+						parsed,
+						onDelta,
+						delimiterPattern,
+						delimiterHold,
+					);
+				}
 			} catch {
 				// The feature parser decides whether partial output remains usable.
 			}
@@ -257,7 +285,30 @@ export function requestOpenAIResponseEffect({
 			return yield* Effect.fail(new Error("OPENAI_API_KEY is not set"));
 		}
 		const baseUrl = resolveOpenAIBaseUrl(runtime.env);
-		const url = `${baseUrl}/responses`;
+		const apiType = runtime
+			.env("BIRDCLAW_OPENAI_API_TYPE")
+			?.trim()
+			.toLowerCase();
+		const isChatCompletion =
+			apiType === "chat" ||
+			apiType === "chat/completions" ||
+			(baseUrl !== DEFAULT_OPENAI_BASE_URL && apiType !== "responses");
+
+		const url = isChatCompletion
+			? `${baseUrl}/chat/completions`
+			: `${baseUrl}/responses`;
+		let finalBody = body;
+		if (isChatCompletion && body && typeof body === "object") {
+			const { input, max_output_tokens, ...rest } = body as Record<string, any>;
+			finalBody = {
+				...rest,
+				messages: Array.isArray(input) ? input : [],
+				...(max_output_tokens !== undefined
+					? { max_tokens: max_output_tokens }
+					: {}),
+			};
+		}
+
 		debugLog(runtime.env, `POST ${url}`);
 		const response = yield* tryPromise(() =>
 			runtime.fetch(url, {
@@ -267,7 +318,7 @@ export function requestOpenAIResponseEffect({
 					authorization: `Bearer ${apiKey}`,
 					"content-type": "application/json",
 				},
-				body: JSON.stringify(body),
+				body: JSON.stringify(finalBody),
 			}),
 		).pipe(
 			Effect.mapError(toError),
