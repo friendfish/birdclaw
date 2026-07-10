@@ -296,6 +296,8 @@ export function requestOpenAIResponseEffect({
 			apiType === "chat" ||
 			apiType === "chat/completions" ||
 			aiConfig.provider === "deepseek" ||
+			aiConfig.provider === "google" ||
+			aiConfig.provider === "openrouter" ||
 			(baseUrl !== DEFAULT_OPENAI_BASE_URL && apiType !== "responses");
 
 		const url = isChatCompletion
@@ -311,6 +313,24 @@ export function requestOpenAIResponseEffect({
 					? { max_tokens: max_output_tokens }
 					: {}),
 			};
+
+			// Google Gemini, OpenRouter, DeepSeek and other third-party OpenAI-compatible endpoints
+			// do not support OpenAI Responses API specific / proprietary fields and fail with 400.
+			// Specifically, Google Gemini rejects any unknown JSON keys.
+			const isStrictOpenAICompatible =
+				aiConfig.provider === "google" ||
+				aiConfig.provider === "openrouter" ||
+				aiConfig.provider === "deepseek" ||
+				baseUrl.includes("googleapis.com") ||
+				baseUrl.includes("openrouter.ai") ||
+				baseUrl.includes("deepseek.com") ||
+				(baseUrl !== DEFAULT_OPENAI_BASE_URL && aiConfig.provider !== "openai");
+
+			if (isStrictOpenAICompatible) {
+				delete (finalBody as any).reasoning;
+				delete (finalBody as any).store;
+				delete (finalBody as any).service_tier;
+			}
 		}
 
 		debugLog(runtime.env, `POST ${url}`);

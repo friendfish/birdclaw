@@ -1,6 +1,10 @@
 // @vitest-environment node
 import { Effect } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetBirdclawPathsForTests } from "./config";
+import { mkdtempSync, rmSync } from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import {
 	createAnalysisRequestBody,
 	parseHybridAnalysis,
@@ -9,12 +13,31 @@ import {
 } from "./analysis-runtime";
 import { createRuntimeServices } from "./runtime-services";
 
+const originalBirdclawHome = process.env.BIRDCLAW_HOME;
+const tempRoots: string[] = [];
+
+beforeEach(() => {
+	const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-analysis-runtime-"));
+	tempRoots.push(tempRoot);
+	process.env.BIRDCLAW_HOME = tempRoot;
+	resetBirdclawPathsForTests();
+});
+
 afterEach(() => {
 	delete process.env.OPENAI_API_KEY;
 	delete process.env.BIRDCLAW_AI_MODEL;
 	delete process.env.BIRDCLAW_OPENAI_REASONING_EFFORT;
 	delete process.env.BIRDCLAW_OPENAI_SERVICE_TIER;
 	vi.unstubAllGlobals();
+	if (originalBirdclawHome !== undefined) {
+		process.env.BIRDCLAW_HOME = originalBirdclawHome;
+	} else {
+		delete process.env.BIRDCLAW_HOME;
+	}
+	resetBirdclawPathsForTests();
+	for (const tempRoot of tempRoots.splice(0)) {
+		rmSync(tempRoot, { recursive: true, force: true });
+	}
 });
 
 describe("analysis runtime", () => {
