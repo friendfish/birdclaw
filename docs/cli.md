@@ -41,6 +41,8 @@ User config:
 - `BIRDCLAW_HOME`
 - `BIRDCLAW_CONFIG`
 - `BIRDCLAW_ACTIONS_TRANSPORT`
+- `BIRDCLAW_BIRD_COMMAND`
+- `BIRDCLAW_BASH_COMMAND`
 - `BIRDCLAW_MCP_TOKEN`
 - `BIRDCLAW_MCP_PUBLIC_URL`
 - `BIRDCLAW_MCP_ACCOUNT`
@@ -205,6 +207,10 @@ by default. Override it with `BIRDCLAW_BIRD_COMMAND` or:
 	}
 }
 ```
+
+On Windows, Birdclaw runs the redirect wrapper through Git Bash. Common Git for
+Windows installations are detected automatically; set `BIRDCLAW_BASH_COMMAND`
+to the full path of `bash.exe` for a portable or non-standard installation.
 
 ### `backup import`
 

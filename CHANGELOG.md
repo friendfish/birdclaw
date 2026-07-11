@@ -6,6 +6,10 @@
 
 - Add a disabled-by-default, bearer-authenticated read-only MCP endpoint for account-scoped cached tweet search and thread research, with startup configuration/schema validation, strict loopback/Host/Origin/path isolation, bounded stateless requests, and no DM, live X, OpenAI, filesystem, or write tools.
 
+### Fixed
+
+- Run Bird subprocesses through Git Bash on Windows instead of assuming `/bin/bash`, with a documented override for portable Git installations. (#94 - thanks @kristofer-atlas)
+
 ## 0.9.5 - 2026-07-06
 
 ### Fixed
