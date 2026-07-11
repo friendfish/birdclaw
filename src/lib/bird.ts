@@ -323,9 +323,13 @@ function getBirdStdoutShellCommand(
 	if (platform !== "win32") {
 		return "/bin/bash";
 	}
-	const candidate = WINDOWS_BASH_COMMAND_CANDIDATES.find((candidate) =>
-		pathExists(candidate),
-	);
+	const candidates = [...WINDOWS_BASH_COMMAND_CANDIDATES];
+	if (env.LOCALAPPDATA && win32Path.isAbsolute(env.LOCALAPPDATA)) {
+		candidates.push(
+			win32Path.join(env.LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe"),
+		);
+	}
+	const candidate = candidates.find((candidate) => pathExists(candidate));
 	if (candidate) return candidate;
 	const pathValue = Object.entries(env).find(
 		([name]) => name.toLowerCase() === "path",
@@ -335,6 +339,14 @@ function getBirdStdoutShellCommand(
 		if (!win32Path.isAbsolute(directory)) continue;
 		const pathCandidate = win32Path.join(directory, "bash.exe");
 		if (pathExists(pathCandidate)) return pathCandidate;
+		if (win32Path.basename(directory).toLowerCase() === "cmd") {
+			const siblingCandidate = win32Path.join(
+				win32Path.dirname(directory),
+				"bin",
+				"bash.exe",
+			);
+			if (pathExists(siblingCandidate)) return siblingCandidate;
+		}
 	}
 	throw new Error(
 		"Git Bash unavailable: no trusted bash.exe found\nInstall Git for Windows, add its absolute bin directory to PATH, or set BIRDCLAW_BASH_COMMAND to its full path.",
@@ -359,7 +371,11 @@ export const runBirdJsonCommandEffect = Effect.fn("bird.runJsonCommand")(
 						error instanceof Error ? error : new Error(String(error)),
 				});
 				const { stdoutPath } = yield* makeBirdStdoutTempEffect();
-				const shellCommand = getBirdStdoutShellCommand();
+				const shellCommand = yield* Effect.try({
+					try: () => getBirdStdoutShellCommand(),
+					catch: (error) =>
+						error instanceof Error ? error : new Error(String(error)),
+				});
 				yield* Effect.tryPromise({
 					try: () =>
 						execFileAsync(
@@ -400,7 +416,11 @@ const runBirdJsonCommandAllowFailureEffect = Effect.fn(
 					error instanceof Error ? error : new Error(String(error)),
 			});
 			const { stdoutPath } = yield* makeBirdStdoutTempEffect();
-			const shellCommand = getBirdStdoutShellCommand();
+			const shellCommand = yield* Effect.try({
+				try: () => getBirdStdoutShellCommand(),
+				catch: (error) =>
+					error instanceof Error ? error : new Error(String(error)),
+			});
 			yield* Effect.tryPromise({
 				try: () =>
 					execFileAsync(

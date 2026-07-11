@@ -110,6 +110,22 @@ describe("bird transport wrapper", () => {
 				(candidate) => candidate === "D:\\PortableGit\\bin\\bash.exe",
 			),
 		).toBe("D:\\PortableGit\\bin\\bash.exe");
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{ LOCALAPPDATA: "D:\\Users\\Sam\\AppData\\Local" },
+				(candidate) =>
+					candidate ===
+					"D:\\Users\\Sam\\AppData\\Local\\Programs\\Git\\bin\\bash.exe",
+			),
+		).toBe("D:\\Users\\Sam\\AppData\\Local\\Programs\\Git\\bin\\bash.exe");
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{ Path: "D:\\PortableGit\\cmd" },
+				(candidate) => candidate === "D:\\PortableGit\\bin\\bash.exe",
+			),
+		).toBe("D:\\PortableGit\\bin\\bash.exe");
 		expect(() =>
 			__test__.getBirdStdoutShellCommand(
 				"win32",
