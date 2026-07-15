@@ -243,34 +243,32 @@ function ProfileAnalyzeRoute() {
 								<span>加载中...</span>
 							</div>
 						) : metadata?.analyzed && metadata.analyzed.length > 0 ? (
-							<div className="flex gap-4 overflow-x-auto pb-3 pt-1 scrollbar-thin">
-								{metadata.analyzed.map((profile) => (
-									<div
-										key={profile.id}
-										onClick={() => handleSelectProfile(profile.handle)}
-										className="flex items-center gap-3 p-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--bg-active)] cursor-pointer transition-all w-[240px] shrink-0"
-									>
-										<AvatarChip
-											profileId={profile.id}
-											avatarUrl={profile.avatarUrl}
-											name={profile.displayName || profile.handle}
-											hue={profile.avatarHue}
-										/>
-										<div className="min-w-0 flex-1">
-											<div className="flex items-baseline justify-between gap-1">
-												<span className="font-bold text-[14px] text-[var(--ink)] truncate">
+							<div className="max-h-[175px] overflow-y-auto pr-1 scrollbar-thin">
+								<div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
+									{metadata.analyzed.map((profile) => (
+										<div
+											key={profile.id}
+											onClick={() => handleSelectProfile(profile.handle)}
+											className="flex items-center gap-2 p-2 rounded-lg border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--bg-active)] cursor-pointer transition-all min-w-0 h-[46px]"
+										>
+											<AvatarChip
+												profileId={profile.id}
+												avatarUrl={profile.avatarUrl}
+												name={profile.displayName || profile.handle}
+												hue={profile.avatarHue}
+												size="small"
+											/>
+											<div className="min-w-0 flex-1 leading-tight">
+												<div className="font-bold text-[12px] text-[var(--ink)] truncate">
 													{profile.displayName || profile.handle}
-												</span>
-											</div>
-											<div className="text-[12px] text-[var(--ink-soft)] truncate">
-												@{profile.handle}
-											</div>
-											<div className="text-[10px] text-[var(--ink-soft)] mt-1">
-												{profile.lastAnalyzedAt ? new Date(profile.lastAnalyzedAt).toLocaleDateString() : ""}
+												</div>
+												<div className="text-[10px] text-[var(--ink-soft)] truncate">
+													@{profile.handle}
+												</div>
 											</div>
 										</div>
-									</div>
-								))}
+									))}
+								</div>
 							</div>
 						) : (
 							<div className="text-[14px] text-[var(--ink-soft)] py-6 rounded-lg border border-dashed border-[var(--line)] bg-[var(--bg-active)]/50 text-center">
@@ -291,29 +289,32 @@ function ProfileAnalyzeRoute() {
 								<span>加载中...</span>
 							</div>
 						) : metadata?.following && metadata.following.length > 0 ? (
-							<div className="flex gap-4 overflow-x-auto pb-3 pt-1 scrollbar-thin">
-								{metadata.following.map((profile) => (
-									<div
-										key={profile.id}
-										onClick={() => handleSelectProfile(profile.handle)}
-										className="flex items-center gap-3 p-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--bg-active)] cursor-pointer transition-all w-[200px] shrink-0"
-									>
-										<AvatarChip
-											profileId={profile.id}
-											avatarUrl={profile.avatarUrl}
-											name={profile.displayName || profile.handle}
-											hue={profile.avatarHue}
-										/>
-										<div className="min-w-0 flex-1">
-											<span className="font-bold text-[14px] text-[var(--ink)] block truncate">
-												{profile.displayName || profile.handle}
-											</span>
-											<span className="text-[12px] text-[var(--ink-soft)] block truncate">
-												@{profile.handle}
-											</span>
+							<div className="max-h-[500px] overflow-y-auto pr-1 scrollbar-thin">
+								<div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
+									{metadata.following.map((profile) => (
+										<div
+											key={profile.id}
+											onClick={() => handleSelectProfile(profile.handle)}
+											className="flex items-center gap-2 p-2 rounded-lg border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--bg-active)] cursor-pointer transition-all min-w-0 h-[46px]"
+										>
+											<AvatarChip
+												profileId={profile.id}
+												avatarUrl={profile.avatarUrl}
+												name={profile.displayName || profile.handle}
+												hue={profile.avatarHue}
+												size="small"
+											/>
+											<div className="min-w-0 flex-1 leading-tight">
+												<span className="font-bold text-[12px] text-[var(--ink)] block truncate">
+													{profile.displayName || profile.handle}
+												</span>
+												<span className="text-[10px] text-[var(--ink-soft)] block truncate">
+													@{profile.handle}
+												</span>
+											</div>
 										</div>
-									</div>
-								))}
+									))}
+								</div>
 							</div>
 						) : (
 							<div className="text-[14px] text-[var(--ink-soft)] py-6 rounded-lg border border-dashed border-[var(--line)] bg-[var(--bg-active)]/50 text-center">
