@@ -68,6 +68,20 @@ function ProfileAnalyzeRoute() {
 	const autoRunLangRef = useRef("");
 	const runAnalysisRef = useRef(analysis.run);
 
+	// Load accounts for SyncNowButton
+	const [accounts, setAccounts] = useState<any[] | undefined>(undefined);
+
+	useEffect(() => {
+		fetch("/api/status")
+			.then((res) => res.json())
+			.then((data) => {
+				if (data && data.accounts) {
+					setAccounts(data.accounts);
+				}
+			})
+			.catch((err) => console.error("Failed to load accounts", err));
+	}, []);
+
 	// Metadata for lists
 	const [metadata, setMetadata] = useState<{
 		following: any[];
@@ -296,6 +310,7 @@ function ProfileAnalyzeRoute() {
 								我的关注对象 ({metadata?.following.length || 0})
 							</h2>
 							<SyncNowButton
+								accounts={accounts}
 								kind="following"
 								label="同步关注"
 								onSynced={() => {
