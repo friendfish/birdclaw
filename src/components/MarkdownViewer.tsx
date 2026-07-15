@@ -46,6 +46,30 @@ export function MarkdownViewer({
 			flushList();
 			continue;
 		}
+		if (trimmed.startsWith("##### ")) {
+			flushList();
+			nodes.push(
+				<h5
+					className="mt-4 mb-1 text-[13px] font-bold text-[var(--ink-soft)] first:mt-0"
+					key={`h5-${String(nodes.length)}`}
+				>
+					{renderInline(trimmed.slice(6), lookup)}
+				</h5>,
+			);
+			continue;
+		}
+		if (trimmed.startsWith("#### ")) {
+			flushList();
+			nodes.push(
+				<h4
+					className="mt-4 mb-1.5 text-[14px] font-bold text-[var(--ink)] first:mt-0"
+					key={`h4-${String(nodes.length)}`}
+				>
+					{renderInline(trimmed.slice(5), lookup)}
+				</h4>,
+			);
+			continue;
+		}
 		if (trimmed.startsWith("### ")) {
 			flushList();
 			nodes.push(
