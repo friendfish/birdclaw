@@ -244,7 +244,7 @@ function ProfileAnalyzeRoute() {
 							</div>
 						) : metadata?.analyzed && metadata.analyzed.length > 0 ? (
 							<div className="max-h-[350px] overflow-y-auto pr-1 scrollbar-thin">
-								<div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
+								<div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
 									{metadata.analyzed.map((profile) => (
 										<div
 											key={profile.id}
@@ -290,7 +290,7 @@ function ProfileAnalyzeRoute() {
 							</div>
 						) : metadata?.following && metadata.following.length > 0 ? (
 							<div className="max-h-[550px] overflow-y-auto pr-1 scrollbar-thin">
-								<div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
+								<div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
 									{metadata.following.map((profile) => (
 										<div
 											key={profile.id}
