@@ -31,6 +31,7 @@ import { Route as ApiStatusRouteImport } from './routes/api/status'
 import { Route as ApiSearchDiscussionRouteImport } from './routes/api/search-discussion'
 import { Route as ApiQueryRouteImport } from './routes/api/query'
 import { Route as ApiProfileHydrateRouteImport } from './routes/api/profile-hydrate'
+import { Route as ApiProfileAnalysisMetadataRouteImport } from './routes/api/profile-analysis-metadata'
 import { Route as ApiProfileAnalysisRouteImport } from './routes/api/profile-analysis'
 import { Route as ApiPeriodDigestRouteImport } from './routes/api/period-digest'
 import { Route as ApiNetworkMapRouteImport } from './routes/api/network-map'
@@ -155,6 +156,12 @@ const ApiProfileHydrateRoute = ApiProfileHydrateRouteImport.update({
   path: '/api/profile-hydrate',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiProfileAnalysisMetadataRoute =
+  ApiProfileAnalysisMetadataRouteImport.update({
+    id: '/api/profile-analysis-metadata',
+    path: '/api/profile-analysis-metadata',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiProfileAnalysisRoute = ApiProfileAnalysisRouteImport.update({
   id: '/api/profile-analysis',
   path: '/api/profile-analysis',
@@ -250,6 +257,7 @@ export interface FileRoutesByFullPath {
   '/api/network-map': typeof ApiNetworkMapRoute
   '/api/period-digest': typeof ApiPeriodDigestRoute
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
+  '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
   '/api/query': typeof ApiQueryRoute
   '/api/search-discussion': typeof ApiSearchDiscussionRoute
@@ -287,6 +295,7 @@ export interface FileRoutesByTo {
   '/api/network-map': typeof ApiNetworkMapRoute
   '/api/period-digest': typeof ApiPeriodDigestRoute
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
+  '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
   '/api/query': typeof ApiQueryRoute
   '/api/search-discussion': typeof ApiSearchDiscussionRoute
@@ -325,6 +334,7 @@ export interface FileRoutesById {
   '/api/network-map': typeof ApiNetworkMapRoute
   '/api/period-digest': typeof ApiPeriodDigestRoute
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
+  '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
   '/api/query': typeof ApiQueryRoute
   '/api/search-discussion': typeof ApiSearchDiscussionRoute
@@ -364,6 +374,7 @@ export interface FileRouteTypes {
     | '/api/network-map'
     | '/api/period-digest'
     | '/api/profile-analysis'
+    | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
     | '/api/query'
     | '/api/search-discussion'
@@ -401,6 +412,7 @@ export interface FileRouteTypes {
     | '/api/network-map'
     | '/api/period-digest'
     | '/api/profile-analysis'
+    | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
     | '/api/query'
     | '/api/search-discussion'
@@ -438,6 +450,7 @@ export interface FileRouteTypes {
     | '/api/network-map'
     | '/api/period-digest'
     | '/api/profile-analysis'
+    | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
     | '/api/query'
     | '/api/search-discussion'
@@ -476,6 +489,7 @@ export interface RootRouteChildren {
   ApiNetworkMapRoute: typeof ApiNetworkMapRoute
   ApiPeriodDigestRoute: typeof ApiPeriodDigestRoute
   ApiProfileAnalysisRoute: typeof ApiProfileAnalysisRoute
+  ApiProfileAnalysisMetadataRoute: typeof ApiProfileAnalysisMetadataRoute
   ApiProfileHydrateRoute: typeof ApiProfileHydrateRoute
   ApiQueryRoute: typeof ApiQueryRoute
   ApiSearchDiscussionRoute: typeof ApiSearchDiscussionRoute
@@ -641,6 +655,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiProfileHydrateRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/profile-analysis-metadata': {
+      id: '/api/profile-analysis-metadata'
+      path: '/api/profile-analysis-metadata'
+      fullPath: '/api/profile-analysis-metadata'
+      preLoaderRoute: typeof ApiProfileAnalysisMetadataRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/profile-analysis': {
       id: '/api/profile-analysis'
       path: '/api/profile-analysis'
@@ -764,6 +785,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiNetworkMapRoute: ApiNetworkMapRoute,
   ApiPeriodDigestRoute: ApiPeriodDigestRoute,
   ApiProfileAnalysisRoute: ApiProfileAnalysisRoute,
+  ApiProfileAnalysisMetadataRoute: ApiProfileAnalysisMetadataRoute,
   ApiProfileHydrateRoute: ApiProfileHydrateRoute,
   ApiQueryRoute: ApiQueryRoute,
   ApiSearchDiscussionRoute: ApiSearchDiscussionRoute,
