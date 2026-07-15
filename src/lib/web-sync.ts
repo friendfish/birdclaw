@@ -117,7 +117,8 @@ export function parseWebSyncKind(value: unknown): WebSyncKind | null {
 		value === "mentions" ||
 		value === "likes" ||
 		value === "bookmarks" ||
-		value === "dms"
+		value === "dms" ||
+		value === "following"
 		? value
 		: null;
 }
@@ -133,7 +134,7 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 	timeline: {
 		label: "Home timeline",
 		accountAware: true,
-		run: (account, _options, runtime) =>
+		run: (account, _options, _runtime) =>
 			Effect.gen(function* () {
 				const result = yield* syncHomeTimelineEffect({
 					account,
@@ -264,7 +265,7 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 function syncSavedCollection(
 	kind: "likes" | "bookmarks",
 	account: string | undefined,
-	runtime: ServerRuntimeServices,
+	_runtime: ServerRuntimeServices,
 ): Effect.Effect<WebSyncStep[], unknown> {
 	return Effect.gen(function* () {
 		const result = yield* syncTimelineCollectionEffect({
