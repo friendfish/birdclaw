@@ -46,7 +46,6 @@ const links = [
 	{ to: "/profile-analyze", label: "Analyse", icon: UserSearch },
 	{ to: "/network-map", label: "Map", icon: Globe2 },
 	{ to: "/data-sources", label: "Sources", icon: Database },
-	{ to: "/config", label: "Config", icon: Settings },
 	{ to: "/", label: "Home", icon: Home },
 	{ to: "/mentions", label: "Mentions", icon: Bell },
 	{ to: "/likes", label: "Likes", icon: Heart },
@@ -55,6 +54,7 @@ const links = [
 	{ to: "/rate-limits", label: "Rate Limits", icon: Gauge },
 	{ to: "/dms", label: "DMs", icon: Mail },
 	{ to: "/blocks", label: "Blocks", icon: ShieldOff },
+	{ to: "/config", label: "Config", icon: Settings },
 ] as const;
 
 export function AppNav({ compact = false }: { compact?: boolean }) {
