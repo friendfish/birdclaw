@@ -1268,8 +1268,7 @@ export function streamPeriodDigestEffect(
 		const latestContext = latestCached?.value.context;
 		if (
 			latestCached &&
-			latestContext &&
-			isFreshDigestCache(latestCached.value.updatedAt ?? latestCached.updatedAt)
+			latestContext
 		) {
 			const result = yield* tryDigestSync(() =>
 				cachedDigestResult(latestCached, latestContext),
