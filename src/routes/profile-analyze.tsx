@@ -3,6 +3,7 @@ import { Loader2, RefreshCw, Search, UserSearch, Sparkles, ArrowLeft } from "luc
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AvatarChip } from "#/components/AvatarChip";
 import { MarkdownViewer } from "#/components/MarkdownViewer";
+import { SyncNowButton } from "#/components/SyncNowButton";
 import {
 	cleanProfileHandle,
 	formatProfileAnalysisCounts,
@@ -289,10 +290,30 @@ function ProfileAnalyzeRoute() {
 
 					{/* Section 2: Following List */}
 					<div className="flex flex-col gap-3">
-						<h2 className="text-[16px] font-bold text-[var(--ink)] flex items-center gap-2 border-b border-[var(--line)] pb-2">
-							<RefreshCw className="size-4 text-[var(--brand)]" />
-							我的关注对象 ({metadata?.following.length || 0})
-						</h2>
+						<div className="flex items-center justify-between border-b border-[var(--line)] pb-2">
+							<h2 className="text-[16px] font-bold text-[var(--ink)] flex items-center gap-2">
+								<UserSearch className="size-4 text-[var(--brand)]" />
+								我的关注对象 ({metadata?.following.length || 0})
+							</h2>
+							<SyncNowButton
+								kind="following"
+								label="同步关注"
+								onSynced={() => {
+									// Trigger reloading metadata list
+									fetch("/api/profile-analysis-metadata")
+										.then((res) => res.json())
+										.then((data) => {
+											if (data.ok) {
+												setMetadata({
+													following: data.following || [],
+													analyzed: data.analyzed || [],
+												});
+											}
+										})
+										.catch((err) => console.error("Failed to reload metadata", err));
+								}}
+							/>
+						</div>
 						{loadingMetadata ? (
 							<div className="flex items-center gap-2 text-[14px] text-[var(--ink-soft)] py-4">
 								<Loader2 className="size-4 animate-spin" />

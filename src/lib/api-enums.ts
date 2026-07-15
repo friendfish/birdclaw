@@ -28,5 +28,6 @@ export const webSyncKindSchema = z.enum([
 	"likes",
 	"bookmarks",
 	"dms",
+	"following",
 ]);
 export type WebSyncKind = z.infer<typeof webSyncKindSchema>;
