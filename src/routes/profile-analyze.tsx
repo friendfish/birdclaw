@@ -332,70 +332,79 @@ function ProfileAnalyzeRoute() {
 				</div>
 			) : (
 				<div className="flex flex-col gap-6">
-					{/* Custom Report Header with Avatar (Blue Box 2) and Snapshots (Red Box 1) */}
-					<div className="flex items-center justify-between border-b border-[var(--line)] pb-4 flex-wrap gap-4">
-						<div className="flex items-center gap-4">
-							{/* Avatar and User Profile Details (用户名 + @id) */}
-							<div className="flex items-center gap-3">
-								<AvatarChip
-									profileId={profileInfo?.id}
-									avatarUrl={profileInfo?.avatarUrl}
-									name={profileInfo?.displayName || profileInfo?.handle || submittedHandle}
-									hue={profileInfo?.avatarHue ?? stableHue(submittedHandle)}
-									size="large"
-								/>
-								<div className="flex flex-col min-w-0">
-									<span className="font-bold text-[18px] text-[var(--ink)] truncate max-w-[250px] leading-snug">
-										{profileInfo?.displayName || profileInfo?.handle || submittedHandle}
+					{/* Twitter/X Style Profile Header Card */}
+					<div className="border border-[var(--line)] rounded-xl overflow-hidden bg-[var(--panel)] shadow-sm">
+						{/* Cover Strip */}
+						<div
+							className="h-24 sm:h-28 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--bg-active)_68%,var(--accent)_32%),color-mix(in_srgb,var(--bg)_70%,var(--accent)_30%))]"
+							data-testid="profile-cover"
+						/>
+						
+						{/* Profile Info Details Area */}
+						<div className="px-4 pb-4">
+							<div className="flex items-start justify-between gap-3 -mt-6 sm:-mt-8">
+								<div className="flex min-w-0 items-start gap-3">
+									{/* Overlapping Avatar with White Ring */}
+									<span className="inline-grid rounded-full ring-4 ring-[var(--panel)]">
+										<AvatarChip
+											profileId={profileInfo?.id}
+											avatarUrl={profileInfo?.avatarUrl}
+											name={profileInfo?.displayName || profileInfo?.handle || submittedHandle}
+											hue={profileInfo?.avatarHue ?? stableHue(submittedHandle)}
+											size="large"
+										/>
 									</span>
-									<span className="text-[13px] text-[var(--ink-soft)] truncate leading-none mt-0.5">
-										@{profileInfo?.handle || submittedHandle}
+									
+									{/* User Name & @id Handle Stack */}
+									<div className="min-w-0 pt-7 sm:pt-9">
+										<h1 className="m-0 text-[18px] sm:text-[20px] font-bold text-[var(--ink)] leading-snug truncate">
+											{profileInfo?.displayName || profileInfo?.handle || submittedHandle}
+										</h1>
+										<div className="text-[13px] sm:text-[14px] text-[var(--ink-soft)] leading-normal truncate mt-0.5">
+											@{profileInfo?.handle || submittedHandle}
+										</div>
+									</div>
+								</div>
+
+								{/* Right Side Actions / Dropdowns */}
+								<div className="mt-8 sm:mt-10 flex shrink-0 items-center gap-2">
+									{/* "个人资料分析" Label */}
+									<span className="hidden md:inline-block text-[11px] uppercase tracking-wider font-semibold text-[var(--brand)] bg-[var(--brand-soft)]/20 px-2.5 py-1 rounded-full">
+										个人资料分析
 									</span>
+
+									{/* Snapshot selector dropdown */}
+									{snapshots.length > 0 ? (
+										<select
+											className={`${secondaryButtonClass} cursor-pointer bg-[var(--bg)] pr-8 appearance-none bg-no-repeat bg-[right_12px_center] text-[13px] sm:text-[14px] font-bold`}
+											style={{
+												backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
+												backgroundSize: "1.25rem",
+											}}
+											value={selectedSnapshot ? snapshots.indexOf(selectedSnapshot).toString() : "current"}
+											onChange={(e) => {
+												const val = e.target.value;
+												if (val === "current") {
+													setSelectedSnapshot(null);
+												} else {
+													const index = parseInt(val, 10);
+													if (!isNaN(index) && snapshots[index]) {
+														setSelectedSnapshot(snapshots[index]);
+													}
+												}
+											}}
+										>
+											<option value="current">最新实时分析 (Current)</option>
+											{snapshots.map((snap, i) => (
+												<option key={snap.cacheKey} value={i.toString()}>
+													历史快照: {new Date(snap.updatedAt).toLocaleDateString()}
+												</option>
+											))}
+										</select>
+									) : null}
 								</div>
 							</div>
-
-							{/* Vertical Separator */}
-							<div className="h-8 w-[1px] bg-[var(--line)] hidden sm:block" />
-
-							{/* Section title (个人资料分析) */}
-							<div className="flex flex-col">
-								<span className="text-[12px] uppercase tracking-wider font-semibold text-[var(--brand)] bg-[var(--brand-soft)]/20 px-2.5 py-1 rounded-full w-fit">
-									个人资料分析
-								</span>
-							</div>
 						</div>
-
-						{/* Snapshot dropdown (Red Box 1) aligned right */}
-						{snapshots.length > 0 ? (
-							<div className="flex items-center gap-2">
-								<select
-									className={`${secondaryButtonClass} cursor-pointer bg-[var(--bg)] pr-8 appearance-none bg-no-repeat bg-[right_12px_center] text-[14px] font-bold`}
-									style={{
-										backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
-										backgroundSize: "1.25rem",
-									}}
-									value={selectedSnapshot ? snapshots.indexOf(selectedSnapshot).toString() : "current"}
-									onChange={(e) => {
-										const val = e.target.value;
-										if (val === "current") {
-											setSelectedSnapshot(null);
-										} else {
-											const index = parseInt(val, 10);
-											if (!isNaN(index) && snapshots[index]) {
-												setSelectedSnapshot(snapshots[index]);
-											}
-										}
-									}}
-								>
-									<option value="current">最新实时分析 (Current)</option>
-									{snapshots.map((snap, i) => (
-										<option key={snap.cacheKey} value={i.toString()}>
-											历史快照: {new Date(snap.updatedAt).toLocaleDateString()} ({snap.model.split("/").pop()})
-										</option>
-									))}
-								</select>
-							</div>
-						) : null}
 					</div>
 
 					{/* Profile Analysis Status Line (shows loading status, etc.) */}
