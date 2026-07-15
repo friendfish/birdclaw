@@ -993,7 +993,12 @@ function getDigestFreshnessMs(): number {
 	return DEFAULT_DIGEST_FRESHNESS_MS;
 }
 
-function isFreshDigestCache(updatedAt: string) {
+function isFreshDigestCache(updatedAt: string, period?: string) {
+	const normalized = period?.trim().toLowerCase();
+	// Historical periods (yesterday, week) never expire automatically on tab switch
+	if (normalized === "yesterday" || normalized === "week" || normalized === "7d") {
+		return true;
+	}
 	const timestamp = Date.parse(updatedAt);
 	return (
 		Number.isFinite(timestamp) &&
@@ -1286,7 +1291,11 @@ export function streamPeriodDigestEffect(
 		const latestContext = latestCached?.value.context;
 		if (
 			latestCached &&
-			latestContext
+			latestContext &&
+			isFreshDigestCache(
+				latestCached.value.updatedAt ?? latestCached.updatedAt,
+				resolvedOptions.period,
+			)
 		) {
 			const result = yield* tryDigestSync(() =>
 				cachedDigestResult(latestCached, latestContext),
