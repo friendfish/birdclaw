@@ -12,6 +12,7 @@ import {
 import NativeSqliteDatabase from "./sqlite";
 import { syncTimelineCollectionEffect } from "./timeline-collections-live";
 import { syncHomeTimelineEffect } from "./timeline-live";
+import { syncFollowGraphEffect } from "./follow-graph";
 
 import type { WebSyncKind } from "./api-enums";
 export type { WebSyncKind } from "./api-enums";
@@ -206,6 +207,28 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 		accountAware: true,
 		run: (account, _options, runtime) =>
 			syncSavedCollection("bookmarks", account, runtime),
+	},
+	following: {
+		label: "Following",
+		accountAware: true,
+		run: (account) =>
+			Effect.gen(function* () {
+				const result = yield* syncFollowGraphEffect({
+					direction: "following",
+					account,
+					mode: "bird",
+					yes: true,
+					refresh: true,
+				});
+				return [
+					{
+						kind: "following",
+						label: "Following list",
+						count: readNumber(result, "count"),
+						source: readString(result, "source"),
+					},
+				];
+			}),
 	},
 	dms: {
 		label: "Direct messages",
