@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { tryPromise } from "./effect-runtime";
+import { getBirdclawConfig } from "./config";
 import {
 	defaultRuntimeServices,
 	type RuntimeServices,
@@ -181,7 +182,9 @@ export function processOpenAIResponseSseChunk(
 				let parsed = JSON.parse(data) as Record<string, unknown>;
 				let shouldHandle = true;
 				if (Array.isArray(parsed.choices)) {
-					const choice = parsed.choices[0] as Record<string, unknown> | undefined;
+					const choice = parsed.choices[0] as
+						| Record<string, unknown>
+						| undefined;
 					if (choice) {
 						const delta = choice.delta as Record<string, unknown> | undefined;
 						if (delta && typeof delta.content === "string") {
@@ -278,27 +281,56 @@ export function requestOpenAIResponseEffect({
 	runtime?: RuntimeServices;
 }): Effect.Effect<Response, Error> {
 	return Effect.gen(function* () {
-		const apiKey = runtime.env("OPENAI_API_KEY");
+		const aiConfig = getBirdclawConfig().ai || {};
+		const apiKey = aiConfig.apiKey?.trim() || runtime.env("OPENAI_API_KEY");
 		if (!apiKey) {
 			return yield* Effect.fail(new Error("OPENAI_API_KEY is not set"));
 		}
-		const baseUrl = resolveOpenAIBaseUrl(runtime.env);
-		const apiType = runtime.env("BIRDCLAW_OPENAI_API_TYPE")?.trim().toLowerCase();
+		const baseUrl =
+			aiConfig.baseUrl?.trim() || resolveOpenAIBaseUrl(runtime.env);
+		const apiType = runtime
+			.env("BIRDCLAW_OPENAI_API_TYPE")
+			?.trim()
+			.toLowerCase();
 		const isChatCompletion =
 			apiType === "chat" ||
 			apiType === "chat/completions" ||
+			aiConfig.provider === "deepseek" ||
+			aiConfig.provider === "google" ||
+			aiConfig.provider === "openrouter" ||
 			(baseUrl !== DEFAULT_OPENAI_BASE_URL && apiType !== "responses");
 
-		const url = isChatCompletion ? `${baseUrl}/chat/completions` : `${baseUrl}/responses`;
+		const url = isChatCompletion
+			? `${baseUrl}/chat/completions`
+			: `${baseUrl}/responses`;
 		let finalBody = body;
 		if (isChatCompletion && body && typeof body === "object") {
-			const original = body as Record<string, any>;
+			const { input, max_output_tokens, ...rest } = body as Record<string, any>;
 			finalBody = {
-				model: original.model,
-				messages: Array.isArray(original.input) ? original.input : [],
-				stream: original.stream,
-				...(original.max_output_tokens !== undefined ? { max_tokens: original.max_output_tokens } : {}),
+				...rest,
+				messages: Array.isArray(input) ? input : [],
+				...(max_output_tokens !== undefined
+					? { max_tokens: max_output_tokens }
+					: {}),
 			};
+
+			// Google Gemini, OpenRouter, DeepSeek and other third-party OpenAI-compatible endpoints
+			// do not support OpenAI Responses API specific / proprietary fields and fail with 400.
+			// Specifically, Google Gemini rejects any unknown JSON keys.
+			const isStrictOpenAICompatible =
+				aiConfig.provider === "google" ||
+				aiConfig.provider === "openrouter" ||
+				aiConfig.provider === "deepseek" ||
+				baseUrl.includes("googleapis.com") ||
+				baseUrl.includes("openrouter.ai") ||
+				baseUrl.includes("deepseek.com") ||
+				(baseUrl !== DEFAULT_OPENAI_BASE_URL && aiConfig.provider !== "openai");
+
+			if (isStrictOpenAICompatible) {
+				delete (finalBody as any).reasoning;
+				delete (finalBody as any).store;
+				delete (finalBody as any).service_tier;
+			}
 		}
 
 		debugLog(runtime.env, `POST ${url}`);

@@ -5,6 +5,7 @@ import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBirdclawPathsForTests } from "./config";
+import * as configModule from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 import {
 	__test__,
@@ -40,9 +41,19 @@ function streamResponse(text: string) {
 	);
 }
 
+let originalOpenaiBaseUrl: string | undefined;
+let originalBirdclawOpenaiBaseUrl: string | undefined;
+let originalBirdclawOpenaiApiType: string | undefined;
+
 beforeEach(() => {
 	setupTempHome();
 	process.env.OPENAI_API_KEY = "test-key";
+	originalOpenaiBaseUrl = process.env.OPENAI_BASE_URL;
+	originalBirdclawOpenaiBaseUrl = process.env.BIRDCLAW_OPENAI_BASE_URL;
+	originalBirdclawOpenaiApiType = process.env.BIRDCLAW_OPENAI_API_TYPE;
+	delete process.env.OPENAI_BASE_URL;
+	delete process.env.BIRDCLAW_OPENAI_BASE_URL;
+	delete process.env.BIRDCLAW_OPENAI_API_TYPE;
 });
 
 afterEach(() => {
@@ -55,6 +66,24 @@ afterEach(() => {
 	delete process.env.BIRDCLAW_DIGEST_LANGUAGE;
 	delete process.env.BIRDCLAW_OPENAI_REASONING_EFFORT;
 	delete process.env.BIRDCLAW_OPENAI_SERVICE_TIER;
+	delete process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS;
+
+	if (originalOpenaiBaseUrl !== undefined) {
+		process.env.OPENAI_BASE_URL = originalOpenaiBaseUrl;
+	} else {
+		delete process.env.OPENAI_BASE_URL;
+	}
+	if (originalBirdclawOpenaiBaseUrl !== undefined) {
+		process.env.BIRDCLAW_OPENAI_BASE_URL = originalBirdclawOpenaiBaseUrl;
+	} else {
+		delete process.env.BIRDCLAW_OPENAI_BASE_URL;
+	}
+	if (originalBirdclawOpenaiApiType !== undefined) {
+		process.env.BIRDCLAW_OPENAI_API_TYPE = originalBirdclawOpenaiApiType;
+	} else {
+		delete process.env.BIRDCLAW_OPENAI_API_TYPE;
+	}
+
 	vi.unstubAllGlobals();
 	for (const tempRoot of tempRoots.splice(0)) {
 		rmSync(tempRoot, { recursive: true, force: true });
@@ -704,5 +733,46 @@ describe("period digest", () => {
 		);
 		expect(empty.digest.title).toBe("[ja]");
 		expect(empty.digest.summary).toBe("[ja]");
+	});
+
+	describe("digest freshness configuration", () => {
+		it("defaults to 5 minutes", () => {
+			expect(__test__.getDigestFreshnessMs()).toBe(5 * 60 * 1000);
+		});
+
+		it("respects BIRDCLAW_DIGEST_FRESHNESS_SECONDS environment variable", () => {
+			process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS = "3600";
+			expect(__test__.getDigestFreshnessMs()).toBe(3600 * 1000);
+			delete process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS;
+		});
+
+		it("respects config freshnessSeconds", () => {
+			const spy = vi.spyOn(configModule, "getBirdclawConfig").mockReturnValue({
+				digest: {
+					freshnessSeconds: 1800,
+				},
+			});
+
+			try {
+				expect(__test__.getDigestFreshnessMs()).toBe(1800 * 1000);
+			} finally {
+				spy.mockRestore();
+			}
+		});
+
+		it("validates cache freshness correctly", () => {
+			// 5 minutes default
+			const now = Date.now();
+			const freshTime = new Date(now - 4 * 60 * 1000).toISOString();
+			const staleTime = new Date(now - 6 * 60 * 1000).toISOString();
+
+			expect(__test__.isFreshDigestCache(freshTime)).toBe(true);
+			expect(__test__.isFreshDigestCache(staleTime)).toBe(false);
+
+			// Long freshness (24h)
+			process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS = String(24 * 3600);
+			expect(__test__.isFreshDigestCache(staleTime)).toBe(true);
+			delete process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS;
+		});
 	});
 });

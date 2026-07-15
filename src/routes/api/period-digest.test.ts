@@ -3,6 +3,10 @@ import { Effect } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getRouteHandler } from "#/test/route-handlers";
 
+vi.mock("#/lib/config", () => ({
+	getBirdclawConfig: () => ({}),
+}));
+
 const maybeAutoUpdateBackupMock = vi.fn();
 const streamPeriodDigestMock = vi.fn();
 

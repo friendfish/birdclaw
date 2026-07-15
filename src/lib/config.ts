@@ -28,11 +28,20 @@ export interface BirdclawConfig {
 	actions?: {
 		transport?: ActionsTransport;
 	};
+	digest?: {
+		freshnessSeconds?: number;
+	};
 	backup?: {
 		repoPath?: string;
 		remote?: string;
 		autoSync?: boolean;
 		staleAfterSeconds?: number;
+	};
+	ai?: {
+		provider?: string;
+		baseUrl?: string;
+		apiKey?: string;
+		model?: string;
 	};
 }
 

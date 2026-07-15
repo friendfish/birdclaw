@@ -12,6 +12,7 @@ import {
 	Link as LinkIcon,
 	Mail,
 	MessagesSquare,
+	Settings,
 	ShieldOff,
 	UserSearch,
 } from "lucide-react";
@@ -53,6 +54,7 @@ const links = [
 	{ to: "/rate-limits", label: "Rate Limits", icon: Gauge },
 	{ to: "/dms", label: "DMs", icon: Mail },
 	{ to: "/blocks", label: "Blocks", icon: ShieldOff },
+	{ to: "/config", label: "Config", icon: Settings },
 ] as const;
 
 export function AppNav({ compact = false }: { compact?: boolean }) {

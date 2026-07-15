@@ -38,9 +38,16 @@ function streamResponse(text: string) {
 	);
 }
 
+let originalOpenaiBaseUrl: string | undefined;
+let originalBirdclawOpenaiBaseUrl: string | undefined;
+
 beforeEach(() => {
 	setupTempHome();
 	process.env.OPENAI_API_KEY = "test-key";
+	originalOpenaiBaseUrl = process.env.OPENAI_BASE_URL;
+	originalBirdclawOpenaiBaseUrl = process.env.BIRDCLAW_OPENAI_BASE_URL;
+	delete process.env.OPENAI_BASE_URL;
+	delete process.env.BIRDCLAW_OPENAI_BASE_URL;
 });
 
 afterEach(() => {
@@ -51,6 +58,18 @@ afterEach(() => {
 	delete process.env.BIRDCLAW_AI_MODEL;
 	delete process.env.BIRDCLAW_OPENAI_REASONING_EFFORT;
 	delete process.env.BIRDCLAW_OPENAI_SERVICE_TIER;
+
+	if (originalOpenaiBaseUrl !== undefined) {
+		process.env.OPENAI_BASE_URL = originalOpenaiBaseUrl;
+	} else {
+		delete process.env.OPENAI_BASE_URL;
+	}
+	if (originalBirdclawOpenaiBaseUrl !== undefined) {
+		process.env.BIRDCLAW_OPENAI_BASE_URL = originalBirdclawOpenaiBaseUrl;
+	} else {
+		delete process.env.BIRDCLAW_OPENAI_BASE_URL;
+	}
+
 	vi.unstubAllGlobals();
 	for (const tempRoot of tempRoots.splice(0)) {
 		rmSync(tempRoot, { recursive: true, force: true });

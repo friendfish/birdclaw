@@ -785,15 +785,10 @@ export function listHomeTimelineViaBird(options: {
 }
 
 export const listUserTweetsViaBirdEffect = Effect.fn("bird.listUserTweets")(
-	function* ({
-		handle,
-		maxResults,
-	}: {
-		handle: string;
-		maxResults: number;
-	}) {
+	function* ({ handle, maxResults }: { handle: string; maxResults: number }) {
 		const target = handle.trim().replace(/^@/, "");
-		const args = ["user-tweets", target, "-n", String(maxResults)];
+		const cappedResults = Math.min(maxResults, 200);
+		const args = ["user-tweets", target, "-n", String(cappedResults)];
 		const stdout = yield* runBirdTweetJsonCommandEffect(args);
 		const payload = yield* parseBirdJsonEffect(stdout);
 		return yield* normalizeBirdTweetsPayloadEffect(payload, "user-tweets");
@@ -1202,7 +1197,7 @@ export const lookupProfileViaBirdEffect = Effect.fn("bird.lookupProfile")(
 				]);
 			}),
 			Effect.map((stdout) => ({ ok: true as const, stdout })),
-			Effect.catchAll(() => Effect.succeed({ ok: false as const }))
+			Effect.catchAll(() => Effect.succeed({ ok: false as const })),
 		);
 
 		if (stdoutResult.ok) {
@@ -1221,12 +1216,12 @@ export const lookupProfileViaBirdEffect = Effect.fn("bird.lookupProfile")(
 			"--json",
 		]).pipe(
 			Effect.map((stdout) => ({ ok: true as const, stdout })),
-			Effect.catchAll(() => Effect.succeed({ ok: false as const }))
+			Effect.catchAll(() => Effect.succeed({ ok: false as const })),
 		);
 
 		if (tweetsStdoutResult.ok) {
 			const parsed = yield* parseBirdJsonEffect(tweetsStdoutResult.stdout).pipe(
-				Effect.catchAll(() => Effect.succeed(null))
+				Effect.catchAll(() => Effect.succeed(null)),
 			);
 			if (Array.isArray(parsed) && parsed.length > 0) {
 				const tweet = parsed[0];
