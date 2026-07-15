@@ -1146,6 +1146,7 @@ Requirements:
 - Cite claims with tweet ids at sentence ends, e.g. (1234567890). Cite handles only when they are in the dataset.
 - Do not overstate beyond the supplied data.
 - If conversation context is sparse, say so.
+- Use level 2 (##) and level 3 (###) Markdown headings only. Do not use headings smaller than level 3 (avoid #### or smaller headings).
 - After Markdown, output a blank line, a line containing only three hyphens, then one compact JSON object.
 - JSON shape: { "title": string, "summary": string, "voice": string, "themes": [{ "title": string, "summary": string, "tweetIds": string[], "handles": string[] }], "conversationStyle": string, "notableSignals": string[], "risks": string[], "followUps": string[], "sourceTweetIds": string[], "sourceHandles": string[] }${langInstruction}
 

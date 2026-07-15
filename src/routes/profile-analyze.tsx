@@ -32,7 +32,10 @@ function stableHue(value: string) {
 }
 
 function stripMarkdownHeader(md: string, handle: string): string {
-	const lines = md.split("\n");
+	// Automatically promote any headings level 4 or lower (H4, H5, H6) to H3 (###) for better visual prominence
+	let processed = md.replace(/^#{4,}\s+/gm, "### ");
+
+	const lines = processed.split("\n");
 	if (lines.length > 0 && lines[0].startsWith("#")) {
 		const firstLineLower = lines[0].toLowerCase();
 		if (
@@ -43,7 +46,7 @@ function stripMarkdownHeader(md: string, handle: string): string {
 			return lines.slice(1).join("\n").trim();
 		}
 	}
-	return md;
+	return processed.trim();
 }
 
 export const Route = createFileRoute("/profile-analyze")({
