@@ -243,27 +243,27 @@ function ProfileAnalyzeRoute() {
 								<span>加载中...</span>
 							</div>
 						) : metadata?.analyzed && metadata.analyzed.length > 0 ? (
-							<div className="max-h-[175px] overflow-y-auto pr-1 scrollbar-thin">
-								<div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
+							<div className="max-h-[350px] overflow-y-auto pr-1 scrollbar-thin">
+								<div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
 									{metadata.analyzed.map((profile) => (
 										<div
 											key={profile.id}
 											onClick={() => handleSelectProfile(profile.handle)}
-											className="flex items-center gap-2 p-2 rounded-lg border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--bg-active)] cursor-pointer transition-all min-w-0 h-[46px]"
+											className="flex flex-col items-center text-center p-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--bg-active)] cursor-pointer transition-all min-w-0 h-[105px] justify-center"
 										>
 											<AvatarChip
 												profileId={profile.id}
 												avatarUrl={profile.avatarUrl}
 												name={profile.displayName || profile.handle}
 												hue={profile.avatarHue}
-												size="small"
+												size="default"
 											/>
-											<div className="min-w-0 flex-1 leading-tight">
-												<div className="font-bold text-[12px] text-[var(--ink)] truncate">
+											<div className="min-w-0 w-full text-center leading-tight mt-1.5">
+												<div className="font-bold text-[12px] text-[var(--ink)] truncate w-full">
 													{profile.displayName || profile.handle}
 												</div>
-												<div className="text-[10px] text-[var(--ink-soft)] truncate">
-													@{profile.handle}
+												<div className="text-[10px] text-[var(--ink-soft)] truncate w-full mt-0.5">
+													{profile.lastAnalyzedAt ? new Date(profile.lastAnalyzedAt).toLocaleDateString() : ""}
 												</div>
 											</div>
 										</div>
@@ -289,26 +289,26 @@ function ProfileAnalyzeRoute() {
 								<span>加载中...</span>
 							</div>
 						) : metadata?.following && metadata.following.length > 0 ? (
-							<div className="max-h-[500px] overflow-y-auto pr-1 scrollbar-thin">
-								<div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
+							<div className="max-h-[550px] overflow-y-auto pr-1 scrollbar-thin">
+								<div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
 									{metadata.following.map((profile) => (
 										<div
 											key={profile.id}
 											onClick={() => handleSelectProfile(profile.handle)}
-											className="flex items-center gap-2 p-2 rounded-lg border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--bg-active)] cursor-pointer transition-all min-w-0 h-[46px]"
+											className="flex flex-col items-center text-center p-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--bg-active)] cursor-pointer transition-all min-w-0 h-[105px] justify-center"
 										>
 											<AvatarChip
 												profileId={profile.id}
 												avatarUrl={profile.avatarUrl}
 												name={profile.displayName || profile.handle}
 												hue={profile.avatarHue}
-												size="small"
+												size="default"
 											/>
-											<div className="min-w-0 flex-1 leading-tight">
-												<span className="font-bold text-[12px] text-[var(--ink)] block truncate">
+											<div className="min-w-0 w-full text-center leading-tight mt-1.5">
+												<span className="font-bold text-[12px] text-[var(--ink)] block truncate w-full">
 													{profile.displayName || profile.handle}
 												</span>
-												<span className="text-[10px] text-[var(--ink-soft)] block truncate">
+												<span className="text-[10px] text-[var(--ink-soft)] block truncate w-full mt-0.5">
 													@{profile.handle}
 												</span>
 											</div>
