@@ -334,17 +334,35 @@ function ProfileAnalyzeRoute() {
 				<div className="flex flex-col gap-6">
 					{/* Custom Report Header with Avatar (Blue Box 2) and Snapshots (Red Box 1) */}
 					<div className="flex items-center justify-between border-b border-[var(--line)] pb-4 flex-wrap gap-4">
-						<div className="flex items-center gap-3">
-							<AvatarChip
-								profileId={profileInfo?.id}
-								avatarUrl={profileInfo?.avatarUrl}
-								name={profileInfo?.displayName || profileInfo?.handle || submittedHandle}
-								hue={profileInfo?.avatarHue ?? stableHue(submittedHandle)}
-								size="large"
-							/>
-							<h1 className="text-[20px] sm:text-[24px] font-bold text-[var(--ink)]">
-								@{profileInfo?.handle || submittedHandle} 个人资料分析
-							</h1>
+						<div className="flex items-center gap-4">
+							{/* Avatar and User Profile Details (用户名 + @id) */}
+							<div className="flex items-center gap-3">
+								<AvatarChip
+									profileId={profileInfo?.id}
+									avatarUrl={profileInfo?.avatarUrl}
+									name={profileInfo?.displayName || profileInfo?.handle || submittedHandle}
+									hue={profileInfo?.avatarHue ?? stableHue(submittedHandle)}
+									size="large"
+								/>
+								<div className="flex flex-col min-w-0">
+									<span className="font-bold text-[18px] text-[var(--ink)] truncate max-w-[250px] leading-snug">
+										{profileInfo?.displayName || profileInfo?.handle || submittedHandle}
+									</span>
+									<span className="text-[13px] text-[var(--ink-soft)] truncate leading-none mt-0.5">
+										@{profileInfo?.handle || submittedHandle}
+									</span>
+								</div>
+							</div>
+
+							{/* Vertical Separator */}
+							<div className="h-8 w-[1px] bg-[var(--line)] hidden sm:block" />
+
+							{/* Section title (个人资料分析) */}
+							<div className="flex flex-col">
+								<span className="text-[12px] uppercase tracking-wider font-semibold text-[var(--brand)] bg-[var(--brand-soft)]/20 px-2.5 py-1 rounded-full w-fit">
+									个人资料分析
+								</span>
+							</div>
 						</div>
 
 						{/* Snapshot dropdown (Red Box 1) aligned right */}
