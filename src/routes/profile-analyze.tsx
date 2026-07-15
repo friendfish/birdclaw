@@ -6,7 +6,6 @@ import { MarkdownViewer } from "#/components/MarkdownViewer";
 import {
 	cleanProfileHandle,
 	formatProfileAnalysisCounts,
-	ProfileAnalysisOutput,
 	ProfileAnalysisStatusLine,
 	useProfileAnalysisStream,
 } from "#/components/ProfileAnalysisStream";
@@ -52,6 +51,16 @@ function ProfileAnalyzeRoute() {
 	// Snapshots for selected handle
 	const [snapshots, setSnapshots] = useState<any[]>([]);
 	const [selectedSnapshot, setSelectedSnapshot] = useState<any | null>(null);
+
+	const displayMarkdown = useMemo(() => {
+		const rawMarkdown = selectedSnapshot ? selectedSnapshot.markdown : analysis.markdown;
+		if (!rawMarkdown) return "";
+		const lines = rawMarkdown.split(/\r?\n/);
+		if (lines[0] && lines[0].trim().startsWith("# ")) {
+			return lines.slice(1).join("\n");
+		}
+		return rawMarkdown;
+	}, [selectedSnapshot, analysis.markdown]);
 
 	useEffect(() => {
 		runAnalysisRef.current = analysis.run;
@@ -145,35 +154,6 @@ function ProfileAnalyzeRoute() {
 						</p>
 					</div>
 					<div className={pageHeaderActionsClass}>
-						{submittedHandle && snapshots.length > 0 ? (
-							<select
-								className={`${secondaryButtonClass} cursor-pointer bg-[var(--bg)] pr-8 appearance-none bg-no-repeat bg-[right_12px_center] text-[14px] font-bold`}
-								style={{
-									backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
-									backgroundSize: "1.25rem",
-								}}
-								value={selectedSnapshot ? snapshots.indexOf(selectedSnapshot).toString() : "current"}
-								onChange={(e) => {
-									const val = e.target.value;
-									if (val === "current") {
-										setSelectedSnapshot(null);
-									} else {
-										const index = parseInt(val, 10);
-										if (!isNaN(index) && snapshots[index]) {
-											setSelectedSnapshot(snapshots[index]);
-										}
-									}
-								}}
-							>
-								<option value="current">最新实时分析 (Current)</option>
-								{snapshots.map((snap, i) => (
-									<option key={snap.cacheKey} value={i.toString()}>
-										历史快照: {new Date(snap.updatedAt).toLocaleDateString()} ({snap.model.split("/").pop()})
-									</option>
-								))}
-							</select>
-						) : null}
-
 						<select
 							className={`${secondaryButtonClass} cursor-pointer bg-[var(--bg)] pr-8 appearance-none bg-no-repeat bg-[right_12px_center] text-[14px] font-bold`}
 							style={{
@@ -324,35 +304,94 @@ function ProfileAnalyzeRoute() {
 					</div>
 				</div>
 			) : (
-				<>
-					{selectedSnapshot ? (
-						<div className="flex flex-col gap-4">
-							<div className="flex items-center gap-2 rounded-lg border border-[var(--brand)]/30 bg-[var(--brand-soft)]/20 px-4 py-2.5 text-[14px] text-[var(--brand)]">
-								<Sparkles className="size-4 shrink-0" strokeWidth={1.8} />
-								<span className="font-medium">
-									正在查看历史快照报告（生成于 {new Date(selectedSnapshot.updatedAt).toLocaleString()} · 模型: {selectedSnapshot.model.split("/").pop()}）
-								</span>
-								<button
-									className="ml-auto text-[12px] font-bold underline cursor-pointer hover:opacity-80"
-									onClick={() => setSelectedSnapshot(null)}
-								>
-									返回最新分析
-								</button>
-							</div>
-							<div className="max-w-3xl mt-2">
-								<MarkdownViewer
-									context={analysis.context}
-									markdown={selectedSnapshot.markdown}
+				<div className="flex flex-col gap-4 mt-2">
+					{/* Status line */}
+					{!selectedSnapshot && <ProfileAnalysisStatusLine analysis={analysis} />}
+					
+					{/* Custom Profile Heading with Avatar and Dropdown */}
+					{analysis.context?.profile && (
+						<div className="flex items-center justify-between gap-4 border-b border-[var(--line)] pb-3 mb-2 w-full">
+							<div className="flex items-center gap-3 min-w-0">
+								<AvatarChip
+									profileId={analysis.context.profile.id}
+									avatarUrl={analysis.context.profile.avatarUrl}
+									name={analysis.context.profile.displayName || submittedHandle}
+									hue={analysis.context.profile.avatarHue}
+									size="large"
 								/>
+								<h1 className="text-[20px] font-bold text-[var(--ink)] truncate">
+									@{submittedHandle} 个人资料分析
+								</h1>
 							</div>
+							
+							{/* Dropdown select right-aligned */}
+							{snapshots.length > 0 ? (
+								<div className="shrink-0">
+									<select
+										className={`${secondaryButtonClass} cursor-pointer bg-[var(--bg)] pr-8 appearance-none bg-no-repeat bg-[right_12px_center] text-[14px] font-bold h-9`}
+										style={{
+											backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
+											backgroundSize: "1.25rem",
+										}}
+										value={selectedSnapshot ? snapshots.indexOf(selectedSnapshot).toString() : "current"}
+										onChange={(e) => {
+											const val = e.target.value;
+											if (val === "current") {
+												setSelectedSnapshot(null);
+											} else {
+												const index = parseInt(val, 10);
+												if (!isNaN(index) && snapshots[index]) {
+													setSelectedSnapshot(snapshots[index]);
+												}
+											}
+										}}
+									>
+										<option value="current">最新实时分析 (Current)</option>
+										{snapshots.map((snap, i) => (
+											<option key={snap.cacheKey} value={i.toString()}>
+												历史快照: {new Date(snap.updatedAt).toLocaleDateString()} ({snap.model.split("/").pop()})
+											</option>
+										))}
+									</select>
+								</div>
+							) : null}
+						</div>
+					)}
+
+					{/* Snapshot notification */}
+					{selectedSnapshot && (
+						<div className="flex items-center gap-2 rounded-lg border border-[var(--brand)]/30 bg-[var(--brand-soft)]/20 px-4 py-2.5 text-[14px] text-[var(--brand)]">
+							<Sparkles className="size-4 shrink-0" strokeWidth={1.8} />
+							<span className="font-medium">
+								正在查看历史快照报告（生成于 {new Date(selectedSnapshot.updatedAt).toLocaleString()} · 模型: {selectedSnapshot.model.split("/").pop()}）
+							</span>
+							<button
+								className="ml-auto text-[12px] font-bold underline cursor-pointer hover:opacity-80"
+								onClick={() => setSelectedSnapshot(null)}
+							>
+								返回最新分析
+							</button>
+						</div>
+					)}
+
+					{/* Content body with stripped H1 */}
+					{displayMarkdown ? (
+						<div className="max-w-3xl mt-2">
+							<MarkdownViewer
+								context={analysis.context}
+								markdown={displayMarkdown}
+							/>
 						</div>
 					) : (
-						<>
-							<ProfileAnalysisStatusLine analysis={analysis} />
-							<ProfileAnalysisOutput analysis={analysis} />
-						</>
+						<div className="rounded-[8px] border border-[var(--line)] bg-[var(--panel)] p-6 text-[14px] text-[var(--ink-soft)]">
+							{analysis.error ? (
+								<div className="text-[var(--alert)]">{analysis.error}</div>
+							) : (
+								"No profile selected."
+							)}
+						</div>
 					)}
-				</>
+				</div>
 			)}
 		</section>
 	);
