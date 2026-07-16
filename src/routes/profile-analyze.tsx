@@ -121,6 +121,7 @@ function ProfileAnalyzeRoute() {
 
 		if (urlHandle) {
 			setSelectedSnapshot(null);
+			setSnapshots([]);
 			fetch(`/api/profile-analysis-metadata?handle=${encodeURIComponent(urlHandle)}`)
 				.then((res) => res.json())
 				.then((data) => {

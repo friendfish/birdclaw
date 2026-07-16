@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Loader2, Sparkles } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { MarkdownViewer } from "#/components/MarkdownViewer";
 import { type NdjsonRunContext, useNdjsonRun } from "#/components/useNdjsonRun";
 import {
@@ -144,6 +144,8 @@ export function useProfileAnalysisStream(
 		error,
 		loading,
 		run: runStream,
+		setError,
+		abort,
 	} = useNdjsonRun({
 		schema: profileAnalysisStreamEventSchema,
 		request,
@@ -155,6 +157,17 @@ export function useProfileAnalysisStream(
 		prematureEofError: profilePrematureEofError,
 		formatError: profileStreamError,
 	});
+
+	// Reset state and abort stream when the handle changes to prevent stale crosstalk
+	useEffect(() => {
+		abort();
+		setMarkdown("");
+		setContext(null);
+		setResult(null);
+		setStatus("Ready");
+		setError(null);
+	}, [handle, setError, abort]);
+
 	const run = useCallback(
 		(refresh = false, overrideHandle?: string) => {
 			const trimmed = cleanProfileHandle(overrideHandle ?? handle);
