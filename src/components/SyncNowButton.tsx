@@ -88,8 +88,6 @@ export function SyncNowButton({
 	const [autoSyncError, setAutoSyncError] = useState<string | null>(null);
 	const [autoFailureCount, setAutoFailureCount] = useState(0);
 	const [autoCycle, setAutoCycle] = useState(0);
-	const [lastAutoSyncedAt, setLastAutoSyncedAt] = useState<number | null>(null);
-	const [nextAutoSyncAt, setNextAutoSyncAt] = useState<number | null>(null);
 	const accountList = accounts ?? [];
 	const globalAccountId = useSelectedAccountId(accounts);
 	const defaultAccountId = useMemo(
@@ -97,6 +95,17 @@ export function SyncNowButton({
 		[accounts],
 	);
 	const accountId = globalAccountId ?? defaultAccountId;
+	const [lastAutoSyncedAt, setLastAutoSyncedAtState] = useState<number | null>(null);
+	const setLastAutoSyncedAt = useCallback((timestamp: number | null) => {
+		setLastAutoSyncedAtState(timestamp);
+		const lastSyncKey = `birdclaw:last-sync-at:${kind}:${accountId ?? "default"}`;
+		if (timestamp === null) {
+			window.localStorage.removeItem(lastSyncKey);
+		} else {
+			window.localStorage.setItem(lastSyncKey, String(timestamp));
+		}
+	}, [kind, accountId]);
+	const [nextAutoSyncAt, setNextAutoSyncAt] = useState<number | null>(null);
 	const autoSyncKey = autoSyncStorageKey(kind, accountId);
 	const autoSyncKeyRef = useRef(autoSyncKey);
 	autoSyncKeyRef.current = autoSyncKey;
@@ -144,10 +153,15 @@ export function SyncNowButton({
 		setAutoSyncError(null);
 		setAutoSyncing(false);
 		setAutoFailureCount(0);
-		setLastAutoSyncedAt(null);
+
+		const lastSyncKey = `birdclaw:last-sync-at:${kind}:${accountId ?? "default"}`;
+		const storedLastSync = window.localStorage.getItem(lastSyncKey);
+		const lastSynced = storedLastSync ? Number(storedLastSync) : null;
+		setLastAutoSyncedAtState(lastSynced && !isNaN(lastSynced) ? lastSynced : null);
+
 		setNextAutoSyncAt(null);
 		setAutoCycle((current) => current + 1);
-	}, [autoSyncKey]);
+	}, [autoSyncKey, kind, accountId]);
 
 	function selectAccount(accountId: string) {
 		setStoredAccountId(accountId);
@@ -187,8 +201,8 @@ export function SyncNowButton({
 				) {
 					return false;
 				}
+				setLastAutoSyncedAt(Date.now());
 				if (source === "auto") {
-					setLastAutoSyncedAt(Date.now());
 					setAutoFailureCount(0);
 				} else {
 					setMessage(data.summary);
