@@ -77,11 +77,11 @@ export const Route = createFileRoute("/api/profile-analysis")({
 									label: "Starting profile analysis",
 								},
 							],
-							run: ({ signal, emit }) =>
+							run: ({ emit }) =>
 								Effect.gen(function* () {
 									yield* maybeAutoUpdateBackupEffect();
 									return yield* streamProfileAnalysisEffect(
-										{ ...options, signal },
+										{ ...options, signal: undefined },
 										{ onEvent: emit },
 									);
 								}),
