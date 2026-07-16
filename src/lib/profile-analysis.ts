@@ -9,6 +9,7 @@ import {
 	resolveAnalysisModelSettings,
 } from "./analysis-runtime";
 import { getNativeDb } from "./db";
+import { getBirdclawConfig } from "./config";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
 import { buildMediaJsonFromIncludes, countTweetMedia } from "./media-includes";
 import type { Database } from "./sqlite";
@@ -570,7 +571,7 @@ function resultCacheKey(
 		modelFromOptions(options),
 		reasoningEffortFromOptions(options),
 		serviceTierFromOptions(options),
-		options.language || "en",
+		options.language || getBirdclawConfig().language?.aiLanguage || "zh-CN",
 		context.hash,
 	].join(":");
 }
@@ -1122,7 +1123,7 @@ function buildPrompt(
 	options: ProfileAnalysisOptions,
 ) {
 	const { dataset, tweetCount, conversationCount } = fitPromptDataset(context);
-	const language = options.language || "en";
+	const language = options.language || getBirdclawConfig().language?.aiLanguage || "zh-CN";
 	const isChinese =
 		language === "zh-CN" || language === "zh" || language.startsWith("zh");
 
