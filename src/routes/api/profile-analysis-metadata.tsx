@@ -31,11 +31,9 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 							for (const row of results) {
 								try {
 									const data = JSON.parse(row.valueJson);
-									const sourceHandles = data?.analysis?.sourceHandles || [];
-									const match = sourceHandles.some((sh: string) => {
-										const cleanSh = sh.toLowerCase().replace(/^@/, "");
-										return cleanSh === cleanTargetHandle;
-									});
+									const targetHandle = data?.context?.handle || "";
+									const cleanTarget = targetHandle.toLowerCase().replace(/^@/, "");
+									const match = cleanTarget === cleanTargetHandle;
 									if (match) {
 										snapshots.push({
 											cacheKey: row.cacheKey,
