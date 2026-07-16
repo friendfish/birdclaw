@@ -228,12 +228,25 @@ export function SyncNowButton({
 		],
 	);
 
+	// Listen to visibility changes to trigger immediate checks when returning to the tab
+	useEffect(() => {
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === "visible") {
+				setAutoCycle((current) => current + 1);
+			}
+		};
+		document.addEventListener("visibilitychange", handleVisibilityChange);
+		return () => {
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
+		};
+	}, []);
+
+	// Effect 1: Determine and persist the next scheduled auto-sync timestamp
 	useEffect(() => {
 		if (
 			!allowAutoSync ||
 			!autoSettingsReady ||
 			!autoSettings.enabled ||
-			autoSyncBlocked ||
 			waitingForAccount ||
 			birdOnlyWrongAccount
 		) {
@@ -245,7 +258,53 @@ export function SyncNowButton({
 			autoSettings.intervalMs * 2 ** autoFailureCount,
 			MAX_AUTO_SYNC_BACKOFF_MS,
 		);
-		setNextAutoSyncAt(Date.now() + delayMs);
+
+		const baseTime = lastAutoSyncedAt ?? Date.now();
+		setNextAutoSyncAt(baseTime + delayMs);
+	}, [
+		allowAutoSync,
+		autoSettingsReady,
+		autoSettings.enabled,
+		autoSettings.intervalMs,
+		autoFailureCount,
+		lastAutoSyncedAt,
+		waitingForAccount,
+		birdOnlyWrongAccount,
+	]);
+
+	// Effect 2: Manage the execution timer based on the persistent nextAutoSyncAt
+	useEffect(() => {
+		if (
+			!allowAutoSync ||
+			!autoSettingsReady ||
+			!autoSettings.enabled ||
+			nextAutoSyncAt === null ||
+			autoSyncBlocked ||
+			waitingForAccount ||
+			birdOnlyWrongAccount
+		) {
+			return;
+		}
+
+		const delayMs = nextAutoSyncAt - Date.now();
+
+		// If scheduled sync is already in the past, trigger it immediately or wait if hidden
+		if (delayMs <= 0) {
+			if (document.visibilityState === "visible" && !syncingRef.current) {
+				void syncNow("auto").finally(() => {
+					setAutoCycle((current) => current + 1);
+				});
+			} else {
+				// If hidden, retry periodically in 5 seconds to catch visibility transition
+				const timer = window.setTimeout(() => {
+					setAutoCycle((current) => current + 1);
+				}, 5000);
+				return () => window.clearTimeout(timer);
+			}
+			return;
+		}
+
+		// Schedule the timer for the remaining duration
 		const timer = window.setTimeout(() => {
 			if (document.visibilityState === "hidden" || syncingRef.current) {
 				setAutoCycle((current) => current + 1);
@@ -260,12 +319,11 @@ export function SyncNowButton({
 	}, [
 		allowAutoSync,
 		autoCycle,
-		autoFailureCount,
 		autoSettings.enabled,
-		autoSettings.intervalMs,
 		autoSettingsReady,
 		autoSyncBlocked,
 		birdOnlyWrongAccount,
+		nextAutoSyncAt,
 		syncNow,
 		waitingForAccount,
 	]);
