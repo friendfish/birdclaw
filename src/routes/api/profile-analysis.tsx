@@ -79,10 +79,37 @@ export const Route = createFileRoute("/api/profile-analysis")({
 							],
 							run: ({ emit }) =>
 								Effect.gen(function* () {
-									yield* maybeAutoUpdateBackupEffect();
-									return yield* streamProfileAnalysisEffect(
-										{ ...options, signal: undefined },
-										{ onEvent: emit },
+									const registry = ((globalThis as any).activeProfileAnalysesMap ||= new Map<string, any>());
+									const cleanHandle = options.handle.toLowerCase().replace(/^@/, "");
+									registry.set(cleanHandle, { label: "Starting profile analysis" });
+
+									const wrappedEmit = (event: ProfileAnalysisStreamEvent) => {
+										if (event.type === "status") {
+											registry.set(cleanHandle, {
+												label: event.label,
+												detail: event.detail,
+											});
+										} else if (event.type === "start") {
+											registry.set(cleanHandle, {
+												label: event.cached ? "Loading cached analysis" : "Summarizing profile",
+											});
+										}
+										emit(event);
+									};
+
+									const runAnalysis = Effect.gen(function* () {
+										yield* maybeAutoUpdateBackupEffect();
+										return yield* streamProfileAnalysisEffect(
+											{ ...options, signal: undefined },
+											{ onEvent: wrappedEmit },
+										);
+									});
+
+									return yield* Effect.ensuring(
+										runAnalysis,
+										Effect.sync(() => {
+											registry.delete(cleanHandle);
+										}),
 									);
 								}),
 							errorEvent: (error) => ({

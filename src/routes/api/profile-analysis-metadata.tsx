@@ -21,6 +21,11 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 							// Return snapshots for this handle
 							const cleanTargetHandle = handle.toLowerCase().replace(/^@/, "");
 
+							const registry = ((globalThis as any).activeProfileAnalysesMap ||= new Map<string, any>());
+							const isAnalyzing = registry.has(cleanTargetHandle);
+							const activeStatus = isAnalyzing ? registry.get(cleanTargetHandle) : null;
+							const anyActive = registry.size > 0;
+
 							// 1. Query all context rows to map handle -> context hash
 							const contextRows = db.prepare(`
 								select value_json as valueJson
@@ -75,6 +80,9 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 							return jsonResponse({
 								ok: true,
 								snapshots,
+								isAnalyzing,
+								activeStatus,
+								anyActive,
 							});
 						} else {
 							// Return following list and analyzed list
@@ -125,10 +133,14 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 								})).sort((a, b) => (b.lastAnalyzedAt || "").localeCompare(a.lastAnalyzedAt || ""));
 							}
 
+							const registry = ((globalThis as any).activeProfileAnalysesMap ||= new Map<string, any>());
+							const anyActive = registry.size > 0;
+
 							return jsonResponse({
 								ok: true,
 								following: followingRows,
 								analyzed: analyzedList,
+								anyActive,
 							});
 						}
 					}),
