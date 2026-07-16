@@ -20,6 +20,30 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 						if (handle) {
 							// Return snapshots for this handle
 							const cleanTargetHandle = handle.toLowerCase().replace(/^@/, "");
+
+							// 1. Query all context rows to map handle -> context hash
+							const contextRows = db.prepare(`
+								select value_json as valueJson
+								from sync_cache
+								where cache_key like 'profile-analysis:context:%'
+							`).all() as Array<{ valueJson: string }>;
+
+							const targetHashes = new Set<string>();
+							for (const row of contextRows) {
+								try {
+									const ctx = JSON.parse(row.valueJson);
+									const ctxHandle = ctx?.handle || "";
+									if (ctxHandle.toLowerCase().replace(/^@/, "") === cleanTargetHandle) {
+										if (ctx.hash) {
+											targetHashes.add(ctx.hash);
+										}
+									}
+								} catch {
+									// ignore
+								}
+							}
+
+							// 2. Query all result rows and match by context hash (the last segment of cacheKey)
 							const results = db.prepare(`
 								select cache_key as cacheKey, value_json as valueJson, updated_at as updatedAt
 								from sync_cache
@@ -30,11 +54,10 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 							const snapshots = [];
 							for (const row of results) {
 								try {
-									const data = JSON.parse(row.valueJson);
-									const targetHandle = data?.context?.handle || "";
-									const cleanTarget = targetHandle.toLowerCase().replace(/^@/, "");
-									const match = cleanTarget === cleanTargetHandle;
-									if (match) {
+									const parts = row.cacheKey.split(":");
+									const hash = parts[parts.length - 1];
+									if (targetHashes.has(hash)) {
+										const data = JSON.parse(row.valueJson);
 										snapshots.push({
 											cacheKey: row.cacheKey,
 											updatedAt: row.updatedAt,

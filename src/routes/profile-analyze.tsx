@@ -101,6 +101,7 @@ function ProfileAnalyzeRoute() {
 	// Snapshots for selected handle
 	const [snapshots, setSnapshots] = useState<any[]>([]);
 	const [selectedSnapshot, setSelectedSnapshot] = useState<any | null>(null);
+	const [isAnalyzing, setIsAnalyzing] = useState(false);
 
 	const profileInfo = useMemo(() => {
 		if (!submittedHandle) return null;
@@ -121,14 +122,18 @@ function ProfileAnalyzeRoute() {
 
 		if (urlHandle) {
 			setSelectedSnapshot(null);
+			setIsAnalyzing(false);
 			fetch(`/api/profile-analysis-metadata?handle=${encodeURIComponent(urlHandle)}`)
 				.then((res) => res.json())
 				.then((data) => {
-					if (data.ok && data.snapshots) {
-						setSnapshots(data.snapshots);
-						// If snapshots exist, default to loading the most recent snapshot immediately
-						if (data.snapshots.length > 0) {
-							setSelectedSnapshot(data.snapshots[0]);
+					if (data.ok) {
+						setIsAnalyzing(!!data.isAnalyzing);
+						if (data.snapshots) {
+							setSnapshots(data.snapshots);
+							// If snapshots exist, default to loading the most recent snapshot immediately
+							if (data.snapshots.length > 0) {
+								setSelectedSnapshot(data.snapshots[0]);
+							}
 						}
 					}
 				})
@@ -138,8 +143,32 @@ function ProfileAnalyzeRoute() {
 		} else {
 			setSnapshots([]);
 			setSelectedSnapshot(null);
+			setIsAnalyzing(false);
 		}
 	}, [search.handle]);
+
+	// Poll metadata when the user is currently being analyzed in the background
+	useEffect(() => {
+		if (!isAnalyzing || !submittedHandle) return;
+
+		const timer = setInterval(() => {
+			fetch(`/api/profile-analysis-metadata?handle=${encodeURIComponent(submittedHandle)}`)
+				.then((res) => res.json())
+				.then((data) => {
+					if (data.ok) {
+						setIsAnalyzing(!!data.isAnalyzing);
+						if (data.snapshots && data.snapshots.length > 0) {
+							setSnapshots(data.snapshots);
+							setSelectedSnapshot(data.snapshots[0]);
+							clearInterval(timer);
+						}
+					}
+				})
+				.catch((err) => console.error("Polling metadata failed", err));
+		}, 3000);
+
+		return () => clearInterval(timer);
+	}, [isAnalyzing, submittedHandle]);
 
 	// Load metadata (following & analyzed lists)
 	useEffect(() => {
@@ -490,6 +519,17 @@ function ProfileAnalyzeRoute() {
 									markdown={stripMarkdownHeader(selectedSnapshot.markdown, submittedHandle)}
 								/>
 							</div>
+						</div>
+					) : isAnalyzing ? (
+						/* 💡 Beautiful Loading/Analyzing Placeholder for Background Task */
+						<div className="flex flex-col items-center justify-center text-center p-12 max-w-xl mx-auto mt-12 rounded-xl border border-[var(--line)] bg-[var(--panel)] gap-4 shadow-sm">
+							<div className="p-3 bg-[var(--brand-soft)]/20 rounded-full text-[var(--brand)]">
+								<RefreshCw className="size-8 animate-spin" strokeWidth={1.5} />
+							</div>
+							<h3 className="text-[16px] font-bold text-[var(--ink)]">后台画像拉取与总结中...</h3>
+							<p className="text-[13px] text-[var(--ink-soft)] max-w-sm leading-relaxed">
+								该用户正在后台默默进行数据拉取与 AI 总结。你可以放心离开，也可以在此等待，完成落库后将自动秒开展现。
+							</p>
 						</div>
 					) : snapshots.length === 0 && !analysis.loading && !analysis.markdown ? (
 						/* 💡 Beautiful Consent Placeholder for Un-analyzed user */
