@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2, RefreshCw, Search, UserSearch, Sparkles, ArrowLeft } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { AvatarChip } from "#/components/AvatarChip";
 import { MarkdownViewer } from "#/components/MarkdownViewer";
 import { SyncNowButton } from "#/components/SyncNowButton";
@@ -64,9 +64,6 @@ function ProfileAnalyzeRoute() {
 	const submittedHandle = useMemo(() => cleanProfileHandle(handle), [handle]);
 	const [language, setLanguage] = useState("zh-CN");
 	const analysis = useProfileAnalysisStream(submittedHandle, language);
-	const autoRunHandleRef = useRef("");
-	const autoRunLangRef = useRef("");
-	const runAnalysisRef = useRef(analysis.run);
 
 	// Load accounts for SyncNowButton
 	const [accounts, setAccounts] = useState<any[] | undefined>(undefined);
@@ -80,6 +77,18 @@ function ProfileAnalyzeRoute() {
 				}
 			})
 			.catch((err) => console.error("Failed to load accounts", err));
+	}, []);
+
+	// Inherit global default language settings
+	useEffect(() => {
+		fetch("/api/config")
+			.then((res) => res.json())
+			.then((data) => {
+				if (data && data.ok && data.language?.aiLanguage) {
+					setLanguage(data.language.aiLanguage);
+				}
+			})
+			.catch((err) => console.error("Failed to load global config language", err));
 	}, []);
 
 	// Metadata for lists
@@ -105,23 +114,32 @@ function ProfileAnalyzeRoute() {
 		return found || { handle: submittedHandle, displayName: `@${submittedHandle}`, avatarHue: stableHue(submittedHandle) };
 	}, [submittedHandle, metadata, analysis.context]);
 
-	useEffect(() => {
-		runAnalysisRef.current = analysis.run;
-	}, [analysis.run]);
-
+	// Load snapshots when handle changes
 	useEffect(() => {
 		const urlHandle = cleanProfileHandle(search.handle);
 		setHandle(urlHandle);
-		if (
-			urlHandle &&
-			(autoRunHandleRef.current !== urlHandle ||
-				autoRunLangRef.current !== language)
-		) {
-			autoRunHandleRef.current = urlHandle;
-			autoRunLangRef.current = language;
-			runAnalysisRef.current(false, urlHandle);
+
+		if (urlHandle) {
+			setSelectedSnapshot(null);
+			fetch(`/api/profile-analysis-metadata?handle=${encodeURIComponent(urlHandle)}`)
+				.then((res) => res.json())
+				.then((data) => {
+					if (data.ok && data.snapshots) {
+						setSnapshots(data.snapshots);
+						// If snapshots exist, default to loading the most recent snapshot immediately
+						if (data.snapshots.length > 0) {
+							setSelectedSnapshot(data.snapshots[0]);
+						}
+					}
+				})
+				.catch((err) => {
+					console.error("Failed to load snapshots", err);
+				});
+		} else {
+			setSnapshots([]);
+			setSelectedSnapshot(null);
 		}
-	}, [search.handle, language]);
+	}, [search.handle]);
 
 	// Load metadata (following & analyzed lists)
 	useEffect(() => {
@@ -142,28 +160,6 @@ function ProfileAnalyzeRoute() {
 		}
 	}, [submittedHandle]);
 
-	// Load snapshots when handle changes
-	useEffect(() => {
-		if (submittedHandle) {
-			setSelectedSnapshot(null);
-			fetch(`/api/profile-analysis-metadata?handle=${encodeURIComponent(submittedHandle)}`)
-				.then((res) => res.json())
-				.then((data) => {
-					if (data.ok && data.snapshots) {
-						setSnapshots(data.snapshots);
-						// If snapshots exist, default to loading the most recent snapshot immediately
-						if (data.snapshots.length > 0) {
-							setSelectedSnapshot(data.snapshots[0]);
-						}
-					}
-				})
-				.catch((err) => console.error("Failed to load snapshots", err));
-		} else {
-			setSnapshots([]);
-			setSelectedSnapshot(null);
-		}
-	}, [submittedHandle]);
-
 	const handleSelectProfile = (pHandle: string) => {
 		setHandle(pHandle);
 		navigate({ search: { handle: pHandle } });
@@ -171,6 +167,7 @@ function ProfileAnalyzeRoute() {
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
+		setSelectedSnapshot(null); // Clear snapshot to show the stream!
 		analysis.run(false);
 	};
 
@@ -196,62 +193,79 @@ function ProfileAnalyzeRoute() {
 								: "Analyze Twitter profiles and view discussion thread insights"}
 						</p>
 					</div>
-					<div className={pageHeaderActionsClass}>
-						
 
-						<select
-							className={`${secondaryButtonClass} cursor-pointer bg-[var(--bg)] pr-8 appearance-none bg-no-repeat bg-[right_12px_center] text-[14px] font-bold`}
-							style={{
-								backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
-								backgroundSize: "1.25rem",
-							}}
-							value={language}
-							onChange={(e) => setLanguage(e.target.value)}
-						>
-							<option value="zh-CN">简体中文</option>
-							<option value="en">English</option>
-						</select>
+					{/* 💡 Refresh and Language actions only visible on "用户画像" Page (when handle is submitted) */}
+					{submittedHandle ? (
+						<div className={pageHeaderActionsClass}>
+							{/* Language Switcher Dropdown (scoped to this analysis session only) */}
+							<select
+								className={`${secondaryButtonClass} cursor-pointer bg-[var(--bg)] pr-8 appearance-none bg-no-repeat bg-[right_12px_center] text-[14px] font-bold`}
+								style={{
+									backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
+									backgroundSize: "1.25rem",
+								}}
+								value={language}
+								onChange={(e) => setLanguage(e.target.value)}
+							>
+								<option value="zh-CN">简体中文</option>
+								<option value="en">English</option>
+							</select>
 
-						<button
-							className={secondaryButtonClass}
-							disabled={!submittedHandle || analysis.loading}
-							onClick={() => {
-								setSelectedSnapshot(null);
-								analysis.run(true);
-							}}
-							type="button"
-						>
-							<RefreshCw className="size-4" strokeWidth={1.8} />
-							Refresh
-						</button>
-					</div>
+							{/* Refresh or Analyse action button */}
+							<button
+								className={snapshots.length > 0 ? secondaryButtonClass : primaryButtonClass}
+								disabled={analysis.loading}
+								onClick={() => {
+									setSelectedSnapshot(null);
+									analysis.run(true);
+								}}
+								type="button"
+							>
+								{snapshots.length > 0 ? (
+									<>
+										<RefreshCw className="size-4" strokeWidth={1.8} />
+										Refresh
+									</>
+								) : (
+									<>
+										<Sparkles className="size-4" />
+										Analyse
+									</>
+								)}
+							</button>
+						</div>
+					) : null}
 				</div>
-				<form
-					className="mt-5 flex flex-col gap-3 sm:flex-row"
-					onSubmit={submit}
-				>
-					<label className={cx(searchFieldShellClass, "min-w-0 flex-1")}>
-						<Search className={searchFieldIconClass} strokeWidth={1.8} />
-						<input
-							className={searchFieldInputClass}
-							onChange={(event) => setHandle(event.target.value)}
-							placeholder="handle"
-							value={handle}
-						/>
-					</label>
-					<button
-						className={primaryButtonClass}
-						disabled={!submittedHandle || analysis.loading}
-						type="submit"
+
+				{/* 💡 Search input form only visible on Analyse landing page */}
+				{!submittedHandle && (
+					<form
+						className="mt-5 flex flex-col gap-3 sm:flex-row"
+						onSubmit={submit}
 					>
-						{analysis.loading ? (
-							<Loader2 className="size-4 animate-spin" strokeWidth={1.8} />
-						) : (
-							<UserSearch className="size-4" strokeWidth={1.8} />
-						)}
-						Analyse
-					</button>
-				</form>
+						<label className={cx(searchFieldShellClass, "min-w-0 flex-1")}>
+							<Search className={searchFieldIconClass} strokeWidth={1.8} />
+							<input
+								className={searchFieldInputClass}
+								onChange={(event) => setHandle(event.target.value)}
+								placeholder="handle"
+								value={handle}
+							/>
+						</label>
+						<button
+							className={primaryButtonClass}
+							disabled={!submittedHandle || analysis.loading}
+							type="submit"
+						>
+							{analysis.loading ? (
+								<Loader2 className="size-4 animate-spin" strokeWidth={1.8} />
+							) : (
+								<UserSearch className="size-4" strokeWidth={1.8} />
+							)}
+							Analyse
+						</button>
+					</form>
+				)}
 			</header>
 
 			{!submittedHandle ? (
@@ -277,10 +291,10 @@ function ProfileAnalyzeRoute() {
 											className="flex flex-col items-center text-center p-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--bg-active)] cursor-pointer transition-all min-w-0 h-[105px] justify-center"
 										>
 											<AvatarChip
-												profileId={profile.id}
-												avatarUrl={profile.avatarUrl}
 												name={profile.displayName || profile.handle}
-												hue={profile.avatarHue}
+												avatarUrl={profile.avatarUrl ?? undefined}
+												hue={profile.avatarHue ?? stableHue(profile.handle)}
+												profileId={profile.id}
 												size="default"
 											/>
 											<div className="min-w-0 w-full text-center leading-tight mt-1.5">
@@ -324,8 +338,7 @@ function ProfileAnalyzeRoute() {
 													analyzed: data.analyzed || [],
 												});
 											}
-										})
-										.catch((err) => console.error("Failed to reload metadata", err));
+										});
 								}}
 							/>
 						</div>
@@ -335,7 +348,7 @@ function ProfileAnalyzeRoute() {
 								<span>加载中...</span>
 							</div>
 						) : metadata?.following && metadata.following.length > 0 ? (
-							<div className="max-h-[550px] overflow-y-auto pr-1 scrollbar-thin">
+							<div className="max-h-[500px] overflow-y-auto pr-1 scrollbar-thin">
 								<div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
 									{metadata.following.map((profile) => (
 										<div
@@ -344,19 +357,19 @@ function ProfileAnalyzeRoute() {
 											className="flex flex-col items-center text-center p-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] hover:bg-[var(--bg-active)] cursor-pointer transition-all min-w-0 h-[105px] justify-center"
 										>
 											<AvatarChip
-												profileId={profile.id}
-												avatarUrl={profile.avatarUrl}
 												name={profile.displayName || profile.handle}
-												hue={profile.avatarHue}
+												avatarUrl={profile.avatarUrl ?? undefined}
+												hue={profile.avatarHue ?? stableHue(profile.handle)}
+												profileId={profile.id}
 												size="default"
 											/>
 											<div className="min-w-0 w-full text-center leading-tight mt-1.5">
-												<span className="font-bold text-[12px] text-[var(--ink)] block truncate w-full">
+												<div className="font-bold text-[12px] text-[var(--ink)] truncate w-full">
 													{profile.displayName || profile.handle}
-												</span>
-												<span className="text-[10px] text-[var(--ink-soft)] block truncate w-full mt-0.5">
+												</div>
+												<div className="text-[10px] text-[var(--ink-soft)] truncate w-full mt-0.5 text-ellipsis">
 													@{profile.handle}
-												</span>
+												</div>
 											</div>
 										</div>
 									))}
@@ -364,13 +377,14 @@ function ProfileAnalyzeRoute() {
 							</div>
 						) : (
 							<div className="text-[14px] text-[var(--ink-soft)] py-6 rounded-lg border border-dashed border-[var(--line)] bg-[var(--bg-active)]/50 text-center">
-								暂无关注对象。
+								暂无关注对象。请点击右侧同步按钮导入。
 							</div>
 						)}
 					</div>
 				</div>
 			) : (
-				<div className="flex flex-col gap-6">
+				/* 💡 "用户画像" Detail Page View */
+				<div className="flex flex-col gap-5">
 					{/* Twitter/X Style Profile Header Card */}
 					<div className="border border-[var(--line)] rounded-xl overflow-hidden bg-[var(--panel)] shadow-sm">
 						{/* Cover Strip */}
@@ -386,10 +400,10 @@ function ProfileAnalyzeRoute() {
 									{/* Overlapping Avatar with White Ring */}
 									<span className="inline-grid rounded-full ring-4 ring-[var(--panel)]">
 										<AvatarChip
-											profileId={profileInfo?.id}
-											avatarUrl={profileInfo?.avatarUrl}
 											name={profileInfo?.displayName || profileInfo?.handle || submittedHandle}
-											hue={profileInfo?.avatarHue ?? stableHue(submittedHandle)}
+											avatarUrl={profileInfo?.avatarUrl ?? undefined}
+											hue={profileInfo?.avatarHue ?? stableHue(profileInfo?.handle || submittedHandle)}
+											profileId={profileInfo?.id}
 											size="large"
 										/>
 									</span>
@@ -407,9 +421,8 @@ function ProfileAnalyzeRoute() {
 
 								{/* Right Side Actions / Dropdowns */}
 								<div className="mt-8 sm:mt-10 flex shrink-0 items-center gap-2">
-									{/* "个人资料分析" Label */}
-									<span className="hidden md:inline-block text-[11px] uppercase tracking-wider font-semibold text-[var(--brand)] bg-[var(--brand-soft)]/20 px-2.5 py-1 rounded-full">
-										个人资料分析
+									<span className="text-[11px] uppercase tracking-wider font-semibold text-[var(--brand)] bg-[var(--brand-soft)]/20 px-2.5 py-1 rounded-full">
+										用户画像分析
 									</span>
 
 									{/* Snapshot selector dropdown */}
@@ -477,6 +490,27 @@ function ProfileAnalyzeRoute() {
 									markdown={stripMarkdownHeader(selectedSnapshot.markdown, submittedHandle)}
 								/>
 							</div>
+						</div>
+					) : snapshots.length === 0 && !analysis.loading && !analysis.markdown ? (
+						/* 💡 Beautiful Consent Placeholder for Un-analyzed user */
+						<div className="flex flex-col items-center justify-center text-center p-12 max-w-xl mx-auto mt-12 rounded-xl border border-dashed border-[var(--line)] bg-[var(--panel)] gap-4">
+							<div className="p-3 bg-[var(--brand-soft)]/20 rounded-full text-[var(--brand)]">
+								<UserSearch className="size-8" strokeWidth={1.5} />
+							</div>
+							<h3 className="text-[16px] font-bold text-[var(--ink)]">该用户尚未进行过画像分析</h3>
+							<p className="text-[13px] text-[var(--ink-soft)] max-w-sm leading-relaxed">
+								当前系统未有该用户的有效分析信息。你可以选定右上角的语言，然后点击 <strong>Analyse</strong> 按钮即刻启动 AI 抓取与画像生成。
+							</p>
+							<button
+								onClick={() => {
+									setSelectedSnapshot(null);
+									analysis.run(true);
+								}}
+								className={cx(primaryButtonClass, "mt-2 px-6")}
+							>
+								<Sparkles className="size-4" />
+								生成画像分析 (Analyse)
+							</button>
 						</div>
 					) : (
 						<>

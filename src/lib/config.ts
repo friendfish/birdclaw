@@ -43,6 +43,10 @@ export interface BirdclawConfig {
 		apiKey?: string;
 		model?: string;
 	};
+	language?: {
+		aiLanguage?: string;
+		uiLanguage?: string;
+	};
 }
 
 let cachedPaths: BirdclawPaths | undefined;
