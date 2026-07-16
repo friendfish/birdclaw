@@ -385,32 +385,42 @@ function ProfileAnalyzeRoute() {
 			) : (
 				/* 💡 "用户画像" Detail Page View */
 				<div className="flex flex-col gap-5">
-					<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b border-[var(--line)] pb-5">
-						<div className="flex min-w-0 flex-1 items-start gap-4">
-							<div className="relative shrink-0">
-								<div className="h-16 w-16 sm:h-20 sm:w-20 rounded-full border-4 border-[var(--panel)] shadow-sm overflow-hidden bg-[var(--bg-active)] flex items-center justify-center">
-									<AvatarChip
-										name={profileInfo?.displayName || profileInfo?.handle || submittedHandle}
-										avatarUrl={profileInfo?.avatarUrl ?? undefined}
-										hue={profileInfo?.avatarHue ?? stableHue(profileInfo?.handle || submittedHandle)}
-										profileId={profileInfo?.id}
-										size="large"
-									/>
-								</div>
-							</div>
-
-							<div className="min-w-0 flex-1">
-								<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-									<h1 className="m-0 text-[20px] sm:text-[24px] font-bold text-[var(--ink)] leading-snug truncate">
-										{profileInfo?.displayName || profileInfo?.handle || submittedHandle}
-									</h1>
-								</div>
-								<div className="text-[14px] text-[var(--ink-soft)] leading-normal truncate mt-0.5">
-									@{profileInfo?.handle || submittedHandle}
+					{/* Twitter/X Style Profile Header Card */}
+					<div className="border border-[var(--line)] rounded-xl overflow-hidden bg-[var(--panel)] shadow-sm">
+						{/* Cover Strip */}
+						<div
+							className="h-24 sm:h-28 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--bg-active)_68%,var(--accent)_32%),color-mix(in_srgb,var(--bg)_70%,var(--accent)_30%))]"
+							data-testid="profile-cover"
+						/>
+						
+						{/* Profile Info Details Area */}
+						<div className="px-4 pb-4">
+							<div className="flex items-start justify-between gap-3 -mt-6 sm:-mt-8">
+								<div className="flex min-w-0 items-start gap-3">
+									{/* Overlapping Avatar with White Ring */}
+									<span className="inline-grid rounded-full ring-4 ring-[var(--panel)]">
+										<AvatarChip
+											name={profileInfo?.displayName || profileInfo?.handle || submittedHandle}
+											avatarUrl={profileInfo?.avatarUrl ?? undefined}
+											hue={profileInfo?.avatarHue ?? stableHue(profileInfo?.handle || submittedHandle)}
+											profileId={profileInfo?.id}
+											size="large"
+										/>
+									</span>
+									
+									{/* User Name & @id Handle Stack */}
+									<div className="min-w-0 pt-7 sm:pt-9">
+										<h1 className="m-0 text-[18px] sm:text-[20px] font-bold text-[var(--ink)] leading-snug truncate">
+											{profileInfo?.displayName || profileInfo?.handle || submittedHandle}
+										</h1>
+										<div className="text-[13px] sm:text-[14px] text-[var(--ink-soft)] leading-normal truncate mt-0.5">
+											@{profileInfo?.handle || submittedHandle}
+										</div>
+									</div>
 								</div>
 
 								{/* Right Side Actions / Dropdowns */}
-								<div className="mt-3 flex shrink-0 items-center gap-2">
+								<div className="mt-8 sm:mt-10 flex shrink-0 items-center gap-2">
 									<span className="text-[11px] uppercase tracking-wider font-semibold text-[var(--brand)] bg-[var(--brand-soft)]/20 px-2.5 py-1 rounded-full">
 										用户画像分析
 									</span>
