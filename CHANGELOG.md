@@ -1,11 +1,24 @@
 # CHANGELOG
 
-## 0.10.1 - Unreleased
+## 0.11.0 - 2026-07-18
+
+### Highlights
+
+- Choose an existing account independently for each live operation without changing the database's persistent account identity.
+- Start a fully local sample archive with `init --demo` for immediate zero-auth exploration.
 
 ### Added
 
 - Select existing accounts per live operation with `--account <username>` or `accounts.default`, including sync, profile hydration, DMs, compose, moderation, and scheduled jobs, without changing persistent database identity. (idea from #97 - thanks @ivankuznetsov)
 - Add explicit `init --demo` sample data for zero-auth offline exploration while keeping normal initialization empty.
+
+### Fixed
+
+- Keep `birdclaw db stats` local-only so it does not block on unrelated macOS archive discovery.
+
+### Dependencies and maintenance
+
+- Update `lucide-react` to 1.25.0, `@tanstack/react-start` to 1.168.30, and the pnpm 10 release pin to 10.34.5.
 
 ## 0.10.0 - 2026-07-17
 
