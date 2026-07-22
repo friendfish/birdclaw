@@ -137,7 +137,8 @@ export function syncBlocksEffect(accountId: string) {
 				syncedCount: 0,
 				transport: {
 					ok: true,
-					output: "remote block sync skipped (xurl not authenticated or unavailable)",
+					output:
+						"remote block sync skipped (xurl not authenticated or unavailable)",
 				},
 			};
 		}

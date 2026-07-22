@@ -4,11 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ensureBirdclawDirsMock = vi.fn();
 const getBirdclawPathsMock = vi.fn();
+const getDefaultAccountSelectorMock = vi.fn();
+const resolveOperationAccountMock = vi.fn();
 const resolveMentionsDataSourceMock = vi.fn();
 const setActionsTransportMock = vi.fn();
 const getQueryEnvelopeMock = vi.fn();
+const getNativeDbMock = vi.fn();
+const seedDemoDataMock = vi.fn();
 const findArchivesMock = vi.fn();
 const importArchiveMock = vi.fn();
+const importTweetsViaFxTwitterMock = vi.fn();
 const importBlocklistMock = vi.fn();
 const addBlockMock = vi.fn();
 const recordBlockMock = vi.fn();
@@ -45,6 +50,8 @@ const listTimelineItemsMock = vi.fn();
 const listDmConversationsMock = vi.fn();
 const applyDmRequestMutationToLocalStoreMock = vi.fn();
 const runDirectMessageRequestMutationViaBirdMock = vi.fn();
+const getAuthenticatedBirdAccountMock = vi.fn();
+const getConversationThreadMock = vi.fn();
 const hydrateProfilesFromXMock = vi.fn();
 const inspectProfileRepliesMock = vi.fn();
 const runResearchModeMock = vi.fn();
@@ -83,11 +90,31 @@ Object.defineProperty(
 
 vi.mock("#/lib/config", () => ({
 	ensureBirdclawDirs: () => ensureBirdclawDirsMock(),
+	getDefaultAccountSelector: () => getDefaultAccountSelectorMock(),
 	getBirdclawConfig: () => ({}),
 	getBirdclawPaths: () => getBirdclawPathsMock(),
 	resolveMentionsDataSource: (...args: unknown[]) =>
 		resolveMentionsDataSourceMock(...args),
 	setActionsTransport: (...args: unknown[]) => setActionsTransportMock(...args),
+}));
+
+vi.mock("#/lib/db", () => ({
+	closeDatabase: vi.fn(),
+	getNativeDb: (...args: unknown[]) => getNativeDbMock(...args),
+}));
+
+vi.mock("#/lib/seed", () => ({
+	seedDemoData: (...args: unknown[]) => seedDemoDataMock(...args),
+}));
+
+vi.mock("#/lib/account-selection", () => ({
+	resolveOperationAccount: (...args: unknown[]) =>
+		resolveOperationAccountMock(...args),
+}));
+
+vi.mock("#/lib/dm-read-model", () => ({
+	getConversationThread: (...args: unknown[]) =>
+		getConversationThreadMock(...args),
 }));
 
 vi.mock("#/lib/archive-finder", () => ({
@@ -105,6 +132,11 @@ vi.mock("#/lib/archive-import", () => ({
 		"following",
 	],
 	importArchive: (...args: unknown[]) => importArchiveMock(...args),
+}));
+
+vi.mock("#/lib/fxtwitter", () => ({
+	importTweetsViaFxTwitter: (...args: unknown[]) =>
+		importTweetsViaFxTwitterMock(...args),
 }));
 
 vi.mock("#/lib/backup", async (importOriginal) => {
@@ -241,7 +273,7 @@ vi.mock("#/lib/authored-live", () => ({
 vi.mock("#/lib/queries", () => ({
 	applyDmRequestMutationToLocalStore: (...args: unknown[]) =>
 		applyDmRequestMutationToLocalStoreMock(...args),
-	getQueryEnvelope: () => getQueryEnvelopeMock(),
+	getQueryEnvelope: (...args: unknown[]) => getQueryEnvelopeMock(...args),
 	listTimelineItems: (...args: unknown[]) => listTimelineItemsMock(...args),
 	listDmConversations: (...args: unknown[]) => listDmConversationsMock(...args),
 	createPost: (...args: unknown[]) => createPostMock(...args),
@@ -254,6 +286,8 @@ vi.mock("#/lib/production-server", () => ({
 }));
 
 vi.mock("#/lib/bird", () => ({
+	getAuthenticatedBirdAccount: (...args: unknown[]) =>
+		getAuthenticatedBirdAccountMock(...args),
 	runDirectMessageRequestMutationViaBird: (...args: unknown[]) =>
 		runDirectMessageRequestMutationViaBirdMock(...args),
 }));
@@ -287,11 +321,16 @@ describe("cli", () => {
 		consoleLogMock.mockClear();
 		ensureBirdclawDirsMock.mockReset();
 		getBirdclawPathsMock.mockReset();
+		getDefaultAccountSelectorMock.mockReset();
+		resolveOperationAccountMock.mockReset();
 		resolveMentionsDataSourceMock.mockReset();
 		setActionsTransportMock.mockReset();
 		getQueryEnvelopeMock.mockReset();
+		getNativeDbMock.mockReset();
+		seedDemoDataMock.mockReset();
 		findArchivesMock.mockReset();
 		importArchiveMock.mockReset();
+		importTweetsViaFxTwitterMock.mockReset();
 		importBlocklistMock.mockReset();
 		addBlockMock.mockReset();
 		recordBlockMock.mockReset();
@@ -328,6 +367,8 @@ describe("cli", () => {
 		listDmConversationsMock.mockReset();
 		applyDmRequestMutationToLocalStoreMock.mockReset();
 		runDirectMessageRequestMutationViaBirdMock.mockReset();
+		getAuthenticatedBirdAccountMock.mockReset();
+		getConversationThreadMock.mockReset();
 		hydrateProfilesFromXMock.mockReset();
 		inspectProfileRepliesMock.mockReset();
 		runResearchModeMock.mockReset();
@@ -360,6 +401,22 @@ describe("cli", () => {
 			rootDir: "/tmp/.birdclaw",
 			dbPath: "/tmp/.birdclaw/birdclaw.sqlite",
 		});
+		getDefaultAccountSelectorMock.mockReturnValue(undefined);
+		resolveOperationAccountMock.mockImplementation((selector?: string) => ({
+			id:
+				selector === "steipete" || selector === "@steipete"
+					? "acct_primary"
+					: (selector ?? "acct_primary"),
+			username: selector?.replace(/^@/, "") ?? "steipete",
+			externalUserId: "25401953",
+		}));
+		getConversationThreadMock.mockReturnValue({
+			conversation: { accountId: "acct_primary" },
+		});
+		getAuthenticatedBirdAccountMock.mockResolvedValue({
+			id: "25401953",
+			username: "steipete",
+		});
 		resolveMentionsDataSourceMock.mockImplementation(
 			(mode?: string) => mode ?? "birdclaw",
 		);
@@ -373,10 +430,36 @@ describe("cli", () => {
 			accounts: [],
 			archives: [],
 		});
+		getNativeDbMock.mockReturnValue({});
+		seedDemoDataMock.mockReturnValue({
+			seeded: true,
+			counts: {
+				accounts: 2,
+				profiles: 6,
+				tweets: 6,
+				conversations: 4,
+				messages: 8,
+			},
+		});
 		findArchivesMock.mockResolvedValue([{ name: "twitter.zip" }]);
 		importArchiveMock.mockResolvedValue({
 			ok: true,
 			archivePath: "/tmp/twitter.zip",
+		});
+		importTweetsViaFxTwitterMock.mockResolvedValue({
+			ok: true,
+			readOnlyTransport: true,
+			source: "fxtwitter",
+			endpoint: "https://api.fxtwitter.com",
+			requestedCount: 1,
+			importedCount: 1,
+			items: [
+				{
+					tweetId: "20",
+					source: "fxtwitter",
+					sourceUrl: "https://api.fxtwitter.com/2/status/20",
+				},
+			],
 		});
 		importBlocklistMock.mockResolvedValue({
 			ok: true,
@@ -573,11 +656,31 @@ describe("cli", () => {
 		expect(consoleLogMock).toHaveBeenCalledWith(
 			expect.stringContaining('"stats"'),
 		);
+		expect(getQueryEnvelopeMock).toHaveBeenCalledWith({
+			includeArchives: false,
+		});
 		expect(runProductionServerMock).toHaveBeenCalledWith({
 			packageRoot: expect.stringContaining("birdclaw"),
 			host: "127.0.0.1",
 			port: 3000,
+			serverVersion: packageVersion,
 		});
+		expect(getNativeDbMock).toHaveBeenCalledWith({ seedDemoData: false });
+		expect(seedDemoDataMock).not.toHaveBeenCalled();
+	});
+
+	it("seeds and explains an offline demo only when requested", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "--json", "init", "--demo"]);
+
+		expect(seedDemoDataMock).toHaveBeenCalledWith({});
+		expect(consoleLogMock).toHaveBeenCalledWith(
+			expect.stringContaining('"seeded": true'),
+		);
+		expect(consoleLogMock).toHaveBeenCalledWith(
+			expect.stringContaining('"birdclaw serve"'),
+		);
 	});
 
 	it("sets the preferred auth transport", async () => {
@@ -778,7 +881,7 @@ describe("cli", () => {
 			"backup",
 			"import",
 			"/tmp/bak",
-			"--replace",
+			"--restore",
 			"--no-validate",
 		]);
 		await runCli([
@@ -1332,6 +1435,65 @@ describe("cli", () => {
 		expect(importArchiveMock).toHaveBeenCalledWith("/tmp/explicit.zip", {
 			select: ["tweets", "directMessages", "likes"],
 		});
+	});
+
+	it("passes explicit archive restore mode", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"--json",
+			"import",
+			"archive",
+			"/tmp/explicit.zip",
+			"--restore",
+		]);
+
+		expect(importArchiveMock).toHaveBeenCalledWith("/tmp/explicit.zip", {
+			select: undefined,
+			restore: true,
+		});
+	});
+
+	it("requires explicit FxTwitter opt-in before public tweet import", async () => {
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "import", "tweet", "20"]);
+
+		expect(process.exitCode).toBe(1);
+		expect(importTweetsViaFxTwitterMock).not.toHaveBeenCalled();
+		expect(consoleErrorMock).toHaveBeenCalledWith(
+			expect.stringContaining("api.fxtwitter.com"),
+		);
+		consoleErrorMock.mockRestore();
+	});
+
+	it("imports public tweets through explicitly selected FxTwitter", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"--json",
+			"import",
+			"tweet",
+			"20",
+			"https://x.com/example/status/30",
+			"--fxtwitter",
+		]);
+
+		expect(importTweetsViaFxTwitterMock).toHaveBeenCalledWith([
+			"20",
+			"https://x.com/example/status/30",
+		]);
+		expect(maybeAutoSyncBackupMock).toHaveBeenCalledOnce();
+		expect(consoleLogMock).toHaveBeenCalledWith(
+			expect.stringContaining('"source": "fxtwitter"'),
+		);
 	});
 
 	it("rejects unknown archive import slices", async () => {
@@ -2843,8 +3005,54 @@ describe("cli", () => {
 		]);
 
 		expect(inspectProfileRepliesMock).toHaveBeenCalledWith("@sam", {
+			account: undefined,
 			limit: 7,
 		});
+	});
+
+	it("applies the config account default and restores xurl selection", async () => {
+		getDefaultAccountSelectorMock.mockReturnValue("@steipete");
+		delete process.env.BIRDCLAW_XURL_OAUTH2_USERNAME;
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "mentions", "export", "--limit", "2"]);
+
+		expect(resolveOperationAccountMock).toHaveBeenCalledWith("@steipete");
+		expect(exportMentionItemsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ account: "acct_primary" }),
+		);
+		expect(process.env.BIRDCLAW_XURL_OAUTH2_USERNAME).toBeUndefined();
+	});
+
+	it("lets an explicit account override the config default", async () => {
+		getDefaultAccountSelectorMock.mockReturnValue("other_user");
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"mentions",
+			"export",
+			"--account",
+			"@steipete",
+		]);
+
+		expect(resolveOperationAccountMock).toHaveBeenCalledWith("@steipete");
+		expect(resolveOperationAccountMock).not.toHaveBeenCalledWith("other_user");
+		expect(exportMentionItemsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ account: "acct_primary" }),
+		);
+	});
+
+	it("preserves legacy command defaults without forcing named xurl auth", async () => {
+		delete process.env.BIRDCLAW_XURL_OAUTH2_USERNAME;
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "compose", "post", "Ship it"]);
+
+		expect(createPostMock).toHaveBeenCalledWith("acct_primary", "Ship it");
+		expect(resolveOperationAccountMock).not.toHaveBeenCalled();
+		expect(process.env.BIRDCLAW_XURL_OAUTH2_USERNAME).toBeUndefined();
 	});
 
 	it("dispatches compose and inbox commands", async () => {
@@ -2880,7 +3088,11 @@ describe("cli", () => {
 			"tweet_1",
 			"Strong point",
 		);
-		expect(createDmReplyMock).toHaveBeenCalledWith("dm_1", "Looks good");
+		expect(createDmReplyMock).toHaveBeenCalledWith(
+			"dm_1",
+			"Looks good",
+			undefined,
+		);
 		expect(scoreInboxMock).toHaveBeenCalledWith({ kind: "dms", limit: 3 });
 		expect(listInboxItemsMock).toHaveBeenCalledWith({
 			kind: "dms",

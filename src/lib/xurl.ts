@@ -62,7 +62,7 @@ const cachedTransportStatus = Effect.runSync(
 );
 const [cachedAuthenticatedUser, invalidateAuthenticatedUser] = Effect.runSync(
 	Effect.cachedInvalidateWithTTL(
-		Effect.suspend(() => lookupAuthenticatedUserFreshEffect()),
+		Effect.suspend(() => lookupAuthenticatedUserUnscopedFreshEffect()),
 		Duration.millis(AUTHENTICATED_USER_TTL_MS),
 	),
 );
@@ -217,7 +217,7 @@ const readTransportStatusEffect = Effect.fn("xurl.readTransportStatus")(
 			return {
 				installed: false,
 				availableTransport: "local" as const,
-				statusText: "xurl not installed. local mode active.",
+				statusText: "xurl not installed. local/archive mode active.",
 			};
 		}
 
@@ -233,7 +233,7 @@ const readTransportStatusEffect = Effect.fn("xurl.readTransportStatus")(
 						installed: true,
 						availableTransport: "local" as const,
 						statusText:
-							"xurl installed but not authenticated. local (bird) mode active.",
+							"xurl installed but not authenticated. local/archive mode active.",
 						rawStatus,
 					};
 				}
@@ -254,7 +254,7 @@ const readTransportStatusEffect = Effect.fn("xurl.readTransportStatus")(
 						!(error instanceof SubprocessError && !error.causeWasError)
 							? error.message
 							: "unknown error"
-					}`,
+					}. local/archive mode active.`,
 				}),
 			),
 		);
@@ -282,7 +282,10 @@ const runShortcutEffect = Effect.fn("xurl.runShortcut")(function* (
 		return { ok: false, output: "live writes disabled" };
 	}
 
-	return yield* runSubprocessEffect({ command: "xurl", args }).pipe(
+	return yield* runSubprocessEffect({
+		command: "xurl",
+		args: [...configuredAccountGlobalArgs(), ...args],
+	}).pipe(
 		Effect.map(({ stdout, stderr }) => ({
 			ok: true,
 			output: stdout || stderr,
@@ -532,6 +535,14 @@ function configuredOAuth2Candidate(primaryUsername: string | undefined) {
 	};
 }
 
+function configuredAccountGlobalArgs() {
+	const candidate = configuredOAuth2Candidate(undefined);
+	return [
+		...(candidate?.app ? ["--app", candidate.app] : []),
+		...(candidate?.username ? ["--username", candidate.username] : []),
+	];
+}
+
 const runOAuth2JsonCommandEffect = Effect.fn("xurl.runOAuth2JsonCommand")(
 	function* ({
 		args,
@@ -663,7 +674,14 @@ const runMutationCommandEffect = Effect.fn("xurl.runMutationCommand")(
 			return { ok: false, output: "live writes disabled" };
 		}
 
-		return yield* runSubprocessEffect({ command: "xurl", args }).pipe(
+		const candidate = configuredOAuth2Candidate(undefined);
+		const commandArgs = candidate
+			? oauth2ArgsForCandidate(candidate, args)
+			: args;
+		return yield* runSubprocessEffect({
+			command: "xurl",
+			args: commandArgs,
+		}).pipe(
 			Effect.map(({ stdout, stderr }) => ({
 				ok: true,
 				output: stdout || stderr || "ok",
@@ -680,6 +698,7 @@ const runMutationCommandEffect = Effect.fn("xurl.runMutationCommand")(
 
 export const lookupUsersByIdsEffect = Effect.fn("xurl.lookupUsersByIds")((
 	ids: string[],
+	options: { username?: string } = {},
 ): Effect.Effect<XurlMentionUser[], XurlCommandError> => {
 	if (ids.length === 0) {
 		return Effect.succeed([]);
@@ -690,15 +709,22 @@ export const lookupUsersByIdsEffect = Effect.fn("xurl.lookupUsersByIds")((
 		"user.fields":
 			"description,entities,location,public_metrics,profile_image_url,url,created_at,verified,verified_type",
 	});
-	return runJsonCommandEffect([`/2/users?${query.toString()}`]).pipe(
+	const args = [`/2/users?${query.toString()}`];
+	const command = options.username
+		? runOAuth2JsonCommandEffect({ args, username: options.username })
+		: runJsonCommandEffect(args);
+	return command.pipe(
 		Effect.map((payload) =>
 			Array.isArray(payload.data) ? (payload.data as XurlMentionUser[]) : [],
 		),
 	);
 });
 
-export function lookupUsersByIds(ids: string[]) {
-	return runEffectPromise(lookupUsersByIdsEffect(ids));
+export function lookupUsersByIds(
+	ids: string[],
+	options: { username?: string } = {},
+) {
+	return runEffectPromise(lookupUsersByIdsEffect(ids, options));
 }
 
 function normalizeXListPage(payload: Record<string, unknown>): XListPage {
@@ -880,13 +906,23 @@ function authenticatedUserFromPayload(payload: Record<string, unknown>) {
 		: null;
 }
 
+function lookupAuthenticatedUserUnscopedFreshEffect() {
+	return runJsonCommandEffect(["whoami"]).pipe(
+		Effect.map(authenticatedUserFromPayload),
+	);
+}
+
 export const lookupAuthenticatedUserFreshEffect = Effect.fn(
 	"xurl.lookupAuthenticatedUserFresh",
-)(() =>
-	runJsonCommandEffect(["whoami"]).pipe(
+)(() => {
+	const username = cleanXurlUsernameLabel(
+		process.env.BIRDCLAW_XURL_OAUTH2_USERNAME,
+	);
+	if (!username) return lookupAuthenticatedUserUnscopedFreshEffect();
+	return runOAuth2JsonCommandEffect({ args: ["whoami"], username }).pipe(
 		Effect.map(authenticatedUserFromPayload),
-	),
-);
+	);
+});
 
 export const lookupAuthenticatedOAuth2UserEffect = Effect.fn(
 	"xurl.lookupAuthenticatedOAuth2User",
@@ -897,11 +933,19 @@ export const lookupAuthenticatedOAuth2UserEffect = Effect.fn(
 	}).pipe(Effect.map(authenticatedUserFromPayload)),
 );
 
-export function lookupAuthenticatedUserEffect() {
+export function lookupAuthenticatedUserUnscopedEffect() {
 	// Failures are not cached: invalidate so the next caller retries fresh.
 	return cachedAuthenticatedUser.pipe(
 		Effect.tapError(() => invalidateAuthenticatedUser),
 	);
+}
+
+export function lookupAuthenticatedUserEffect() {
+	const username = cleanXurlUsernameLabel(
+		process.env.BIRDCLAW_XURL_OAUTH2_USERNAME,
+	);
+	if (username) return lookupAuthenticatedOAuth2UserEffect(username);
+	return lookupAuthenticatedUserUnscopedEffect();
 }
 
 export function lookupAuthenticatedUser() {

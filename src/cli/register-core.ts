@@ -8,12 +8,16 @@ import {
 	importArchive,
 } from "#/lib/archive-import";
 import { ensureBirdclawDirs, setActionsTransport } from "#/lib/config";
+import { getNativeDb } from "#/lib/db";
+import { importTweetsViaFxTwitter } from "#/lib/fxtwitter";
 import { hydrateProfilesFromX } from "#/lib/profile-hydration";
 import { getQueryEnvelope } from "#/lib/queries";
+import { seedDemoData } from "#/lib/seed";
 import { printError, type CliCommandContext } from "./command-context";
 
 const IMPORT_SLICE_LABELS: Record<ImportProgressSlice, string> = {
 	tweets: "tweets",
+	deletedTweets: "deleted tweets",
 	noteTweets: "note tweets",
 	directMessages: "direct messages",
 	likes: "likes",
@@ -138,18 +142,30 @@ export function registerCoreCommands({
 }: CliCommandContext) {
 	program
 		.command("init")
-		.description("Create local birdclaw root and seed the database")
-		.action(async () => {
+		.description("Create an empty local birdclaw workspace")
+		.option("--demo", "Seed sample tweets and DMs for offline exploration")
+		.action((options: { demo?: boolean }) => {
 			const paths = ensureBirdclawDirs();
-			await getQueryEnvelope();
+			const db = getNativeDb({ seedDemoData: false });
+			const demo = options.demo
+				? { requested: true, ...seedDemoData(db) }
+				: { requested: false };
 			print(
 				{
 					ok: true,
+					demo,
 					rootDir: paths.rootDir,
 					configPath: paths.configPath,
 					dbPath: paths.dbPath,
 					mediaOriginalsDir: paths.mediaOriginalsDir,
 					mediaThumbsDir: paths.mediaThumbsDir,
+					nextSteps: options.demo
+						? [
+								"birdclaw search tweets --limit 5",
+								"birdclaw dms list --limit 5",
+								"birdclaw serve",
+							]
+						: ["birdclaw import archive <path>", "birdclaw init --demo"],
 				},
 				asJson(),
 			);
@@ -180,7 +196,7 @@ export function registerCoreCommands({
 
 	const importCommand = program
 		.command("import")
-		.description("Import local archive data");
+		.description("Import local or explicitly selected public data");
 	importCommand
 		.command("archive [archivePath]")
 		.description("Import a Twitter archive into the local SQLite store")
@@ -188,34 +204,63 @@ export function registerCoreCommands({
 			"--select <kinds>",
 			`Import only selected archive slices: ${ARCHIVE_IMPORT_SLICES.join(", ")}`,
 		)
-		.action(async (archivePath, options: { select?: string }) => {
-			const select = parseArchiveImportSelect(options.select);
-			if (options.select !== undefined && !select) return;
-			let resolvedArchivePath = archivePath;
-			if (!resolvedArchivePath) {
-				const [latestArchive] = await findArchives();
-				resolvedArchivePath = latestArchive?.path;
-			}
-			if (!resolvedArchivePath) {
-				throw new Error(
-					"No archive found. Pass a path or place one in Downloads.",
+		.option(
+			"--restore",
+			"Exactly replace imported archive slices instead of safely merging",
+		)
+		.action(
+			async (archivePath, options: { select?: string; restore?: boolean }) => {
+				const select = parseArchiveImportSelect(options.select);
+				if (options.select !== undefined && !select) return;
+				let resolvedArchivePath = archivePath;
+				if (!resolvedArchivePath) {
+					const [latestArchive] = await findArchives();
+					resolvedArchivePath = latestArchive?.path;
+				}
+				if (!resolvedArchivePath) {
+					throw new Error(
+						"No archive found. Pass a path or place one in Downloads.",
+					);
+				}
+				const json = Boolean(asJson());
+				const result = await importArchive(resolvedArchivePath, {
+					select,
+					...(options.restore ? { restore: true } : {}),
+					...(!json ? { onProgress: logImportProgress } : {}),
+				});
+				await autoSyncAfterWrite();
+				print(result, json);
+			},
+		);
+	importCommand
+		.command("tweet <tweets...>")
+		.description(
+			"Import public tweets through an explicitly selected read-only transport",
+		)
+		.option(
+			"--fxtwitter",
+			"Send tweet IDs to the fixed third-party api.fxtwitter.com endpoint",
+		)
+		.action(async (tweets: string[], options: { fxtwitter?: boolean }) => {
+			if (!options.fxtwitter) {
+				printError(
+					"Public tweet import is off by default. Pass --fxtwitter to disclose the requested tweet IDs and network metadata to api.fxtwitter.com.",
 				);
+				process.exitCode = 1;
+				return;
 			}
-			const json = Boolean(asJson());
-			const result = await importArchive(resolvedArchivePath, {
-				select,
-				onProgress: json ? undefined : logImportProgress,
-			});
+			const result = await importTweetsViaFxTwitter(tweets);
 			await autoSyncAfterWrite();
-			print(result, json);
+			print(result, asJson());
 		});
 	importCommand
 		.command("hydrate-profiles")
 		.description(
 			"Backfill archive-imported profiles from live Twitter metadata",
 		)
-		.action(async () => {
-			const result = await hydrateProfilesFromX();
+		.option("--account <username>", "Account username or id")
+		.action(async (options) => {
+			const result = await hydrateProfilesFromX({ account: options.account });
 			await autoSyncAfterWrite();
 			print(result, asJson());
 		});

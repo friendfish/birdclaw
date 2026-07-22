@@ -79,9 +79,15 @@ export const Route = createFileRoute("/api/profile-analysis")({
 							],
 							run: ({ emit }) =>
 								Effect.gen(function* () {
-									const registry = ((globalThis as any).activeProfileAnalysesMap ||= new Map<string, any>());
-									const cleanHandle = options.handle.toLowerCase().replace(/^@/, "");
-									registry.set(cleanHandle, { label: "Starting profile analysis" });
+									const registry = ((
+										globalThis as any
+									).activeProfileAnalysesMap ||= new Map<string, any>());
+									const cleanHandle = options.handle
+										.toLowerCase()
+										.replace(/^@/, "");
+									registry.set(cleanHandle, {
+										label: "Starting profile analysis",
+									});
 
 									const wrappedEmit = (event: ProfileAnalysisStreamEvent) => {
 										if (event.type === "status") {
@@ -91,7 +97,9 @@ export const Route = createFileRoute("/api/profile-analysis")({
 											});
 										} else if (event.type === "start") {
 											registry.set(cleanHandle, {
-												label: event.cached ? "Loading cached analysis" : "Summarizing profile",
+												label: event.cached
+													? "Loading cached analysis"
+													: "Summarizing profile",
 											});
 										}
 										emit(event);

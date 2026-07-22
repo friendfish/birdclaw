@@ -3,6 +3,11 @@ import { buildMediaJsonFromIncludes, countTweetMedia } from "./media-includes";
 import { tweetEntitiesFromXurl } from "./tweet-render";
 import type { XurlMentionData, XurlMentionsResponse } from "./types";
 import {
+	editHistoryIdsFromPayload,
+	reconcileTweetTombstones,
+	recordTweetRevision,
+} from "./tweet-retention";
+import {
 	type TweetAccountEdgeKind,
 	upsertTweetAccountEdge,
 } from "./tweet-account-edges";
@@ -15,6 +20,9 @@ export interface IngestTweetPayloadOptions {
 	edgeKind?: TweetAccountEdgeKind;
 	collectionKind?: "likes" | "bookmarks";
 	markRepliesAsReplied?: boolean;
+	provenance?: {
+		sourceUrlByTweetId: ReadonlyMap<string, string>;
+	};
 }
 
 function getReferencedTweetId(tweet: XurlMentionData, type: string) {
@@ -36,6 +44,12 @@ function toCanonicalTweets(payload: XurlMentionsResponse) {
 
 export function replaceTweetFts(db: Database, tweetId: string, text: string) {
 	db.prepare("delete from tweets_fts where tweet_id = ?").run(tweetId);
+	const row = db
+		.prepare("select deleted_at, superseded_at from tweets where id = ?")
+		.get(tweetId) as
+		| { deleted_at: string | null; superseded_at: string | null }
+		| undefined;
+	if (row?.deleted_at || row?.superseded_at) return;
 	db.prepare("insert into tweets_fts (tweet_id, text) values (?, ?)").run(
 		tweetId,
 		text,
@@ -51,6 +65,7 @@ export function ingestTweetPayload(
 		edgeKind,
 		collectionKind,
 		markRepliesAsReplied = false,
+		provenance,
 	}: IngestTweetPayloadOptions,
 ) {
 	const usersById = new Map(
@@ -88,11 +103,22 @@ export function ingestTweetPayload(
       `)
 		: undefined;
 	const tweetIds: string[] = [];
+	const touchedTweetIds: string[] = [];
+	const upsertSource = provenance
+		? db.prepare(`
+        insert into tweet_sources (tweet_id, source, source_url, observed_at)
+        values (?, ?, ?, ?)
+        on conflict(tweet_id, source) do update set
+          source_url = excluded.source_url,
+          observed_at = excluded.observed_at
+      `)
+		: undefined;
 
 	db.transaction(() => {
 		const observedAt = new Date().toISOString();
 		const primaryTweetIds = new Set(payload.data.map((tweet) => tweet.id));
 		for (const tweet of toCanonicalTweets(payload)) {
+			touchedTweetIds.push(tweet.id);
 			const isPrimaryTweet = primaryTweetIds.has(tweet.id);
 			const author = usersById.get(tweet.author_id);
 			const profile = author
@@ -119,6 +145,17 @@ export function ingestTweetPayload(
 					? 1
 					: 0,
 			);
+			recordTweetRevision(db, {
+				tweetId: tweet.id,
+				editHistoryIds: editHistoryIdsFromPayload(tweet.id, tweet),
+				payloadJson: JSON.stringify(tweet),
+				source,
+				observedAt,
+			});
+			const sourceUrl = provenance?.sourceUrlByTweetId.get(tweet.id);
+			if (sourceUrl) {
+				upsertSource?.run(tweet.id, source, sourceUrl, observedAt);
+			}
 			if (edgeKind && isPrimaryTweet) {
 				upsertTweetAccountEdge(db, {
 					accountId,
@@ -144,6 +181,7 @@ export function ingestTweetPayload(
 				tweetIds.push(tweet.id);
 			}
 		}
+		reconcileTweetTombstones(db, touchedTweetIds);
 	})();
 
 	return tweetIds;

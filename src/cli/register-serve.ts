@@ -8,10 +8,11 @@ export function registerServeCommand(
 		parseNonNegativeIntegerOption,
 	}: CliCommandContext,
 	packageRoot: string,
+	serverVersion: string,
 ) {
 	program
 		.command("serve")
-		.description("Run the local web app")
+		.description("Run the local web app and configured read-only MCP server")
 		.option(
 			"--host <host>",
 			"Host interface to bind",
@@ -32,6 +33,11 @@ export function registerServeCommand(
 			const port = parseNonNegativeIntegerOption(options.port, "--port");
 			if (port === undefined) return;
 			await autoUpdateBeforeRead();
-			await runProductionServer({ packageRoot, host, port });
+			await runProductionServer({
+				packageRoot,
+				host,
+				port,
+				serverVersion,
+			});
 		});
 }

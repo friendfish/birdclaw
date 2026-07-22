@@ -1,9 +1,11 @@
+import { existsSync } from "node:fs";
 import NativeSqliteDatabase, {
 	type Database,
 	SQLITE_BUSY_TIMEOUT_MS,
 } from "./sqlite";
 import { ensureBirdclawDirs, getBirdclawPaths } from "./config";
 import {
+	getDatabaseSchemaVersion,
 	type DatabaseMigration,
 	runDatabaseMigrations,
 } from "./database-migrations";
@@ -125,7 +127,47 @@ const BASE_SCHEMA_SQL = `
     liked integer not null default 0,
     entities_json text not null default '{}',
     media_json text not null default '[]',
-    quoted_tweet_id text
+    quoted_tweet_id text,
+    deleted_at text,
+    deletion_source text,
+    deletion_reason text,
+    superseded_at text,
+    superseded_by_id text
+  );
+
+  create table if not exists tweet_revisions (
+    root_tweet_id text not null,
+    revision_id text primary key,
+    revision_index integer not null,
+    payload_json text,
+    source text not null,
+    observed_at text not null
+  );
+
+  create table if not exists tweet_revision_edges (
+    older_revision_id text not null,
+    newer_revision_id text not null,
+    source text not null,
+    observed_at text not null,
+    primary key (older_revision_id, newer_revision_id)
+  );
+
+  create table if not exists tweet_subordinate_tombstones (
+    tweet_id text not null,
+    kind text not null check (kind in ('media', 'quote')),
+    subordinate_id text not null,
+    deleted_at text not null,
+    deletion_source text,
+    deletion_reason text not null,
+    primary key (tweet_id, kind, subordinate_id)
+  );
+
+  create table if not exists tweet_sources (
+    tweet_id text not null,
+    source text not null,
+    source_url text not null,
+    observed_at text not null,
+    primary key (tweet_id, source)
   );
 
   create table if not exists tweet_collections (
@@ -432,6 +474,109 @@ function ensureTweetMetadataColumns(db: Database) {
 	}
 }
 
+function ensureTweetRevisionEdgeSchema(db: Database) {
+	db.exec(`
+		create table if not exists tweet_revision_edges (
+			older_revision_id text not null,
+			newer_revision_id text not null,
+			source text not null,
+			observed_at text not null,
+			primary key (older_revision_id, newer_revision_id)
+		);
+		create index if not exists idx_tweet_revision_edges_newer
+			on tweet_revision_edges(newer_revision_id);
+	`);
+	const revisions = db.prepare(
+		`select root_tweet_id, revision_id, revision_index, observed_at
+		 from tweet_revisions
+		 order by root_tweet_id, revision_index, revision_id`,
+	);
+	type RevisionRow = {
+		root_tweet_id: string;
+		revision_id: string;
+		revision_index: number;
+		observed_at: string;
+	};
+	const insertEdge = db.prepare(`
+		insert or ignore into tweet_revision_edges (
+			older_revision_id, newer_revision_id, source, observed_at
+		) values (?, ?, 'migration', ?)
+	`);
+	let currentRoot: string | undefined;
+	let currentRank: number | undefined;
+	let currentRankRepresentative: RevisionRow | undefined;
+	let previousRankRepresentative: RevisionRow | undefined;
+	for (const revision of revisions.iterate() as IterableIterator<RevisionRow>) {
+		if (revision.root_tweet_id !== currentRoot) {
+			currentRoot = revision.root_tweet_id;
+			currentRank = revision.revision_index;
+			currentRankRepresentative = revision;
+			previousRankRepresentative = undefined;
+			continue;
+		}
+		if (revision.revision_index !== currentRank) {
+			previousRankRepresentative = currentRankRepresentative;
+			currentRankRepresentative = revision;
+			currentRank = revision.revision_index;
+		}
+		if (previousRankRepresentative) {
+			insertEdge.run(
+				previousRankRepresentative.revision_id,
+				revision.revision_id,
+				revision.observed_at,
+			);
+		}
+	}
+}
+
+function ensureTweetRetentionSchema(db: Database) {
+	const columnNames = getColumnNames(db, "tweets");
+	if (!columnNames.has("deleted_at")) {
+		db.exec("alter table tweets add column deleted_at text");
+	}
+	if (!columnNames.has("deletion_source")) {
+		db.exec("alter table tweets add column deletion_source text");
+	}
+	if (!columnNames.has("deletion_reason")) {
+		db.exec("alter table tweets add column deletion_reason text");
+	}
+	if (!columnNames.has("superseded_at")) {
+		db.exec("alter table tweets add column superseded_at text");
+	}
+	if (!columnNames.has("superseded_by_id")) {
+		db.exec("alter table tweets add column superseded_by_id text");
+	}
+	db.exec(`
+		create table if not exists tweet_revisions (
+			root_tweet_id text not null,
+			revision_id text primary key,
+			revision_index integer not null,
+			payload_json text,
+			source text not null,
+			observed_at text not null
+		);
+		create table if not exists tweet_subordinate_tombstones (
+			tweet_id text not null,
+			kind text not null check (kind in ('media', 'quote')),
+			subordinate_id text not null,
+			deleted_at text not null,
+			deletion_source text,
+			deletion_reason text not null,
+			primary key (tweet_id, kind, subordinate_id)
+		);
+		create index if not exists idx_tweets_deleted on tweets(deleted_at);
+		create index if not exists idx_tweets_superseded on tweets(superseded_at);
+		create index if not exists idx_tweet_revisions_root on tweet_revisions(root_tweet_id, revision_index);
+		create index if not exists idx_tweet_subordinate_tombstones_tweet on tweet_subordinate_tombstones(tweet_id);
+		insert or ignore into tweet_revisions (
+			root_tweet_id, revision_id, revision_index, payload_json, source, observed_at
+		)
+		select id, id, 0, null, 'migration', created_at
+		from tweets;
+	`);
+	ensureTweetRevisionEdgeSchema(db);
+}
+
 function ensureProfileAvatarColumns(db: Database) {
 	const columnNames = getColumnNames(db, "profiles");
 	if (!columnNames.has("following_count")) {
@@ -495,6 +640,18 @@ function ensureTweetCollectionsTable(db: Database) {
       raw_json text not null default '{}',
       updated_at text not null,
       primary key (account_id, tweet_id, kind)
+    );
+  `);
+}
+
+function ensureTweetSourcesTable(db: Database) {
+	db.exec(`
+    create table if not exists tweet_sources (
+      tweet_id text not null,
+      source text not null,
+      source_url text not null,
+      observed_at text not null,
+      primary key (tweet_id, source)
     );
   `);
 }
@@ -841,15 +998,22 @@ function normalizeTweetState(db: Database) {
 	    media_count integer not null default 0,
 	    entities_json text not null default '{}',
 	    media_json text not null default '[]',
-	    quoted_tweet_id text
+	    quoted_tweet_id text,
+	    deleted_at text,
+	    deletion_source text,
+	    deletion_reason text,
+	    superseded_at text,
+	    superseded_by_id text
 	  );
 	  insert into tweets (
 	    id, author_profile_id, text, created_at, is_replied, reply_to_id,
-	    like_count, media_count, entities_json, media_json, quoted_tweet_id
+	    like_count, media_count, entities_json, media_json, quoted_tweet_id,
+	    deleted_at, deletion_source, deletion_reason, superseded_at, superseded_by_id
 	  )
 	  select
 	    id, author_profile_id, text, created_at, is_replied, reply_to_id,
-	    like_count, media_count, entities_json, media_json, quoted_tweet_id
+	    like_count, media_count, entities_json, media_json, quoted_tweet_id,
+	    null, null, null, null, null
 	  from tweets_legacy_state;
 	  drop table tweets_legacy_state;
 	  create index idx_tweets_created on tweets(created_at desc);
@@ -892,6 +1056,30 @@ const DATABASE_MIGRATIONS: readonly DatabaseMigration[] = [
 			ensureXListTables(db);
 		},
 	},
+	{
+		version: 4,
+		name: "index cached tweet reply traversal",
+		up: (db) => {
+			db.exec(
+				"create index if not exists idx_tweets_reply_to on tweets(reply_to_id)",
+			);
+		},
+	},
+	{
+		version: 5,
+		name: "add durable tweet source provenance",
+		up: ensureTweetSourcesTable,
+	},
+	{
+		version: 6,
+		name: "retain tweet deletions and observable revisions",
+		up: ensureTweetRetentionSchema,
+	},
+	{
+		version: 7,
+		name: "retain observable tweet revision ordering",
+		up: ensureTweetRevisionEdgeSchema,
+	},
 ];
 
 function ensureDemoData(db: Database) {
@@ -903,8 +1091,17 @@ function ensureDemoData(db: Database) {
 	demoSeedAttempted = true;
 }
 
+function shouldSeedDemoData(options: InitDatabaseOptions) {
+	return (
+		options.seedDemoData === true ||
+		(options.seedDemoData === undefined &&
+			process.env.BIRDCLAW_TEST_SEED_DEMO_DATA === "1")
+	);
+}
+
 function initDatabase(options: InitDatabaseOptions = {}) {
 	ensureBirdclawDirs();
+	const seedDemo = shouldSeedDemoData(options);
 
 	if (!nativeDb) {
 		const { dbPath } = getBirdclawPaths();
@@ -915,10 +1112,10 @@ function initDatabase(options: InitDatabaseOptions = {}) {
 		  pragma foreign_keys = on;
 		`);
 		runDatabaseMigrations(nativeDb, DATABASE_MIGRATIONS);
-		if (options.seedDemoData !== false) {
+		if (seedDemo) {
 			ensureDemoData(nativeDb);
 		}
-	} else if (options.seedDemoData !== false) {
+	} else if (seedDemo) {
 		ensureDemoData(nativeDb);
 	}
 }
@@ -935,6 +1132,62 @@ function createDatabaseConnection(
 	});
 }
 
+function closeDatabaseIgnoringErrors(db: Database) {
+	try {
+		db.close();
+	} catch {
+		// Preserve the error that triggered cleanup.
+	}
+}
+
+function createReadDatabaseConnection(dbPath: string) {
+	const db = createDatabaseConnection(dbPath, "reader", { readonly: true });
+	try {
+		db.exec(`
+		  pragma busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};
+		  pragma foreign_keys = on;
+		  pragma query_only = on;
+		`);
+		return db;
+	} catch (error) {
+		closeDatabaseIgnoringErrors(db);
+		throw error;
+	}
+}
+
+function createReadDatabasePool(
+	dbPath: string,
+	validateFirst?: (db: Database) => void,
+) {
+	const pool: Database[] = [];
+	try {
+		const first = createReadDatabaseConnection(dbPath);
+		pool.push(first);
+		validateFirst?.(first);
+		pool.push(createReadDatabaseConnection(dbPath));
+		return pool;
+	} catch (error) {
+		for (const db of pool) closeDatabaseIgnoringErrors(db);
+		throw error;
+	}
+}
+
+function assertCurrentDatabaseSchema(db: Database) {
+	const expectedVersion = DATABASE_MIGRATIONS.at(-1)?.version ?? 0;
+	const actualVersion = getDatabaseSchemaVersion(db);
+	if (actualVersion !== expectedVersion) {
+		throw new Error(
+			`Birdclaw database schema ${String(actualVersion)} is not ready for version ${String(expectedVersion)}`,
+		);
+	}
+}
+
+function nextReadDb() {
+	const db = readDbs[readDbIndex % readDbs.length] as Database;
+	readDbIndex = (readDbIndex + 1) % readDbs.length;
+	return db;
+}
+
 export function getNativeDb(options: InitDatabaseOptions = {}) {
 	initDatabase(options);
 	return nativeDb as Database;
@@ -944,21 +1197,23 @@ export function getReadDb(options: InitDatabaseOptions = {}) {
 	initDatabase(options);
 	if (readDbs.length === 0) {
 		const { dbPath } = getBirdclawPaths();
-		readDbs = Array.from({ length: 2 }, () => {
-			const db = createDatabaseConnection(dbPath, "reader", {
-				readonly: true,
-			});
-			db.exec(`
-			  pragma busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};
-			  pragma foreign_keys = on;
-			  pragma query_only = on;
-			`);
-			return db;
-		});
+		readDbs = createReadDatabasePool(dbPath);
 	}
-	const db = readDbs[readDbIndex % readDbs.length] as Database;
-	readDbIndex = (readDbIndex + 1) % readDbs.length;
-	return db;
+	return nextReadDb();
+}
+
+export function getStrictReadDb() {
+	if (readDbs.length > 0) {
+		assertCurrentDatabaseSchema(readDbs[0] as Database);
+		return nextReadDb();
+	}
+	const { dbPath } = getBirdclawPaths();
+	if (!existsSync(dbPath)) {
+		throw new Error("Birdclaw database is not initialized");
+	}
+
+	readDbs = createReadDatabasePool(dbPath, assertCurrentDatabaseSchema);
+	return nextReadDb();
 }
 
 export function closeDatabase() {

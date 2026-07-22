@@ -1,6 +1,59 @@
 # CHANGELOG
 
-## 0.9.6 - Unreleased
+## 0.11.1 - Unreleased
+
+### Added
+
+- Preserve explicit X archive deletions as source-attributed tweet, media, and quote tombstones, and retain observable X edit chains as portable revision records while hiding superseded bodies from active views.
+
+### Changed
+
+- Merge archive and backup imports by default so incomplete snapshots never delete destination-only rows; use explicit `--restore` for exact replacement.
+
+## 0.11.0 - 2026-07-18
+
+### Highlights
+
+- Choose an existing account independently for each live operation without changing the database's persistent account identity.
+- Start a fully local sample archive with `init --demo` for immediate zero-auth exploration.
+
+### Added
+
+- Select existing accounts per live operation with `--account <username>` or `accounts.default`, including sync, profile hydration, DMs, compose, moderation, and scheduled jobs, without changing persistent database identity. (idea from #97 - thanks @ivankuznetsov)
+- Add explicit `init --demo` sample data for zero-auth offline exploration while keeping normal initialization empty.
+
+### Fixed
+
+- Keep `birdclaw db stats` local-only so it does not block on unrelated macOS archive discovery.
+
+### Dependencies and maintenance
+
+- Update `lucide-react` to 1.25.0, `@tanstack/react-start` to 1.168.30, and the pnpm 10 release pin to 10.34.5.
+
+## 0.10.0 - 2026-07-17
+
+### Highlights
+
+- Connect agents to account-scoped cached tweet search and thread research through a disabled-by-default, bearer-authenticated read-only MCP endpoint.
+- Import named public tweets without X credentials through an explicit read-only FxTwitter opt-in, with durable provenance and third-party disclosure guidance.
+- Run Bird-backed live workflows on Windows through trusted Git Bash discovery, portable-install overrides, and preserved subprocess diagnostics.
+- Move to Node 26.5.0, current direct dependencies, and xurl-first live-transport onboarding while retaining existing private Bird compatibility.
+
+### Added
+
+- Add a disabled-by-default, bearer-authenticated read-only MCP endpoint with strict account, storage, virtual-host, origin, path, request-size, concurrency, and result-size isolation; expose only cached tweet search and thread tools, excluding DMs, live X, OpenAI, filesystem access, and writes. (#95)
+- Add explicit public-tweet import through the fixed read-only FxTwitter endpoint, reject redirects and custom origins, persist `fxtwitter` source rows through backup schema v5, and document the requested-ID and network-metadata disclosure. (#103; proposal #99 - thanks @0xdevalias)
+
+### Transport and platform
+
+- Run Bird subprocesses through trusted Git Bash discovery on Windows, preserve slash-prefixed arguments and diagnostics, and support a documented `BIRDCLAW_BASH_COMMAND` override for portable Git installations. (#94 - thanks @kristofer-atlas)
+- Recommend xurl for new live-transport setups, remove deprecated public Bird installation/repository guidance, preserve existing private Bird compatibility, and report unavailable xurl states as local/archive mode. (#100; issue #93 - thanks @TheAngryPit)
+- Move the supported runtime from EOL Node 25.8.1 to Node 26.5.0, adopt TypeScript 7, and refresh all compatible direct runtime and development dependencies. (#102)
+
+### Testing and maintenance
+
+- Stabilize filtered mention rendering coverage by waiting for the refetched card before exercising reply behavior. (#101)
+- Refresh compatible transitive lockfile resolutions after verifying every direct runtime and development dependency is current. (#104)
 
 ## 0.9.5 - 2026-07-06
 

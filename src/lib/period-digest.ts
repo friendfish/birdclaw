@@ -996,7 +996,11 @@ function getDigestFreshnessMs(): number {
 function isFreshDigestCache(updatedAt: string, period?: string) {
 	const normalized = period?.trim().toLowerCase();
 	// Historical periods (yesterday, week) never expire automatically on tab switch
-	if (normalized === "yesterday" || normalized === "week" || normalized === "7d") {
+	if (
+		normalized === "yesterday" ||
+		normalized === "week" ||
+		normalized === "7d"
+	) {
 		return true;
 	}
 	const timestamp = Date.parse(updatedAt);

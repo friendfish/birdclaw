@@ -1,8 +1,10 @@
 import { Effect } from "effect";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
+import { LOCAL_WEB_PEER_HEADER } from "./local-peer";
+
+export { LOCAL_WEB_PEER_HEADER } from "./local-peer";
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
-export const LOCAL_WEB_PEER_HEADER = "x-birdclaw-local-peer";
 
 export function jsonResponse(data: unknown, init?: ResponseInit) {
 	const headers = new Headers(init?.headers);

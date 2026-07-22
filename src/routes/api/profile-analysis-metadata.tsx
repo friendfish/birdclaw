@@ -1,7 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 import { getNativeDb } from "#/lib/db";
-import { jsonResponse, runRouteEffect, sensitiveRequestErrorResponse } from "#/lib/http-effect";
+import {
+	jsonResponse,
+	runRouteEffect,
+	sensitiveRequestErrorResponse,
+} from "#/lib/http-effect";
 
 export const Route = createFileRoute("/api/profile-analysis-metadata")({
 	server: {
@@ -21,24 +25,32 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 							// Return snapshots for this handle
 							const cleanTargetHandle = handle.toLowerCase().replace(/^@/, "");
 
-							const registry = ((globalThis as any).activeProfileAnalysesMap ||= new Map<string, any>());
+							const registry = ((globalThis as any).activeProfileAnalysesMap ||=
+								new Map<string, any>());
 							const isAnalyzing = registry.has(cleanTargetHandle);
-							const activeStatus = isAnalyzing ? registry.get(cleanTargetHandle) : null;
+							const activeStatus = isAnalyzing
+								? registry.get(cleanTargetHandle)
+								: null;
 							const anyActive = registry.size > 0;
 
 							// 1. Query all context rows to map handle -> context hash
-							const contextRows = db.prepare(`
+							const contextRows = db
+								.prepare(`
 								select value_json as valueJson
 								from sync_cache
 								where cache_key like 'profile-analysis:context:%'
-							`).all() as Array<{ valueJson: string }>;
+							`)
+								.all() as Array<{ valueJson: string }>;
 
 							const targetHashes = new Set<string>();
 							for (const row of contextRows) {
 								try {
 									const ctx = JSON.parse(row.valueJson);
 									const ctxHandle = ctx?.handle || "";
-									if (ctxHandle.toLowerCase().replace(/^@/, "") === cleanTargetHandle) {
+									if (
+										ctxHandle.toLowerCase().replace(/^@/, "") ===
+										cleanTargetHandle
+									) {
 										if (ctx.hash) {
 											targetHashes.add(ctx.hash);
 										}
@@ -49,12 +61,18 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 							}
 
 							// 2. Query all result rows and match by context hash (the last segment of cacheKey)
-							const results = db.prepare(`
+							const results = db
+								.prepare(`
 								select cache_key as cacheKey, value_json as valueJson, updated_at as updatedAt
 								from sync_cache
 								where cache_key like 'profile-analysis:result:%'
 								order by updated_at desc
-							`).all() as Array<{ cacheKey: string; valueJson: string; updatedAt: string }>;
+							`)
+								.all() as Array<{
+								cacheKey: string;
+								valueJson: string;
+								updatedAt: string;
+							}>;
 
 							const snapshots = [];
 							for (const row of results) {
@@ -69,7 +87,7 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 											model: data.model || "unknown",
 											title: data?.analysis?.title || "Profile Analysis",
 											summary: data?.analysis?.summary || "",
-											markdown: data.markdown || ""
+											markdown: data.markdown || "",
 										});
 									}
 								} catch {
@@ -87,7 +105,8 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 						} else {
 							// Return following list and analyzed list
 							// Filter out deleted/stub accounts with no display name or id-based handles
-							const followingRows = db.prepare(`
+							const followingRows = db
+								.prepare(`
 								select p.id, p.handle, p.display_name as displayName, p.bio, p.avatar_url as avatarUrl, p.avatar_hue as avatarHue
 								from follow_edges fe
 								join profiles p on p.id = fe.profile_id
@@ -96,13 +115,23 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 								  and p.display_name != ''
 								  and p.handle not glob 'id[0-9]*'
 								order by p.display_name collate nocase asc
-							`).all() as Array<{ id: string; handle: string; displayName: string; bio: string; avatarUrl: string | null; avatarHue: number }>;
+							`)
+								.all() as Array<{
+								id: string;
+								handle: string;
+								displayName: string;
+								bio: string;
+								avatarUrl: string | null;
+								avatarHue: number;
+							}>;
 
-							const contextRows = db.prepare(`
+							const contextRows = db
+								.prepare(`
 								select cache_key as cacheKey, updated_at as updatedAt from sync_cache
 								where cache_key like 'profile-analysis:context:%'
 								order by updated_at desc
-							`).all() as Array<{ cacheKey: string; updatedAt: string }>;
+							`)
+								.all() as Array<{ cacheKey: string; updatedAt: string }>;
 
 							const analyzedMap = new Map<string, string>();
 							for (const row of contextRows) {
@@ -119,21 +148,37 @@ export const Route = createFileRoute("/api/profile-analysis-metadata")({
 							let analyzedList: any[] = [];
 							if (handles.length > 0) {
 								const placeholders = handles.map(() => "?").join(",");
-								const profiles = db.prepare(`
+								const profiles = db
+									.prepare(`
 									select id, handle, display_name as displayName, bio, avatar_url as avatarUrl, avatar_hue as avatarHue
 									from profiles
 									where lower(handle) in (${placeholders})
 									  and display_name != ''
 									  and handle not glob 'id[0-9]*'
-								`).all(...handles) as Array<{ id: string; handle: string; displayName: string; bio: string; avatarUrl: string | null; avatarHue: number }>;
+								`)
+									.all(...handles) as Array<{
+									id: string;
+									handle: string;
+									displayName: string;
+									bio: string;
+									avatarUrl: string | null;
+									avatarHue: number;
+								}>;
 
-								analyzedList = profiles.map(p => ({
-									...p,
-									lastAnalyzedAt: analyzedMap.get(p.handle.toLowerCase())
-								})).sort((a, b) => (b.lastAnalyzedAt || "").localeCompare(a.lastAnalyzedAt || ""));
+								analyzedList = profiles
+									.map((p) => ({
+										...p,
+										lastAnalyzedAt: analyzedMap.get(p.handle.toLowerCase()),
+									}))
+									.sort((a, b) =>
+										(b.lastAnalyzedAt || "").localeCompare(
+											a.lastAnalyzedAt || "",
+										),
+									);
 							}
 
-							const registry = ((globalThis as any).activeProfileAnalysesMap ||= new Map<string, any>());
+							const registry = ((globalThis as any).activeProfileAnalysesMap ||=
+								new Map<string, any>());
 							const anyActive = registry.size > 0;
 
 							return jsonResponse({

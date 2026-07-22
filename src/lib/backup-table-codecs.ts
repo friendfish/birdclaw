@@ -117,6 +117,16 @@ function sanitizeImportedTweets(rows: BackupJsonRecord[]) {
 	}));
 }
 
+function sanitizeImportedTweetRevisions(rows: BackupJsonRecord[]) {
+	return rows.map((row) => ({
+		...row,
+		payload_json:
+			row.payload_json === null || row.payload_json === undefined
+				? null
+				: sanitizeJsonTextUrls(row.payload_json, {}),
+	}));
+}
+
 function sanitizeImportedUrlExpansions(rows: BackupJsonRecord[]) {
 	return rows.map((row) => {
 		const shortUrl =
@@ -468,7 +478,8 @@ const definitions = {
 	tweets: {
 		exportSql: `
       select id, author_profile_id, text, created_at, is_replied, reply_to_id,
-        like_count, media_count, entities_json, media_json, quoted_tweet_id
+        like_count, media_count, entities_json, media_json, quoted_tweet_id,
+		deleted_at, deletion_source, deletion_reason, superseded_at, superseded_by_id
       from tweets
       order by created_at, id
     `,
@@ -482,8 +493,9 @@ const definitions = {
 			sql: `
       insert into tweets (
         id, author_profile_id, text, created_at, is_replied, reply_to_id,
-        like_count, media_count, entities_json, media_json, quoted_tweet_id
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        like_count, media_count, entities_json, media_json, quoted_tweet_id,
+		deleted_at, deletion_source, deletion_reason, superseded_at, superseded_by_id
+	  ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict(id) do update set
         author_profile_id = coalesce(nullif(excluded.author_profile_id, ''), tweets.author_profile_id),
         text = coalesce(nullif(excluded.text, ''), tweets.text),
@@ -500,7 +512,34 @@ const definitions = {
           when excluded.media_json not in ('', '[]', 'null') then excluded.media_json
           else tweets.media_json
         end,
-        quoted_tweet_id = coalesce(excluded.quoted_tweet_id, tweets.quoted_tweet_id)
+        quoted_tweet_id = coalesce(excluded.quoted_tweet_id, tweets.quoted_tweet_id),
+		deleted_at = case
+		  when tweets.deleted_at is null then excluded.deleted_at
+		  when excluded.deleted_at is null then tweets.deleted_at
+		  else min(tweets.deleted_at, excluded.deleted_at)
+		end,
+		deletion_source = case
+		  when excluded.deleted_at is not null
+		    and (tweets.deleted_at is null or excluded.deleted_at < tweets.deleted_at)
+		    then excluded.deletion_source
+		  when excluded.deleted_at = tweets.deleted_at
+		    then coalesce(tweets.deletion_source, excluded.deletion_source)
+		  else tweets.deletion_source
+		end,
+		deletion_reason = case
+		  when excluded.deleted_at is not null
+		    and (tweets.deleted_at is null or excluded.deleted_at < tweets.deleted_at)
+		    then excluded.deletion_reason
+		  when excluded.deleted_at = tweets.deleted_at
+		    then coalesce(tweets.deletion_reason, excluded.deletion_reason)
+		  else tweets.deletion_reason
+		end,
+		superseded_at = case
+		  when tweets.superseded_at is null then excluded.superseded_at
+		  when excluded.superseded_at is null then tweets.superseded_at
+		  else min(tweets.superseded_at, excluded.superseded_at)
+		end,
+		superseded_by_id = coalesce(excluded.superseded_by_id, tweets.superseded_by_id)
       `,
 			columns: [
 				"id",
@@ -514,12 +553,165 @@ const definitions = {
 				"entities_json",
 				"media_json",
 				"quoted_tweet_id",
+				"deleted_at",
+				"deletion_source",
+				"deletion_reason",
+				"superseded_at",
+				"superseded_by_id",
 			],
 			fts: {
 				target: { table: "tweets_fts", idColumn: "tweet_id" },
 				idKey: "id",
 				textKey: "text",
 			},
+		},
+	},
+	tweet_revisions: {
+		exportSql: `
+      select root_tweet_id, revision_id, revision_index, payload_json, source, observed_at
+      from tweet_revisions
+      order by root_tweet_id, revision_index, revision_id
+    `,
+		...fixedShard("data/tweet_revisions.jsonl", "tweet_revisions"),
+		merge: {
+			order: 12,
+			transform: sanitizeImportedTweetRevisions,
+			sql: `
+      insert into tweet_revisions (
+        root_tweet_id, revision_id, revision_index, payload_json, source, observed_at
+      ) values (?, ?, ?, ?, ?, ?)
+      on conflict(revision_id) do update set
+        root_tweet_id = case
+          when tweet_revisions.root_tweet_id = tweet_revisions.revision_id
+            and excluded.root_tweet_id <> excluded.revision_id
+            then excluded.root_tweet_id
+          else tweet_revisions.root_tweet_id
+        end,
+        revision_index = case
+          when tweet_revisions.root_tweet_id = tweet_revisions.revision_id
+            and excluded.root_tweet_id <> excluded.revision_id
+            then excluded.revision_index
+          else tweet_revisions.revision_index
+        end,
+        payload_json = coalesce(tweet_revisions.payload_json, excluded.payload_json),
+        source = case
+          when tweet_revisions.payload_json is null and excluded.payload_json is not null
+            then excluded.source
+          else tweet_revisions.source
+        end,
+        observed_at = max(tweet_revisions.observed_at, excluded.observed_at)
+      `,
+			columns: [
+				"root_tweet_id",
+				"revision_id",
+				"revision_index",
+				"payload_json",
+				"source",
+				"observed_at",
+			],
+		},
+	},
+	tweet_revision_edges: {
+		exportSql: `
+      select older_revision_id, newer_revision_id, source, observed_at
+      from tweet_revision_edges
+      order by older_revision_id, newer_revision_id
+    `,
+		...fixedShard("data/tweet_revision_edges.jsonl", "tweet_revision_edges"),
+		merge: {
+			order: 13,
+			sql: `
+      insert into tweet_revision_edges (
+        older_revision_id, newer_revision_id, source, observed_at
+      ) values (?, ?, ?, ?)
+      on conflict(older_revision_id, newer_revision_id) do update set
+        source = case
+          when excluded.observed_at > tweet_revision_edges.observed_at
+            then excluded.source
+          when excluded.observed_at = tweet_revision_edges.observed_at then case
+            when tweet_revision_edges.source in ('backup_migration', 'migration')
+              and excluded.source not in ('backup_migration', 'migration')
+              then excluded.source
+            when excluded.source in ('backup_migration', 'migration')
+              and tweet_revision_edges.source not in ('backup_migration', 'migration')
+              then tweet_revision_edges.source
+            else min(tweet_revision_edges.source, excluded.source)
+          end
+          else tweet_revision_edges.source
+        end,
+        observed_at = max(tweet_revision_edges.observed_at, excluded.observed_at)
+      `,
+			columns: [
+				"older_revision_id",
+				"newer_revision_id",
+				"source",
+				"observed_at",
+			],
+		},
+	},
+	tweet_subordinate_tombstones: {
+		exportSql: `
+      select tweet_id, kind, subordinate_id, deleted_at, deletion_source, deletion_reason
+      from tweet_subordinate_tombstones
+      order by tweet_id, kind, subordinate_id
+    `,
+		...fixedShard(
+			"data/tweet_subordinate_tombstones.jsonl",
+			"tweet_subordinate_tombstones",
+		),
+		merge: {
+			order: 14,
+			sql: `
+      insert into tweet_subordinate_tombstones (
+        tweet_id, kind, subordinate_id, deleted_at, deletion_source, deletion_reason
+      ) values (?, ?, ?, ?, ?, ?)
+      on conflict(tweet_id, kind, subordinate_id) do update set
+		deleted_at = min(tweet_subordinate_tombstones.deleted_at, excluded.deleted_at),
+		deletion_source = case
+		  when excluded.deleted_at < tweet_subordinate_tombstones.deleted_at
+		    then excluded.deletion_source
+		  when excluded.deleted_at = tweet_subordinate_tombstones.deleted_at
+		    then coalesce(tweet_subordinate_tombstones.deletion_source, excluded.deletion_source)
+		  else tweet_subordinate_tombstones.deletion_source
+		end,
+		deletion_reason = case
+		  when excluded.deleted_at < tweet_subordinate_tombstones.deleted_at
+		    then excluded.deletion_reason
+		  when excluded.deleted_at = tweet_subordinate_tombstones.deleted_at
+		    then coalesce(tweet_subordinate_tombstones.deletion_reason, excluded.deletion_reason)
+		  else tweet_subordinate_tombstones.deletion_reason
+		end
+      `,
+			columns: [
+				"tweet_id",
+				"kind",
+				"subordinate_id",
+				"deleted_at",
+				"deletion_source",
+				"deletion_reason",
+			],
+		},
+	},
+	tweet_sources: {
+		exportSql: `
+      select tweet_id, source, source_url, observed_at
+      from tweet_sources
+      order by tweet_id, source
+    `,
+		...fixedShard("data/tweet_sources.jsonl", "tweet_sources"),
+		merge: {
+			order: 15,
+			sql: `
+      insert into tweet_sources (tweet_id, source, source_url, observed_at)
+      values (?, ?, ?, ?)
+      on conflict(tweet_id, source) do update set
+        source_url = case
+          when excluded.observed_at >= tweet_sources.observed_at then excluded.source_url
+          else tweet_sources.source_url
+        end,
+        observed_at = max(tweet_sources.observed_at, excluded.observed_at)
+      `,
+			columns: ["tweet_id", "source", "source_url", "observed_at"],
 		},
 	},
 	tweet_collections: {
@@ -537,7 +729,7 @@ const definitions = {
 		countKey: (candidate) =>
 			`collections_${pathLeaf(candidate).replace(/\.jsonl$/, "") || "unknown"}`,
 		merge: {
-			order: 12,
+			order: 16,
 			sql: `
       insert into tweet_collections (
         account_id, tweet_id, kind, collected_at, source, raw_json, updated_at
@@ -583,7 +775,7 @@ const definitions = {
 		countKey: (candidate) =>
 			`timeline_edges_${pathLeaf(candidate).replace(/\.jsonl$/, "") || "unknown"}`,
 		merge: {
-			order: 13,
+			order: 17,
 			sql: `
       insert into tweet_account_edges (
         account_id, tweet_id, kind, first_seen_at, last_seen_at, seen_count,
@@ -622,7 +814,7 @@ const definitions = {
     `,
 		...fixedShard("data/dms/conversations.jsonl", "dm_conversations"),
 		merge: {
-			order: 14,
+			order: 18,
 			sql: `
       insert into dm_conversations (
         id, account_id, participant_profile_id, title, inbox_kind, last_message_at, unread_count, needs_reply
@@ -665,7 +857,7 @@ const definitions = {
 			candidate !== "data/dms/conversations.jsonl",
 		countKey: () => "dm_messages",
 		merge: {
-			order: 15,
+			order: 19,
 			sql: `
       insert into dm_messages (
         id, conversation_id, sender_profile_id, text, created_at, direction, is_replied, media_count
@@ -706,7 +898,7 @@ const definitions = {
     `,
 		...fixedShard("data/links/url_expansions.jsonl", "url_expansions"),
 		merge: {
-			order: 16,
+			order: 20,
 			transform: sanitizeImportedUrlExpansions,
 			sql: `
       insert into url_expansions (
@@ -754,7 +946,7 @@ const definitions = {
     `,
 		...fixedShard("data/links/occurrences.jsonl", "link_occurrences"),
 		merge: {
-			order: 17,
+			order: 21,
 			sql: `
       insert into link_occurrences (
         source_kind, source_id, source_position, short_url, account_id,
@@ -786,7 +978,7 @@ const definitions = {
     `,
 		...fixedShard("data/moderation/blocks.jsonl", "blocks"),
 		merge: {
-			order: 18,
+			order: 22,
 			sql: `
       insert into blocks (account_id, profile_id, source, created_at)
       values (?, ?, ?, ?)
@@ -805,7 +997,7 @@ const definitions = {
     `,
 		...fixedShard("data/moderation/mutes.jsonl", "mutes"),
 		merge: {
-			order: 19,
+			order: 23,
 			sql: `
       insert into mutes (account_id, profile_id, source, created_at)
       values (?, ?, ?, ?)
@@ -824,7 +1016,7 @@ const definitions = {
     `,
 		...fixedShard("data/actions/tweet_actions.jsonl", "tweet_actions"),
 		merge: {
-			order: 20,
+			order: 24,
 			sql: `
       insert into tweet_actions (id, account_id, tweet_id, kind, body, created_at)
       values (?, ?, ?, ?, ?, ?)
@@ -846,7 +1038,7 @@ const definitions = {
     `,
 		...fixedShard("data/ai_scores.jsonl", "ai_scores"),
 		merge: {
-			order: 21,
+			order: 25,
 			sql: `
       insert into ai_scores (
         entity_kind, entity_id, model, score, summary, reasoning, updated_at
