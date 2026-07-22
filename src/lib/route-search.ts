@@ -2,6 +2,7 @@ import type { NetworkMapKind } from "./network-map";
 import type { SearchDiscussionSource } from "./search-discussion";
 import type { TweetSearchMode } from "./tweet-search-live";
 import type {
+	HomeFeed,
 	InboxKind,
 	LinkInsightKind,
 	LinkInsightRange,
@@ -148,6 +149,18 @@ export function validateTodaySearch(
 			"today",
 		),
 		includeDms: booleanValue(search.includeDms),
+	};
+}
+
+export interface HomeRouteSearch {
+	feed: HomeFeed;
+}
+
+export function validateHomeSearch(
+	search: Record<string, unknown>,
+): HomeRouteSearch {
+	return {
+		feed: enumValue(search.feed, ["for_you", "following"], "for_you"),
 	};
 }
 

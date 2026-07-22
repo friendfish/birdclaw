@@ -539,6 +539,7 @@ export function buildTimelineItemsQuery(
 		lowQualityThreshold,
 		likedOnly = false,
 		bookmarkedOnly = false,
+		feed,
 		limit = 18,
 	}: TimelineQuery,
 	ftsMatchCountHint = 0,
@@ -736,6 +737,16 @@ export function buildTimelineItemsQuery(
       )
     `;
 		params.push(listAccountId, listId);
+	}
+
+	if (feed) {
+		where += `
+      and exists (
+        select 1 from tweet_feed_edges tfe
+        where tfe.tweet_id = e.tweet_id and tfe.feed = ?
+      )
+    `;
+		params.push(feed);
 	}
 
 	// Materialize the FTS match set once. Joining tweets_fts directly looks

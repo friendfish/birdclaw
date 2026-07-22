@@ -104,6 +104,37 @@ describe("api query route", () => {
 		);
 	});
 
+	it("threads a valid home feed filter through for the home resource", async () => {
+		queryResourceMock.mockReturnValue({ resource: "home", items: [] });
+		await GET({
+			request: new Request(
+				"http://localhost/api/query?resource=home&feed=for_you",
+			),
+		});
+
+		expect(queryResourceMock).toHaveBeenCalledWith(
+			"home",
+			expect.objectContaining({
+				resource: "home",
+				feed: "for_you",
+			}),
+		);
+	});
+
+	it("ignores the feed filter for non-home resources", async () => {
+		queryResourceMock.mockReturnValue({ resource: "mentions", items: [] });
+		await GET({
+			request: new Request(
+				"http://localhost/api/query?resource=mentions&feed=for_you",
+			),
+		});
+
+		expect(queryResourceMock).toHaveBeenCalledWith(
+			"mentions",
+			expect.not.objectContaining({ feed: expect.anything() }),
+		);
+	});
+
 	it("defaults to home when resource is omitted", async () => {
 		queryResourceMock.mockReturnValue({ resource: "home", items: [] });
 

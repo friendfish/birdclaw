@@ -1,5 +1,4 @@
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
-import type { ComponentType } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithQueryClient as render } from "#/test/render";
 
@@ -17,9 +16,31 @@ vi.mock("#/components/TimelineCard", () => ({
 	),
 }));
 
-import { Route } from "./index";
+import { HomeRouteView as HomeRoute } from "./index";
 
-const HomeRoute = Route.options.component as ComponentType;
+const dataSourcesResponse = (birdWorks: boolean) => ({
+	generatedAt: "2026-05-15T12:00:00.000Z",
+	sources: [
+		{
+			source: "bird" as const,
+			label: "bird",
+			works: birdWorks,
+			status: birdWorks ? ("ok" as const) : ("error" as const),
+			detail: birdWorks ? "ready" : "not configured",
+			accounts: [],
+		},
+	],
+	capabilities: [],
+});
+
+function statusResponse() {
+	return Response.json({
+		stats: { home: 3, mentions: 2, dms: 4, needsReply: 2, inbox: 4 },
+		transport: { statusText: "local" },
+		accounts: [],
+		archives: [],
+	});
+}
 
 describe("home route", () => {
 	beforeEach(() => {
@@ -34,26 +55,15 @@ describe("home route", () => {
 		const fetchMock = vi.fn(
 			async (input: RequestInfo | URL, init?: RequestInit) => {
 				const url = String(input);
-				if (url.endsWith("/api/status")) {
-					return new Response(
-						JSON.stringify({
-							stats: { home: 3, mentions: 2, dms: 4, needsReply: 2, inbox: 4 },
-							transport: { statusText: "local" },
-							accounts: [],
-							archives: [],
-						}),
-					);
+				if (url.endsWith("/api/status")) return statusResponse();
+				if (url.endsWith("/api/data-sources")) {
+					return Response.json(dataSourcesResponse(false));
 				}
 				if (url.includes("/api/query")) {
 					return new Response(
 						JSON.stringify({
 							resource: "home",
-							items: [
-								{
-									id: "tweet_1",
-									text: "Ship it",
-								},
-							],
+							items: [{ id: "tweet_1", text: "Ship it" }],
 						}),
 					);
 				}
@@ -83,13 +93,9 @@ describe("home route", () => {
 		let queryCalls = 0;
 		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 			const url = String(input);
-			if (url.endsWith("/api/status")) {
-				return Response.json({
-					stats: { home: 1, mentions: 0, dms: 0, needsReply: 0, inbox: 0 },
-					transport: { statusText: "local" },
-					accounts: [],
-					archives: [],
-				});
+			if (url.endsWith("/api/status")) return statusResponse();
+			if (url.endsWith("/api/data-sources")) {
+				return Response.json(dataSourcesResponse(false));
 			}
 			if (url.includes("/api/query")) {
 				queryCalls += 1;
@@ -116,15 +122,9 @@ describe("home route", () => {
 		const fetchMock = vi.fn(
 			async (input: RequestInfo | URL, init?: RequestInit) => {
 				const url = String(input);
-				if (url.endsWith("/api/status")) {
-					return new Response(
-						JSON.stringify({
-							stats: { home: 3, mentions: 2, dms: 4, needsReply: 2, inbox: 4 },
-							transport: { statusText: "local" },
-							accounts: [],
-							archives: [],
-						}),
-					);
+				if (url.endsWith("/api/status")) return statusResponse();
+				if (url.endsWith("/api/data-sources")) {
+					return Response.json(dataSourcesResponse(false));
 				}
 				if (url.includes("/api/query")) {
 					return new Response(
@@ -159,15 +159,9 @@ describe("home route", () => {
 		const fetchMock = vi.fn(
 			async (input: RequestInfo | URL, init?: RequestInit) => {
 				const url = String(input);
-				if (url.endsWith("/api/status")) {
-					return new Response(
-						JSON.stringify({
-							stats: { home: 3, mentions: 2, dms: 4, needsReply: 2, inbox: 4 },
-							transport: { statusText: "local" },
-							accounts: [],
-							archives: [],
-						}),
-					);
+				if (url.endsWith("/api/status")) return statusResponse();
+				if (url.endsWith("/api/data-sources")) {
+					return Response.json(dataSourcesResponse(false));
 				}
 				if (url.includes("/api/query")) {
 					queryUrls.push(new URL(url));
@@ -208,21 +202,15 @@ describe("home route", () => {
 		);
 	});
 
-	it("runs a live timeline sync and reloads local data", async () => {
+	it("runs a live timeline sync scoped to the active feed and reloads local data", async () => {
 		const queryUrls: URL[] = [];
 		const syncBodies: unknown[] = [];
 		const fetchMock = vi.fn(
 			async (input: RequestInfo | URL, init?: RequestInit) => {
 				const url = String(input);
-				if (url.endsWith("/api/status")) {
-					return new Response(
-						JSON.stringify({
-							stats: { home: 3, mentions: 2, dms: 4, needsReply: 2, inbox: 4 },
-							transport: { statusText: "local" },
-							accounts: [],
-							archives: [],
-						}),
-					);
+				if (url.endsWith("/api/status")) return statusResponse();
+				if (url.endsWith("/api/data-sources")) {
+					return Response.json(dataSourcesResponse(false));
 				}
 				if (url.includes("/api/query")) {
 					queryUrls.push(new URL(url));
@@ -261,27 +249,22 @@ describe("home route", () => {
 
 		expect(await screen.findByText("Fresh post")).toBeInTheDocument();
 		const initialQueryCount = queryUrls.length;
-		fireEvent.click(screen.getByRole("button", { name: "Sync timeline" }));
+		fireEvent.click(screen.getByRole("button", { name: "Sync Following" }));
 
 		await waitFor(() => {
-			expect(syncBodies).toEqual([{ kind: "timeline" }]);
+			expect(syncBodies).toEqual([{ kind: "timeline", feed: "following" }]);
 			expect(queryUrls.length).toBeGreaterThan(initialQueryCount);
 		});
 		expect(screen.getByText("Synced 12 items")).toBeInTheDocument();
+		expect(queryUrls.at(-1)?.searchParams.get("feed")).toBe("following");
 	});
 
 	it("shows a retryable error when timeline loading fails", async () => {
 		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 			const url = String(input);
-			if (url.endsWith("/api/status")) {
-				return new Response(
-					JSON.stringify({
-						stats: { home: 3, mentions: 2, dms: 4, needsReply: 2, inbox: 4 },
-						transport: { statusText: "local" },
-						accounts: [],
-						archives: [],
-					}),
-				);
+			if (url.endsWith("/api/status")) return statusResponse();
+			if (url.endsWith("/api/data-sources")) {
+				return Response.json(dataSourcesResponse(false));
 			}
 			if (url.includes("/api/query")) {
 				throw "Timeline unavailable";
@@ -296,7 +279,92 @@ describe("home route", () => {
 		expect(screen.getByText("Timeline unavailable")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 		await waitFor(() => {
-			expect(fetchMock).toHaveBeenCalledTimes(3);
+			expect(fetchMock).toHaveBeenCalledTimes(4);
+		});
+	});
+
+	it("hides the For You tab when bird is not available", async () => {
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith("/api/status")) return statusResponse();
+			if (url.endsWith("/api/data-sources")) {
+				return Response.json(dataSourcesResponse(false));
+			}
+			if (url.includes("/api/query")) {
+				return Response.json({ resource: "home", items: [] });
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(<HomeRoute />);
+
+		await screen.findByText("No posts in this view");
+		expect(screen.queryByRole("button", { name: "For You" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Following" })).toBeNull();
+	});
+
+	it("shows both feed tabs, defaults to For You, and scopes queries/sync per tab when bird works", async () => {
+		const queryUrls: URL[] = [];
+		const syncBodies: unknown[] = [];
+		const fetchMock = vi.fn(
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = String(input);
+				if (url.endsWith("/api/status")) return statusResponse();
+				if (url.endsWith("/api/data-sources")) {
+					return Response.json(dataSourcesResponse(true));
+				}
+				if (url.includes("/api/query")) {
+					const parsed = new URL(url);
+					queryUrls.push(parsed);
+					const feed = parsed.searchParams.get("feed");
+					return Response.json({
+						resource: "home",
+						items: [
+							{
+								id: feed === "for_you" ? "tweet_fyp" : "tweet_following",
+								text: feed === "for_you" ? "For You post" : "Following post",
+							},
+						],
+					});
+				}
+				if (url.endsWith("/api/sync") && init?.body) {
+					syncBodies.push(JSON.parse(String(init.body)));
+					return Response.json({
+						id: "sync_timeline_2",
+						kind: "timeline",
+						status: "succeeded",
+						startedAt: "2026-05-15T12:00:00.000Z",
+						summary: "Synced 3 items",
+						inProgress: false,
+						result: {
+							ok: true,
+							kind: "timeline",
+							summary: "Synced 3 items",
+							steps: [],
+						},
+					});
+				}
+				throw new Error(`Unexpected fetch ${url}`);
+			},
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(<HomeRoute />);
+
+		expect(await screen.findByText("For You post")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "For You" })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Following" }));
+		expect(await screen.findByText("Following post")).toBeInTheDocument();
+		expect(screen.queryByText("For You post")).toBeNull();
+
+		fireEvent.click(screen.getByRole("button", { name: "Sync Following" }));
+		await waitFor(() => {
+			expect(syncBodies).toEqual([{ kind: "timeline", feed: "following" }]);
 		});
 	});
 });

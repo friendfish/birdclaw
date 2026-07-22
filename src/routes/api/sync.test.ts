@@ -81,6 +81,50 @@ describe("api sync route", () => {
 		});
 	});
 
+	it("passes a valid home feed option through for timeline syncs", async () => {
+		startWebSyncMock.mockReturnValue({
+			id: "sync_timeline_2",
+			kind: "timeline",
+			status: "running",
+			startedAt: "2026-05-15T12:00:00.000Z",
+			inProgress: true,
+			summary: "Syncing Home timeline",
+		});
+
+		const response = await POST({
+			request: new Request("http://localhost/api/sync", {
+				method: "POST",
+				body: JSON.stringify({ kind: "timeline", feed: "for_you" }),
+			}),
+		});
+
+		expect(response.status).toBe(202);
+		expect(startWebSyncMock).toHaveBeenCalledWith("timeline", undefined, {
+			feed: "for_you",
+		});
+	});
+
+	it("ignores an invalid home feed value for timeline syncs", async () => {
+		startWebSyncMock.mockReturnValue({
+			id: "sync_timeline_3",
+			kind: "timeline",
+			status: "running",
+			startedAt: "2026-05-15T12:00:00.000Z",
+			inProgress: true,
+			summary: "Syncing Home timeline",
+		});
+
+		const response = await POST({
+			request: new Request("http://localhost/api/sync", {
+				method: "POST",
+				body: JSON.stringify({ kind: "timeline", feed: "not-a-feed" }),
+			}),
+		});
+
+		expect(response.status).toBe(202);
+		expect(startWebSyncMock).toHaveBeenCalledWith("timeline", undefined, {});
+	});
+
 	it("passes supported dm sync options to the background job", async () => {
 		startWebSyncMock.mockReturnValue({
 			id: "sync_dms_1",

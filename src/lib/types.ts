@@ -1,6 +1,8 @@
 import type { FollowDirection, InboxKind, ResourceKind } from "./api-enums";
+import type { HomeFeed } from "./tweet-feed-edges";
 
 export type { FollowDirection, InboxKind, ResourceKind } from "./api-enums";
+export type { HomeFeed } from "./tweet-feed-edges";
 
 export type ReplyFilter = "all" | "replied" | "unreplied";
 export type TimelineQualityFilter = "all" | "summary";
@@ -356,6 +358,7 @@ export interface TimelineQuery {
 	includeQualityReason?: boolean;
 	likedOnly?: boolean;
 	bookmarkedOnly?: boolean;
+	feed?: HomeFeed;
 	limit?: number;
 }
 

@@ -149,6 +149,18 @@ function insertTestEdge(
 	`).run(tweetId, kind, createdAt, createdAt, rawJson, createdAt);
 }
 
+function insertTestFeedEdge(
+	db: TestDatabase,
+	tweetId: string,
+	feed: "following" | "for_you",
+	seenAt: string,
+) {
+	db.prepare(`
+		insert into tweet_feed_edges (tweet_id, feed, first_seen_at)
+		values (?, ?, ?)
+	`).run(tweetId, feed, seenAt);
+}
+
 function insertTestCollection(
 	db: TestDatabase,
 	tweetId: string,
@@ -566,6 +578,74 @@ describe("birdclaw queries", () => {
 		expect(items.map((item) => item.id)).toEqual(["tweet_006"]);
 		expect(items[0]?.accountId).toBe("acct_studio");
 		expect(items[0]?.searchSnippet).toContain("<mark>Agents</mark>");
+	});
+
+	it("filters home timeline items by feed membership", () => {
+		setupTempHome();
+		const db = getNativeDb();
+
+		insertTestTweet(db, {
+			id: "tweet_following_only",
+			text: "chronological post",
+			createdAt: "2026-05-01T00:00:00.000Z",
+		});
+		insertTestEdge(db, "tweet_following_only", "2026-05-01T00:00:00.000Z");
+		insertTestFeedEdge(
+			db,
+			"tweet_following_only",
+			"following",
+			"2026-05-01T00:00:00.000Z",
+		);
+
+		insertTestTweet(db, {
+			id: "tweet_for_you_only",
+			text: "algorithmic post",
+			createdAt: "2026-05-01T00:01:00.000Z",
+		});
+		insertTestEdge(db, "tweet_for_you_only", "2026-05-01T00:01:00.000Z");
+		insertTestFeedEdge(
+			db,
+			"tweet_for_you_only",
+			"for_you",
+			"2026-05-01T00:01:00.000Z",
+		);
+
+		insertTestTweet(db, {
+			id: "tweet_both_feeds",
+			text: "seen everywhere",
+			createdAt: "2026-05-01T00:02:00.000Z",
+		});
+		insertTestEdge(db, "tweet_both_feeds", "2026-05-01T00:02:00.000Z");
+		insertTestFeedEdge(
+			db,
+			"tweet_both_feeds",
+			"following",
+			"2026-05-01T00:02:00.000Z",
+		);
+		insertTestFeedEdge(
+			db,
+			"tweet_both_feeds",
+			"for_you",
+			"2026-05-01T00:02:00.000Z",
+		);
+
+		const following = listTimelineItems({
+			resource: "home",
+			feed: "following",
+			limit: 50,
+		});
+		expect(following.map((item) => item.id).sort()).toEqual(
+			["tweet_both_feeds", "tweet_following_only"].sort(),
+		);
+
+		const forYou = listTimelineItems({
+			resource: "home",
+			feed: "for_you",
+			limit: 50,
+		});
+		expect(forYou.map((item) => item.id).sort()).toEqual(
+			["tweet_both_feeds", "tweet_for_you_only"].sort(),
+		);
 	});
 
 	// Perf regression guard: with bound parameters SQLite used to pick a plan

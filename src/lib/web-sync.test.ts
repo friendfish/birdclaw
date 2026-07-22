@@ -402,6 +402,34 @@ describe("web sync dispatcher", () => {
 		});
 	});
 
+	it("keeps timeline web syncs feed-scoped so For You and Following never dedupe onto the same job", async () => {
+		const pending = deferred<{ ok: boolean; source: string; count: number }>();
+		syncHomeTimelineMock.mockReturnValue(pending.promise);
+
+		const followingJob = startWebSync("timeline", undefined, {
+			feed: "following",
+		});
+		const forYouJob = startWebSync("timeline", undefined, { feed: "for_you" });
+
+		expect(forYouJob.id).not.toBe(followingJob.id);
+		expect(syncHomeTimelineMock).toHaveBeenCalledTimes(2);
+		expect(syncHomeTimelineMock).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({ following: true }),
+		);
+		expect(syncHomeTimelineMock).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ following: false }),
+		);
+
+		pending.resolve({ ok: true, source: "bird", count: 1 });
+		await vi.waitFor(() => {
+			expect(getWebSyncJob(followingJob.id)).toMatchObject({
+				status: "succeeded",
+			});
+		});
+	});
+
 	it("keeps auto fallback for default-account timeline syncs", async () => {
 		setupDefaultAccount("acct_studio");
 		syncHomeTimelineMock.mockResolvedValue({

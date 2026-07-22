@@ -164,6 +164,52 @@ describe("live home timeline sync", () => {
 				accountId: "acct_studio",
 			}),
 		]);
+		expect(
+			db
+				.prepare("select feed from tweet_feed_edges where tweet_id = ?")
+				.all("tweet_001"),
+		).toEqual([{ feed: "following" }]);
+	});
+
+	it("tags for-you syncs with the for_you feed edge instead of following", async () => {
+		makeTempHome();
+		const db = getNativeDb();
+		listHomeTimelineViaBirdMock.mockResolvedValueOnce({
+			data: [
+				{
+					id: "tweet_fyp",
+					author_id: "42",
+					text: "algorithmic recommendation",
+					created_at: "2026-04-26T13:43:34.000Z",
+					public_metrics: { like_count: 12 },
+				},
+			],
+			includes: {
+				users: [
+					{
+						id: "42",
+						username: "sam",
+						name: "Sam",
+						profile_image_url:
+							"https://pbs.twimg.com/profile_images/42/avatar_normal.jpg",
+					},
+				],
+			},
+			meta: { result_count: 1 },
+		});
+		const { syncHomeTimeline } = await import("./timeline-live");
+
+		await syncHomeTimeline({
+			following: false,
+			limit: 5,
+			refresh: true,
+		});
+
+		expect(
+			db
+				.prepare("select feed from tweet_feed_edges where tweet_id = ?")
+				.all("tweet_fyp"),
+		).toEqual([{ feed: "for_you" }]);
 	});
 
 	it("persists included quoted tweets without home timeline edges", async () => {

@@ -23,6 +23,11 @@ interface SyncNowButtonProps {
 	autoSyncBlocked?: boolean;
 	showAccountPicker?: boolean;
 	syncOptions?: WebSyncOptions;
+	// Distinguishes independent auto-sync state (enabled flag, interval,
+	// last-synced timestamp) for callers that render more than one
+	// SyncNowButton for the same kind/account, e.g. Home's For You and
+	// Following tabs sharing kind="timeline".
+	autoSyncScope?: string;
 }
 
 const AUTO_SYNC_INTERVALS = [
@@ -44,8 +49,22 @@ interface AutoSyncSettings extends StoredAutoSyncSettings {
 	key: string;
 }
 
-function autoSyncStorageKey(kind: WebSyncKind, accountId: string | undefined) {
-	return `birdclaw:auto-sync:${kind}:${accountId ?? "default"}`;
+function autoSyncStorageKey(
+	kind: WebSyncKind,
+	accountId: string | undefined,
+	scope: string | undefined,
+) {
+	const suffix = scope ? `:${scope}` : "";
+	return `birdclaw:auto-sync:${kind}:${accountId ?? "default"}${suffix}`;
+}
+
+function lastSyncStorageKey(
+	kind: WebSyncKind,
+	accountId: string | undefined,
+	scope: string | undefined,
+) {
+	const suffix = scope ? `:${scope}` : "";
+	return `birdclaw:last-sync-at:${kind}:${accountId ?? "default"}${suffix}`;
 }
 
 function validAutoSyncInterval(value: unknown): value is number {
@@ -78,6 +97,7 @@ export function SyncNowButton({
 	autoSyncBlocked = false,
 	showAccountPicker = false,
 	syncOptions,
+	autoSyncScope,
 }: SyncNowButtonProps) {
 	const [syncing, setSyncing] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
@@ -101,17 +121,17 @@ export function SyncNowButton({
 	const setLastAutoSyncedAt = useCallback(
 		(timestamp: number | null) => {
 			setLastAutoSyncedAtState(timestamp);
-			const lastSyncKey = `birdclaw:last-sync-at:${kind}:${accountId ?? "default"}`;
+			const lastSyncKey = lastSyncStorageKey(kind, accountId, autoSyncScope);
 			if (timestamp === null) {
 				window.localStorage.removeItem(lastSyncKey);
 			} else {
 				window.localStorage.setItem(lastSyncKey, String(timestamp));
 			}
 		},
-		[kind, accountId],
+		[kind, accountId, autoSyncScope],
 	);
 	const [nextAutoSyncAt, setNextAutoSyncAt] = useState<number | null>(null);
-	const autoSyncKey = autoSyncStorageKey(kind, accountId);
+	const autoSyncKey = autoSyncStorageKey(kind, accountId, autoSyncScope);
 	const autoSyncKeyRef = useRef(autoSyncKey);
 	autoSyncKeyRef.current = autoSyncKey;
 	const [autoSettings, setAutoSettings] = useState<AutoSyncSettings>({
@@ -159,7 +179,7 @@ export function SyncNowButton({
 		setAutoSyncing(false);
 		setAutoFailureCount(0);
 
-		const lastSyncKey = `birdclaw:last-sync-at:${kind}:${accountId ?? "default"}`;
+		const lastSyncKey = lastSyncStorageKey(kind, accountId, autoSyncScope);
 		const storedLastSync = window.localStorage.getItem(lastSyncKey);
 		const lastSynced = storedLastSync ? Number(storedLastSync) : null;
 		setLastAutoSyncedAtState(
@@ -168,7 +188,7 @@ export function SyncNowButton({
 
 		setNextAutoSyncAt(null);
 		setAutoCycle((current) => current + 1);
-	}, [autoSyncKey, kind, accountId]);
+	}, [autoSyncKey, kind, accountId, autoSyncScope]);
 
 	function selectAccount(accountId: string) {
 		setStoredAccountId(accountId);

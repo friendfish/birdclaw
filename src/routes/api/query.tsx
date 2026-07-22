@@ -40,6 +40,10 @@ function parseQualityFilter(value: string | null): TimelineQualityFilter {
 	return value === "summary" ? "summary" : "all";
 }
 
+function parseHomeFeed(value: string | null) {
+	return value === "following" || value === "for_you" ? value : undefined;
+}
+
 function parseDmInbox(value: string | null): NonNullable<DmQuery["inbox"]> {
 	if (value === "accepted" || value === "requests") return value;
 	return "all";
@@ -111,6 +115,9 @@ export const Route = createFileRoute("/api/query")({
 									...baseFilters,
 									resource,
 									untilId: url.searchParams.get("untilId") ?? undefined,
+									...(resource === "home"
+										? { feed: parseHomeFeed(url.searchParams.get("feed")) }
+										: {}),
 								}),
 							),
 						);
