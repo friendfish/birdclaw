@@ -40,6 +40,9 @@ The Playwright test home is `.playwright-home` in the repo, which is why CI neve
 
 ```json
 {
+	"accounts": {
+		"default": "steipete"
+	},
 	"actions": {
 		"transport": "auto"
 	},
@@ -55,6 +58,12 @@ The Playwright test home is `.playwright-home` in the repo, which is why CI neve
 	}
 }
 ```
+
+### `accounts.default`
+
+Set a Birdclaw account username (with or without `@`) or stored account ID. Commands with an `--account` option use this value when the flag is omitted. An explicit `--account` always wins.
+
+Selection is per operation. Birdclaw resolves the existing account row, routes xurl through that username for the command, then restores the process environment. It never creates an account, changes the database default, or binds a live credential to stored data.
 
 ### `actions.transport`
 
@@ -83,12 +92,16 @@ See [Backup](backup.md). When `autoSync` is enabled, read commands pull + merge 
 | `BIRDCLAW_HOME`                | Override the storage root (`~/.birdclaw` by default)                                                                                                 |
 | `BIRDCLAW_CONFIG`              | Read and write config at a non-default path                                                                                                          |
 | `BIRDCLAW_ACTIONS_TRANSPORT`   | Override moderation action transport with `auto`, `xurl`, or `bird` for one process                                                                  |
+| `BIRDCLAW_BIRD_COMMAND`        | Override the `bird` executable used by live Bird transports                                                                                          |
+| `BIRDCLAW_BASH_COMMAND`        | Override the Git Bash executable used for Bird subprocess redirection on Windows                                                                     |
 | `BIRDCLAW_HOST`                | Host interface for the production `birdclaw serve` listener; defaults to `127.0.0.1`                                                                 |
 | `BIRDCLAW_PORT`                | Port for the production `birdclaw serve` listener; defaults to `3000`                                                                                |
 | `BIRDCLAW_ALLOWED_HOSTS`       | Comma-separated extra hostnames accepted by the source `pnpm dev` server                                                                             |
 | `BIRDCLAW_LOCAL_WEB`           | Internal local-server mode; production derives local access from the peer socket, while forwarded/proxied requests still require remote-token config |
 | `BIRDCLAW_WEB_TOKEN`           | Optional app-level token for remote web API access; send as `x-birdclaw-token` or `birdclaw_token`                                                   |
 | `BIRDCLAW_ALLOW_REMOTE_WEB`    | Set to `1` to allow remote access through a trusted private proxy                                                                                    |
+| `BIRDCLAW_MCP_TOKEN`           | Dedicated 32+ byte bearer secret required by the read-only `/mcp` endpoint                                                                            |
+| `BIRDCLAW_MCP_PUBLIC_URL`      | Exact public MCP URL, including `/mcp`; enables strict Host/Origin checks but does not terminate TLS                                                   |
 | `BIRDCLAW_DISABLE_LIVE_WRITES` | Set to `1` to block any live mutation (used by tests and CI)                                                                                         |
 | `BIRDCLAW_BACKUP_AUTO_SYNC`    | Set to `0` to disable auto-sync for one process                                                                                                      |
 | `NO_COLOR`                     | Disable ANSI color in human output                                                                                                                   |
@@ -101,7 +114,15 @@ See [Backup](backup.md). When `autoSync` is enabled, read commands pull + merge 
 
 ## Multi-account
 
-birdclaw was built around multiple accounts in a single shared database from day one. Pass `--account <id>` on commands that support account selection, including moderation, mentions, DMs, and live sync commands.
+birdclaw was built around multiple accounts in a single shared database from day one. Pass `--account <username>` (or a stored account ID) on commands that support account selection, including moderation, profile hydration, profile reply inspection, mentions, DMs, live sync, and scheduled jobs.
+
+```bash
+birdclaw sync timeline --account steipete --mode xurl
+birdclaw import hydrate-profiles --account @steipete
+birdclaw compose post --account acct_primary "Ship it."
+```
+
+For a recurring choice, set `accounts.default` in `config.json`. Explicit flags remain reversible one-command overrides. xurl can select a named OAuth2 account; Bird has one active cookie identity, so Bird-backed operations verify that identity matches the selected Birdclaw account before reading or writing.
 
 Per-account state — cursors, transport preferences, last-sync watermarks, OpenAI score caches — lives inside the same `birdclaw.sqlite`. There is no per-account directory tree.
 

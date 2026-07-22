@@ -1,8 +1,8 @@
-import type { Database } from "./sqlite";
 import { getReadDb } from "./db";
 import { profileFromDbRow, profileHandleKey } from "./profile-row";
-import { displayUrlForLink, enrichFallbackUrlEntities } from "./tweet-render";
 import { parseJsonField, toFtsSearchQuery } from "./query-read-model-shared";
+import type { Database } from "./sqlite";
+import { displayUrlForLink, enrichFallbackUrlEntities } from "./tweet-render";
 import type {
 	EmbeddedTweet,
 	ProfileRecord,
@@ -16,8 +16,7 @@ import type {
 	TweetUrlEntity,
 } from "./types";
 
-export type { TimelineItem, TimelineQuery } from "./types";
-export type { TweetConversation } from "./types";
+export type { TimelineItem, TimelineQuery, TweetConversation } from "./types";
 
 function avatarHueForHandle(handle: string) {
 	let hash = 0;
@@ -351,12 +350,14 @@ function buildRetweetedTweet(
 	const retweetedId = getRetweetedTweetIdFromRaw(row.edge_raw_json);
 	const accountId = String(row.account_id);
 	if (retweetedId) {
+		// The visible retweet edge is the account-scoped evidence for its referenced
+		// tweet. Project this account's state without requiring a second membership row.
 		const tweet = getTweetById(
 			db,
 			urlExpansionCache,
 			retweetedId,
 			resolveProfileByHandle,
-			accountId,
+			{ stateAccountId: accountId },
 		);
 		if (tweet) {
 			return tweet;
@@ -496,6 +497,25 @@ export interface TimelineItemsQueryPlan {
 	ftsSearch: string;
 }
 
+export interface TimelineReadExecutionOptions {
+	ftsMatchCountHint?: number;
+	// Unlike TimelineQuery.account, this is always a literal database account ID.
+	// It exists for security boundaries such as MCP that must never honor the
+	// UI's historical `all` sentinel.
+	literalAccountId?: string;
+	// Bound source membership rows before any non-FTS literal account query.
+	literalAccountCandidateLimit?: number;
+}
+
+export class TimelineCandidateLimitError extends Error {
+	constructor(limit: number) {
+		super(
+			`The selected account has more than ${String(limit)} cached candidates for this listing; add a search term to narrow the request.`,
+		);
+		this.name = "TimelineCandidateLimitError";
+	}
+}
+
 // Above this many FTS matches, iterating the match set (with the per-row
 // dedupe subquery) costs more than walking the created_at index newest-first
 // and probing the match set until the limit fills.
@@ -522,13 +542,17 @@ export function buildTimelineItemsQuery(
 		limit = 18,
 	}: TimelineQuery,
 	ftsMatchCountHint = 0,
+	literalAccountId?: string,
 ): TimelineItemsQueryPlan {
 	const kind = resource === "mentions" ? "mention" : resource;
 	const cteParams: Array<string | number> = [];
 	const params: Array<string | number> = [];
 	const normalizedLowQualityThreshold =
 		normalizeLowQualityThreshold(lowQualityThreshold);
-	const shouldDedupeAcrossAccounts = !account || account === "all";
+	const hasLiteralAccountId = literalAccountId !== undefined;
+	const effectiveAccountId = hasLiteralAccountId ? literalAccountId : account;
+	const shouldDedupeAcrossAccounts =
+		!hasLiteralAccountId && (!account || account === "all");
 	let timelineEdgesCte = `
 	      with timeline_edges as (
 	        select account_id, tweet_id, kind, raw_json
@@ -545,7 +569,8 @@ export function buildTimelineItemsQuery(
 		!likedOnly &&
 		!bookmarkedOnly &&
 		!listId &&
-		!account &&
+		!effectiveAccountId &&
+		!hasLiteralAccountId &&
 		!search?.trim() &&
 		replyFilter === "all" &&
 		!since?.trim() &&
@@ -557,31 +582,51 @@ export function buildTimelineItemsQuery(
 		// This CTE is also reused by the all-account dedupe subquery below. Keep
 		// both passes on tweet lookups so SQLite cannot choose a quadratic kind scan.
 		if (likedOnly && bookmarkedOnly) {
+			const likesIndex =
+				hasLiteralAccountId && !ftsSearch
+					? "idx_tweet_collections_kind_account"
+					: "idx_tweet_collections_tweet";
+			const bookmarksIndex =
+				hasLiteralAccountId && !ftsSearch
+					? ""
+					: " indexed by idx_tweet_collections_tweet";
 			timelineEdgesCte = `
         with timeline_edges as (
           select likes.account_id, likes.tweet_id, 'home' as kind, likes.raw_json
-	          from tweet_collections likes indexed by idx_tweet_collections_tweet
-	          join tweet_collections bookmarks indexed by idx_tweet_collections_tweet
+	          from tweet_collections likes indexed by ${likesIndex}
+	          join tweet_collections bookmarks${bookmarksIndex}
             on bookmarks.account_id = likes.account_id
             and bookmarks.tweet_id = likes.tweet_id
 	            and bookmarks.kind = 'bookmarks'
 	          where likes.kind = 'likes'
+			${hasLiteralAccountId ? "and likes.account_id = ?" : ""}
 	        )
 	      `;
+			if (hasLiteralAccountId) cteParams.push(effectiveAccountId ?? "");
 		} else {
 			const collectionKind = likedOnly ? "likes" : "bookmarks";
+			const collectionIndex =
+				hasLiteralAccountId && !ftsSearch
+					? "idx_tweet_collections_kind_account"
+					: "idx_tweet_collections_tweet";
 			timelineEdgesCte = `
 	        with timeline_edges as (
 	          select account_id, tweet_id, 'home' as kind, raw_json
-	          from tweet_collections indexed by idx_tweet_collections_tweet
+	          from tweet_collections indexed by ${collectionIndex}
 	          where kind = ?
+			${hasLiteralAccountId ? "and account_id = ?" : ""}
 	        )
 				`;
 			cteParams.push(collectionKind);
+			if (hasLiteralAccountId) cteParams.push(effectiveAccountId ?? "");
 		}
 		where = "where 1 = 1";
 	} else if (canUseRecentEdgeWindow) {
 		usedRecentEdgeWindow = true;
+		const candidateLimit = Math.max(
+			RECENT_TIMELINE_EDGE_CANDIDATES,
+			limit * 50,
+		);
 		timelineEdgesCte = `
       with timeline_edges as (
         select account_id, tweet_id, kind, raw_json
@@ -590,27 +635,42 @@ export function buildTimelineItemsQuery(
 	          and tweet_id in (
             select id
             from tweets
+            where deleted_at is null and superseded_at is null
             order by created_at desc
 	            limit ?
 	          )
 	      )
 	    `;
-		const candidateLimit = Math.max(
-			RECENT_TIMELINE_EDGE_CANDIDATES,
-			limit * 50,
-		);
 		cteParams.push(kind, candidateLimit);
 		where = "where e.kind = ?";
 		params.push(kind);
 	} else {
-		cteParams.push(kind);
+		if (hasLiteralAccountId) {
+			const edgeIndex = ftsSearch
+				? "idx_tweet_account_edges_kind_tweet"
+				: "idx_tweet_account_edges_kind_account";
+			timelineEdgesCte = `
+	  with timeline_edges as (
+		select account_id, tweet_id, kind, raw_json
+		from tweet_account_edges indexed by ${edgeIndex}
+		where kind = ? and account_id = ?
+	  )
+	`;
+			cteParams.push(kind, effectiveAccountId ?? "");
+		} else {
+			cteParams.push(kind);
+		}
 		where = "where e.kind = ?";
 		params.push(kind);
 	}
+	where += " and t.deleted_at is null and t.superseded_at is null";
 
-	if (account && account !== "all") {
+	if (
+		hasLiteralAccountId ||
+		(effectiveAccountId && effectiveAccountId !== "all")
+	) {
 		where += " and e.account_id = ?";
-		params.push(account);
+		params.push(effectiveAccountId ?? "");
 	}
 
 	if (shouldDedupeAcrossAccounts) {
@@ -687,9 +747,9 @@ export function buildTimelineItemsQuery(
 	// are computed in a separate pass for only the returned rows.
 	const ftsMatchesCte = ftsSearch
 		? `, fts_matches as materialized (
-        select tweet_id
-        from tweets_fts
-        where tweets_fts.text match ?
+		select distinct tweet_id
+		from tweets_fts
+		where tweets_fts.text match ?
       )`
 		: "";
 	if (ftsSearch) {
@@ -805,9 +865,9 @@ export function buildTimelineItemsQuery(
       join tweets t on t.id = e.tweet_id
       join accounts a on a.id = e.account_id
       join profiles p on p.id = t.author_profile_id
-      left join tweets rt on rt.id = t.reply_to_id
+      left join tweets rt on rt.id = t.reply_to_id and rt.deleted_at is null and rt.superseded_at is null
       left join profiles rp on rp.id = rt.author_profile_id
-      left join tweets qt on qt.id = t.quoted_tweet_id
+      left join tweets qt on qt.id = t.quoted_tweet_id and qt.deleted_at is null and qt.superseded_at is null
       left join profiles qp on qp.id = qt.author_profile_id
       ${ftsSearch ? "" : where}
       order by t.created_at desc, t.id desc
@@ -818,7 +878,7 @@ export function buildTimelineItemsQuery(
 		sql: buildTimelineSelectSql(timelineEdgesCte),
 		params: [...cteParams, ...params],
 		fallbackSql: buildTimelineSelectSql(unwindowedTimelineEdgesCte),
-		fallbackParams: [kind, kind, limit],
+		fallbackParams: [kind, ...params],
 		usedRecentEdgeWindow,
 		ftsSearch,
 	};
@@ -827,8 +887,87 @@ export function buildTimelineItemsQuery(
 const SEARCH_SNIPPET_SQL =
 	"snippet(tweets_fts, 1, '<mark>', '</mark>', '...', 16)";
 
-export function listTimelineItems(query: TimelineQuery): TimelineItem[] {
-	const db = getReadDb();
+function countBoundedLiteralAccountCandidates(
+	db: Database,
+	query: TimelineQuery,
+	accountId: string,
+	limit: number,
+) {
+	const boundedLimit = limit + 1;
+	let sql: string;
+	let params: Array<string | number>;
+	if (query.likedOnly && query.bookmarkedOnly) {
+		sql = `select max(source_count) as candidate_count from (
+			select count(*) as source_count from (
+			  select tweet_id
+			  from tweet_collections indexed by idx_tweet_collections_kind_account
+			  where kind = 'likes' and account_id = ?
+			  limit ?
+			)
+			union all
+			select count(*) as source_count from (
+			  select tweet_id
+			  from tweet_collections indexed by idx_tweet_collections_kind_account
+			  where kind = 'bookmarks' and account_id = ?
+			  limit ?
+			)
+		)`;
+		params = [accountId, boundedLimit, accountId, boundedLimit];
+	} else if (query.likedOnly || query.bookmarkedOnly) {
+		sql = `select count(*) as candidate_count from (
+			select tweet_id
+			from tweet_collections indexed by idx_tweet_collections_kind_account
+			where kind = ? and account_id = ?
+			limit ?
+		)`;
+		params = [query.likedOnly ? "likes" : "bookmarks", accountId, boundedLimit];
+	} else {
+		sql = `select count(*) as candidate_count from (
+			select tweet_id
+			from tweet_account_edges indexed by idx_tweet_account_edges_kind_account
+			where kind = ? and account_id = ?
+			limit ?
+		)`;
+		params = [
+			query.resource === "mentions" ? "mention" : query.resource,
+			accountId,
+			boundedLimit,
+		];
+	}
+	const row = db.prepare(sql).get(...params) as { candidate_count: number };
+	return Number(row.candidate_count);
+}
+
+function assertBoundedLiteralAccountQuery(
+	db: Database,
+	query: TimelineQuery,
+	options: TimelineReadExecutionOptions,
+) {
+	if (
+		options.literalAccountId === undefined ||
+		options.literalAccountCandidateLimit === undefined ||
+		query.search?.trim()
+	) {
+		return;
+	}
+	const limit = Math.max(0, Math.trunc(options.literalAccountCandidateLimit));
+	if (
+		countBoundedLiteralAccountCandidates(
+			db,
+			query,
+			options.literalAccountId,
+			limit,
+		) > limit
+	) {
+		throw new TimelineCandidateLimitError(limit);
+	}
+}
+
+export function listTimelineItems(
+	query: TimelineQuery,
+	db: Database = getReadDb(),
+	options: TimelineReadExecutionOptions = {},
+): TimelineItem[] {
 	const {
 		includeQualityReason = false,
 		lowQualityThreshold,
@@ -838,17 +977,23 @@ export function listTimelineItems(query: TimelineQuery): TimelineItem[] {
 		normalizeLowQualityThreshold(lowQualityThreshold);
 	const ftsSearch = query.search?.trim() ? toFtsSearchQuery(query.search) : "";
 	const ftsMatchCount = ftsSearch
-		? Number(
+		? (options.ftsMatchCountHint ??
+			Number(
 				(
 					db
 						.prepare(
-							"select count(*) as match_count from tweets_fts where tweets_fts.text match ?",
+							"select count(distinct tweet_id) as match_count from tweets_fts where tweets_fts.text match ?",
 						)
 						.get(ftsSearch) as { match_count: number }
 				).match_count,
-			)
+			))
 		: 0;
-	const plan = buildTimelineItemsQuery(query, ftsMatchCount);
+	const plan = buildTimelineItemsQuery(
+		query,
+		ftsMatchCount,
+		options.literalAccountId,
+	);
+	assertBoundedLiteralAccountQuery(db, query, options);
 
 	let rows = db.prepare(plan.sql).all(...plan.params) as Array<
 		Record<string, unknown>
@@ -881,7 +1026,7 @@ export function listTimelineItems(query: TimelineQuery): TimelineItem[] {
 
 	const urlExpansionCache: UrlExpansionCache = new Map();
 	const profileByHandleCache: ProfileByHandleCache = new Map();
-	return rows.map((row) => {
+	const items = rows.map((row) => {
 		const author = {
 			id: String(row.profile_id),
 			handle: String(row.handle),
@@ -989,11 +1134,30 @@ export function listTimelineItems(query: TimelineQuery): TimelineItem[] {
 				}
 			: item;
 	});
+	if (options.literalAccountId === undefined) {
+		return items;
+	}
+	const visibleReplyIds = getAccountMemberTweetIds(
+		db,
+		items.flatMap((item) => (item.replyToId ? [item.replyToId] : [])),
+		options.literalAccountId,
+	);
+	return items.map((item) =>
+		item.replyToId && !visibleReplyIds.has(item.replyToId)
+			? { ...item, replyToId: null, replyToTweet: null }
+			: item,
+	);
 }
 
-function conversationTweetSelect(accountId?: string) {
-	const collectionStateSelect = accountId
-		? `
+function conversationTweetSelect(
+	accountId?: string,
+	extraSelect = "",
+	fromClause = `from tweets t
+  join profiles p on p.id = t.author_profile_id`,
+) {
+	const collectionStateSelect =
+		accountId !== undefined
+			? `
     case
       when exists (
         select 1 from tweet_collections collection
@@ -1012,7 +1176,7 @@ function conversationTweetSelect(accountId?: string) {
       ) then 1
       else 0
     end as liked,`
-		: `
+			: `
     exists (
       select 1 from tweet_collections collection
       where collection.tweet_id = t.id and collection.kind = 'bookmarks'
@@ -1030,8 +1194,9 @@ function conversationTweetSelect(accountId?: string) {
     t.is_replied,
     t.like_count,
     t.media_count,
-    ${collectionStateSelect}
-    t.entities_json,
+	    ${collectionStateSelect}
+	${extraSelect}
+	    t.entities_json,
     t.media_json,
     p.id as profile_id,
     p.handle,
@@ -1042,9 +1207,28 @@ function conversationTweetSelect(accountId?: string) {
     p.avatar_hue,
     p.avatar_url,
     p.created_at as profile_created_at
-  from tweets t
-  join profiles p on p.id = t.author_profile_id
+	${fromClause}
 `;
+}
+
+// Tweet bodies are canonical across accounts, so scoped graph walks must prove
+// membership for every visited node rather than trusting reply relationships.
+function tweetAccountMembershipPredicate(tweetAlias: "child" | "t" | "tweet") {
+	return `(
+		exists (
+			select 1 from tweet_account_edges edge
+			where edge.account_id = ? and edge.tweet_id = ${tweetAlias}.id
+		)
+		or exists (
+			select 1 from tweet_collections collection
+			where collection.account_id = ? and collection.tweet_id = ${tweetAlias}.id
+		)
+	)`;
+}
+
+interface TweetLookupOptions {
+	stateAccountId?: string;
+	membershipAccountId?: string;
 }
 
 function getTweetById(
@@ -1052,12 +1236,27 @@ function getTweetById(
 	urlExpansionCache: UrlExpansionCache,
 	tweetId: string,
 	resolveProfileByHandle?: (handle: string) => ProfileRecord,
-	accountId?: string,
+	options: TweetLookupOptions = {},
 ): EmbeddedTweet | null {
-	const stateParams = accountId ? [accountId, accountId] : [];
+	const stateParams =
+		options.stateAccountId !== undefined
+			? [options.stateAccountId, options.stateAccountId]
+			: [];
+	const membershipClause =
+		options.membershipAccountId !== undefined
+			? ` and ${tweetAccountMembershipPredicate("t")}`
+			: "";
+	const membershipParams =
+		options.membershipAccountId !== undefined
+			? [options.membershipAccountId, options.membershipAccountId]
+			: [];
 	const row = db
-		.prepare(`${conversationTweetSelect(accountId)} where t.id = ?`)
-		.get(...stateParams, tweetId) as Record<string, unknown> | undefined;
+		.prepare(
+			`${conversationTweetSelect(options.stateAccountId)} where t.id = ? and t.deleted_at is null and t.superseded_at is null${membershipClause}`,
+		)
+		.get(...stateParams, tweetId, ...membershipParams) as
+		| Record<string, unknown>
+		| undefined;
 	if (!row) return null;
 	return buildEmbeddedTweet(
 		db,
@@ -1068,13 +1267,55 @@ function getTweetById(
 	);
 }
 
+function hasTweetAccountMembership(
+	db: Database,
+	tweetId: string,
+	accountId: string,
+) {
+	return Boolean(
+		db
+			.prepare(
+				`
+				select 1
+				from tweets tweet
+				where tweet.id = ?
+					and tweet.deleted_at is null
+					and tweet.superseded_at is null
+					and ${tweetAccountMembershipPredicate("tweet")}
+				limit 1
+				`,
+			)
+			.get(tweetId, accountId, accountId),
+	);
+}
+
+function getAccountMemberTweetIds(
+	db: Database,
+	tweetIds: string[],
+	accountId: string,
+) {
+	const uniqueTweetIds = Array.from(new Set(tweetIds));
+	if (uniqueTweetIds.length === 0) return new Set<string>();
+	const rows = db
+		.prepare(
+			`select tweet.id
+			 from tweets tweet
+				 where tweet.id in (${uniqueTweetIds.map(() => "?").join(", ")})
+				   and tweet.deleted_at is null
+				   and tweet.superseded_at is null
+			   and ${tweetAccountMembershipPredicate("tweet")}`,
+		)
+		.all(...uniqueTweetIds, accountId, accountId) as Array<{ id: string }>;
+	return new Set(rows.map((row) => String(row.id)));
+}
+
 export function getTweetsByIds(
 	tweetIds: string[],
 	accountId?: string,
 ): EmbeddedTweet[] {
 	const db = getReadDb();
 	const scopedAccountId =
-		accountId && accountId !== "all" ? accountId : undefined;
+		accountId !== undefined && accountId !== "all" ? accountId : undefined;
 	const urlExpansionCache: UrlExpansionCache = new Map();
 	const profileByHandleCache: ProfileByHandleCache = new Map();
 	const resolveProfileByHandle = (handle: string) =>
@@ -1087,31 +1328,8 @@ export function getTweetsByIds(
 		if (!normalized || seen.has(normalized)) continue;
 		seen.add(normalized);
 		if (
-			scopedAccountId &&
-			!db
-				.prepare(
-					`
-					select 1
-					from tweets tweet
-					where tweet.id = ?
-						and (
-							exists (
-								select 1
-								from tweet_account_edges edge
-								where edge.account_id = ?
-									and edge.tweet_id = tweet.id
-							)
-							or exists (
-								select 1
-								from tweet_collections collection
-								where collection.account_id = ?
-									and collection.tweet_id = tweet.id
-							)
-						)
-					limit 1
-					`,
-				)
-				.get(normalized, scopedAccountId, scopedAccountId)
+			scopedAccountId !== undefined &&
+			!hasTweetAccountMembership(db, normalized, scopedAccountId)
 		) {
 			continue;
 		}
@@ -1120,7 +1338,10 @@ export function getTweetsByIds(
 			urlExpansionCache,
 			normalized,
 			resolveProfileByHandle,
-			scopedAccountId,
+			{
+				stateAccountId: scopedAccountId,
+				membershipAccountId: scopedAccountId,
+			},
 		);
 		if (tweet) tweets.push(tweet);
 	}
@@ -1134,31 +1355,125 @@ function listTweetDescendants(
 	rootId: string,
 	limit: number,
 	resolveProfileByHandle?: (handle: string) => ProfileRecord,
+	accountId?: string,
 ) {
-	if (limit <= 0) return [];
+	const visibleLimit = Number.isFinite(limit)
+		? Math.max(0, Math.floor(limit))
+		: 0;
+	const maxDepth = 8;
+	// Keep the traversal safety cap independent from the visible result budget:
+	// retained hidden nodes are graph bridges, not returned candidates.
+	const maxTraversalRows = Math.max(10_000, visibleLimit * 64);
+	const cteLimit = maxTraversalRows + 1;
+	const stateParams = accountId !== undefined ? [accountId, accountId] : [];
+	const scopedChildClause =
+		accountId !== undefined
+			? `and ${tweetAccountMembershipPredicate("child")}`
+			: "";
+	const scopeParams = accountId !== undefined ? [accountId, accountId] : [];
 	const rows = db
 		.prepare(
 			`
-      with recursive branch(id, depth) as (
-        select t.id, 0
+      with recursive branch(id, depth, created_at, path) as (
+        select t.id, 0, t.created_at, char(31) || t.id || char(31)
         from tweets t
-        where t.id = ?
+        where t.id = ? and t.deleted_at is null and t.superseded_at is null
         union all
-        select child.id, branch.depth + 1
-        from tweets child
-        join branch on child.reply_to_id = branch.id
-        where branch.depth < 8
-      )
-      ${conversationTweetSelect()}
-      join branch on branch.id = t.id
-      where t.id != ?
-      order by t.created_at asc
-      limit ?
+        select
+		  child.id,
+		  branch.depth + 1,
+		  child.created_at,
+		  branch.path || child.id || char(31)
+		from tweets child
+		join branch on child.reply_to_id = branch.id
+		where branch.depth < ?
+		  ${scopedChildClause}
+		  and instr(branch.path, char(31) || child.id || char(31)) = 0
+		order by 3 asc, 1 asc, 2 asc
+		limit ?
+	  ),
+	  beyond_depth(id, path) as (
+		select
+		  child.id,
+		  cutoff.path || child.id || char(31)
+		from branch cutoff
+		join tweets child on child.reply_to_id = cutoff.id
+		where cutoff.depth = ?
+		  ${scopedChildClause}
+		  and instr(
+			cutoff.path,
+			char(31) || child.id || char(31)
+		  ) = 0
+		union all
+		select
+		  child.id,
+		  beyond_depth.path || child.id || char(31)
+		from beyond_depth
+		join tweets hidden on hidden.id = beyond_depth.id
+		join tweets child on child.reply_to_id = beyond_depth.id
+		where (hidden.deleted_at is not null or hidden.superseded_at is not null)
+		  ${scopedChildClause}
+		  and instr(
+			beyond_depth.path,
+			char(31) || child.id || char(31)
+		  ) = 0
+		limit ?
+	  ),
+	  branch_stats as (
+		select
+		  (select count(*) from branch) > ? as candidate_limited,
+		  (
+			exists (
+			select 1
+			from beyond_depth
+			join tweets visible on visible.id = beyond_depth.id
+			where visible.deleted_at is null
+			  and visible.superseded_at is null
+			limit 1
+			)
+			or (select count(*) from beyond_depth) > ?
+		  ) as depth_limited
+	  ),
+	  visible_branch as (
+		select branch.id
+		from branch
+		join tweets visible on visible.id = branch.id
+		where branch.id != ?
+		  and visible.deleted_at is null
+		  and visible.superseded_at is null
+		order by visible.created_at asc, visible.id asc
+		limit ?
+	  )
+      ${conversationTweetSelect(
+				accountId,
+				"branch_stats.candidate_limited, branch_stats.depth_limited,",
+				`from branch_stats
+	  left join visible_branch on true
+	  left join tweets t on t.id = visible_branch.id
+	  left join profiles p on p.id = t.author_profile_id`,
+			)}
+	  order by t.created_at asc, t.id asc
       `,
 		)
-		.all(rootId, rootId, limit) as Array<Record<string, unknown>>;
+		.all(
+			rootId,
+			maxDepth,
+			...scopeParams,
+			cteLimit,
+			maxDepth,
+			...scopeParams,
+			...scopeParams,
+			cteLimit,
+			maxTraversalRows,
+			maxTraversalRows,
+			rootId,
+			visibleLimit + 1,
+			...stateParams,
+		) as Array<Record<string, unknown>>;
 
-	return rows
+	const visibleRows = rows.filter((row) => typeof row.id === "string");
+	const items = visibleRows
+		.slice(0, visibleLimit)
 		.map((row) =>
 			buildEmbeddedTweet(
 				db,
@@ -1169,6 +1484,13 @@ function listTweetDescendants(
 			),
 		)
 		.filter((tweet): tweet is EmbeddedTweet => Boolean(tweet));
+	return {
+		items,
+		truncated:
+			visibleRows.length > visibleLimit ||
+			Boolean(rows[0]?.candidate_limited) ||
+			Boolean(rows[0]?.depth_limited),
+	};
 }
 
 function appendConversationTweets(
@@ -1177,18 +1499,32 @@ function appendConversationTweets(
 	items: EmbeddedTweet[],
 	remaining: number,
 ) {
+	let dropped = false;
 	for (const tweet of items) {
-		if (target.length >= remaining || seen.has(tweet.id)) continue;
+		if (seen.has(tweet.id)) continue;
+		if (target.length >= remaining) {
+			dropped = true;
+			continue;
+		}
 		seen.add(tweet.id);
 		target.push(tweet);
 	}
+	return dropped;
 }
 
 export function getTweetConversation(
 	tweetId: string,
 	limit = 80,
+	db: Database = getReadDb(),
+	accountId?: string,
 ): TweetConversation | null {
-	const db = getReadDb();
+	const scopedAccountId = accountId;
+	if (
+		scopedAccountId !== undefined &&
+		!hasTweetAccountMembership(db, tweetId, scopedAccountId)
+	) {
+		return null;
+	}
 	const urlExpansionCache: UrlExpansionCache = new Map();
 	const profileByHandleCache: ProfileByHandleCache = new Map();
 	const resolveProfileByHandle = (handle: string) =>
@@ -1198,21 +1534,50 @@ export function getTweetConversation(
 		urlExpansionCache,
 		tweetId,
 		resolveProfileByHandle,
+		{
+			stateAccountId: scopedAccountId,
+			membershipAccountId: scopedAccountId,
+		},
 	);
 	if (!anchor) return null;
 
 	const ancestors: EmbeddedTweet[] = [];
+	const ancestorIds = new Set([anchor.id]);
 	let current = anchor;
-	for (let depth = 0; depth < 12 && current.replyToId; depth += 1) {
+	let ancestorTruncated = false;
+	const ancestorLimit = Math.min(12, Math.max(0, limit - 1));
+	for (let depth = 0; depth < ancestorLimit && current.replyToId; depth += 1) {
 		const parent = getTweetById(
 			db,
 			urlExpansionCache,
 			current.replyToId,
 			resolveProfileByHandle,
+			{
+				stateAccountId: scopedAccountId,
+				membershipAccountId: scopedAccountId,
+			},
 		);
-		if (!parent || ancestors.some((tweet) => tweet.id === parent.id)) break;
+		if (!parent) break;
+		if (ancestorIds.has(parent.id)) {
+			ancestorTruncated = true;
+			break;
+		}
 		ancestors.push(parent);
+		ancestorIds.add(parent.id);
 		current = parent;
+	}
+	if (current.replyToId && ancestors.length >= ancestorLimit) {
+		const omittedParent = getTweetById(
+			db,
+			urlExpansionCache,
+			current.replyToId,
+			resolveProfileByHandle,
+			{
+				stateAccountId: scopedAccountId,
+				membershipAccountId: scopedAccountId,
+			},
+		);
+		if (omittedParent) ancestorTruncated = true;
 	}
 
 	const required = [...ancestors].reverse();
@@ -1231,24 +1596,62 @@ export function getTweetConversation(
 		anchor.id,
 		remainingAfterRequired,
 		resolveProfileByHandle,
+		scopedAccountId,
 	);
-	appendConversationTweets(items, seen, focusedDescendants, limit);
+	const focusedDescendantsDropped = appendConversationTweets(
+		items,
+		seen,
+		focusedDescendants.items,
+		limit,
+	);
+	let descendantTruncated =
+		focusedDescendants.truncated || focusedDescendantsDropped;
 
-	if (items.length < limit && root.id !== anchor.id) {
+	if (root.id !== anchor.id) {
 		const ambientDescendants = listTweetDescendants(
 			db,
 			urlExpansionCache,
 			root.id,
 			limit,
 			resolveProfileByHandle,
+			scopedAccountId,
 		);
-		appendConversationTweets(items, seen, ambientDescendants, limit);
+		const ambientDescendantsDropped = appendConversationTweets(
+			items,
+			seen,
+			ambientDescendants.items,
+			limit,
+		);
+		descendantTruncated =
+			descendantTruncated ||
+			ambientDescendants.truncated ||
+			ambientDescendantsDropped;
 	}
 
-	items.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+	items.sort(
+		(left, right) =>
+			left.createdAt.localeCompare(right.createdAt) ||
+			left.id.localeCompare(right.id),
+	);
+	const visibleReplyIds =
+		scopedAccountId === undefined
+			? null
+			: getAccountMemberTweetIds(
+					db,
+					items.flatMap((tweet) => (tweet.replyToId ? [tweet.replyToId] : [])),
+					scopedAccountId,
+				);
+	const scopedItems = visibleReplyIds
+		? items.map((tweet) =>
+				tweet.replyToId && !visibleReplyIds.has(tweet.replyToId)
+					? { ...tweet, replyToId: null }
+					: tweet,
+			)
+		: items;
 
 	return {
 		anchorId: anchor.id,
-		items,
+		items: scopedItems,
+		truncated: ancestorTruncated || descendantTruncated,
 	};
 }

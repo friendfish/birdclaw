@@ -28,10 +28,12 @@ const configResponseSchema = z.object({
 		apiKey: z.string().optional(),
 		model: z.string().optional(),
 	}),
-	language: z.object({
-		aiLanguage: z.string().optional(),
-		uiLanguage: z.string().optional(),
-	}).optional(),
+	language: z
+		.object({
+			aiLanguage: z.string().optional(),
+			uiLanguage: z.string().optional(),
+		})
+		.optional(),
 });
 
 const modelsResponseSchema = z.object({
@@ -193,7 +195,8 @@ function ConfigRoute() {
 					<div className="min-w-0">
 						<h1 className={pageTitleClass}>System Config</h1>
 						<p className={pageSubtitleClass}>
-							Configure system settings, model providers, and language preferences.
+							Configure system settings, model providers, and language
+							preferences.
 						</p>
 					</div>
 				</div>
@@ -219,7 +222,7 @@ function ConfigRoute() {
 									"px-4 py-2.5 font-bold text-[14px] border-b-2 transition-all cursor-pointer",
 									activeTab === "ai"
 										? "border-[var(--brand)] text-[var(--brand)]"
-										: "border-transparent text-[var(--ink-soft)] hover:text-[var(--ink)]"
+										: "border-transparent text-[var(--ink-soft)] hover:text-[var(--ink)]",
 								)}
 							>
 								模型配置
@@ -235,7 +238,7 @@ function ConfigRoute() {
 									"px-4 py-2.5 font-bold text-[14px] border-b-2 transition-all cursor-pointer",
 									activeTab === "language"
 										? "border-[var(--brand)] text-[var(--brand)]"
-										: "border-transparent text-[var(--ink-soft)] hover:text-[var(--ink)]"
+										: "border-transparent text-[var(--ink-soft)] hover:text-[var(--ink)]",
 								)}
 							>
 								语言配置
@@ -256,12 +259,15 @@ function ConfigRoute() {
 										>
 											<option value="openai">OpenAI</option>
 											<option value="deepseek">DeepSeek</option>
-											<option value="google">Google Gemini (OpenAI Compat)</option>
+											<option value="google">
+												Google Gemini (OpenAI Compat)
+											</option>
 											<option value="openrouter">OpenRouter</option>
 											<option value="custom">Custom / Other</option>
 										</select>
 										<p className="text-[12px] text-[var(--ink-soft)]">
-											Select the LLM provider you want system digests and analysis to use.
+											Select the LLM provider you want system digests and
+											analysis to use.
 										</p>
 									</div>
 
@@ -278,7 +284,8 @@ function ConfigRoute() {
 											required
 										/>
 										<p className="text-[12px] text-[var(--ink-soft)]">
-											The API endpoint URL for standard chat completion requests.
+											The API endpoint URL for standard chat completion
+											requests.
 										</p>
 									</div>
 
@@ -295,7 +302,8 @@ function ConfigRoute() {
 											required
 										/>
 										<p className="text-[12px] text-[var(--ink-soft)]">
-											Your secret API key. Stored securely inside config.json on your machine.
+											Your secret API key. Stored securely inside config.json on
+											your machine.
 										</p>
 									</div>
 
@@ -314,7 +322,10 @@ function ConfigRoute() {
 												)}
 											>
 												<RefreshCw
-													className={cx("size-3", fetchingModels && "animate-spin")}
+													className={cx(
+														"size-3",
+														fetchingModels && "animate-spin",
+													)}
 												/>
 												{fetchingModels ? "Fetching..." : "Fetch Models"}
 											</button>
@@ -328,7 +339,8 @@ function ConfigRoute() {
 											required
 										/>
 										<p className="text-[12px] text-[var(--ink-soft)]">
-											The specific model identifier to target (e.g. deepseek-chat, deepseek-reasoner, gpt-4o).
+											The specific model identifier to target (e.g.
+											deepseek-chat, deepseek-reasoner, gpt-4o).
 										</p>
 
 										{availableModels.length > 0 ? (
@@ -367,11 +379,14 @@ function ConfigRoute() {
 											onChange={(e) => setAiLanguage(e.target.value)}
 											className={selectFieldClass}
 										>
-											<option value="zh-CN">简体中文 (Simplified Chinese)</option>
+											<option value="zh-CN">
+												简体中文 (Simplified Chinese)
+											</option>
 											<option value="en">English</option>
 										</select>
 										<p className="text-[12px] text-[var(--ink-soft)]">
-											用于指定 Today 今日简报、用户画像分析等 LLM 生成内容的语言。
+											用于指定 Today 今日简报、用户画像分析等 LLM
+											生成内容的语言。
 										</p>
 									</div>
 
@@ -384,11 +399,14 @@ function ConfigRoute() {
 											onChange={(e) => setUiLanguage(e.target.value)}
 											className={selectFieldClass}
 										>
-											<option value="zh-CN">简体中文 (Simplified Chinese)</option>
+											<option value="zh-CN">
+												简体中文 (Simplified Chinese)
+											</option>
 											<option value="en">English (Partial Support)</option>
 										</select>
 										<p className="text-[12px] text-[var(--ink-soft)]">
-											用于指定 Birdclaw 本地管理界面的显示语言（部分控制面板支持）。
+											用于指定 Birdclaw
+											本地管理界面的显示语言（部分控制面板支持）。
 										</p>
 									</div>
 								</div>
@@ -412,7 +430,10 @@ function ConfigRoute() {
 								<button
 									type="submit"
 									disabled={saving}
-									className={cx(primaryButtonClass, "w-full min-[480px]:w-auto")}
+									className={cx(
+										primaryButtonClass,
+										"w-full min-[480px]:w-auto",
+									)}
 								>
 									<Save className="size-4" />
 									{saving ? "Saving..." : "Save Config"}

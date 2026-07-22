@@ -39,7 +39,7 @@ function mockBirdRejectWithStdoutOnce(
 function expectBirdCommandCall(callNumber: number, args: string[]) {
 	const call = execFileAsyncMock.mock.calls[callNumber - 1];
 	expect(call).toBeDefined();
-	expect(call[0]).toBe("/bin/bash");
+	expect(String(call[0])).toMatch(/(?:^\/bin\/bash$|bash\.exe$)/);
 	expect((call[1] as string[])[0]).toBe("-c");
 	expect((call[1] as string[]).slice(4)).toEqual(["/tmp/bird", ...args]);
 	expect(call[2]).toEqual(
@@ -72,6 +72,91 @@ describe("bird transport wrapper", () => {
 		expect(execFileAsyncMock).not.toHaveBeenCalled();
 
 		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("uses /bin/bash for the bird stdout redirect wrapper on POSIX systems", async () => {
+		const { __test__ } = await import("./bird");
+
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"linux",
+				{} as NodeJS.ProcessEnv,
+				() => false,
+			),
+		).toBe("/bin/bash");
+	});
+
+	it("uses Git Bash for the bird stdout redirect wrapper on Windows", async () => {
+		const { __test__ } = await import("./bird");
+
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{} as NodeJS.ProcessEnv,
+				(candidate) => candidate === "C:\\Program Files\\Git\\bin\\bash.exe",
+			),
+		).toBe("C:\\Program Files\\Git\\bin\\bash.exe");
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{ BIRDCLAW_BASH_COMMAND: "D:\\Git\\bin\\bash.exe" },
+				() => false,
+			),
+		).toBe("D:\\Git\\bin\\bash.exe");
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{ Path: "D:\\PortableGit\\bin;." },
+				(candidate) =>
+					candidate === "D:\\PortableGit\\bin\\bash.exe" ||
+					candidate === "D:\\PortableGit\\cmd\\git.exe",
+			),
+		).toBe("D:\\PortableGit\\bin\\bash.exe");
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{ LOCALAPPDATA: "D:\\Users\\Sam\\AppData\\Local" },
+				(candidate) =>
+					candidate ===
+					"D:\\Users\\Sam\\AppData\\Local\\Programs\\Git\\bin\\bash.exe",
+			),
+		).toBe("D:\\Users\\Sam\\AppData\\Local\\Programs\\Git\\bin\\bash.exe");
+		expect(
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{ Path: "D:\\PortableGit\\cmd" },
+				(candidate) =>
+					candidate === "D:\\PortableGit\\bin\\bash.exe" ||
+					candidate === "D:\\PortableGit\\cmd\\git.exe",
+			),
+		).toBe("D:\\PortableGit\\bin\\bash.exe");
+		expect(() =>
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{ Path: "C:\\Windows\\System32;D:\\PortableGit\\cmd" },
+				(candidate) => candidate === "C:\\Windows\\System32\\bash.exe",
+			),
+		).toThrow("Git Bash unavailable: no trusted bash.exe found");
+		expect(() =>
+			__test__.getBirdStdoutShellCommand(
+				"win32",
+				{ PATH: ".;relative\\bin" },
+				() => false,
+			),
+		).toThrow("Git Bash unavailable: no trusted bash.exe found");
+	});
+
+	it("disables MSYS argument conversion for the Windows redirect wrapper", async () => {
+		const { __test__ } = await import("./bird");
+
+		expect(
+			__test__.getBirdStdoutShellEnv("win32", {
+				PATH: "C:\\Windows",
+				MSYS2_ARG_CONV_EXCL: "/legacy",
+			}),
+		).toEqual({ PATH: "C:\\Windows", MSYS2_ARG_CONV_EXCL: "*" });
+		const posixEnv = { PATH: "/usr/bin" };
+		expect(__test__.getBirdStdoutShellEnv("linux", posixEnv)).toBe(posixEnv);
 	});
 
 	it("maps bird mentions json into xurl-compatible payloads", async () => {
@@ -406,6 +491,19 @@ describe("bird transport wrapper", () => {
 		);
 	});
 
+	it("explains how to configure Bash when the wrapper shell is missing", async () => {
+		process.env.BIRDCLAW_BIRD_COMMAND = "/tmp/bird";
+		mockBirdRejectOnce(
+			Object.assign(new Error("spawn bash.exe ENOENT"), { code: "ENOENT" }),
+		);
+
+		const { listMentionsViaBird } = await import("./bird");
+
+		await expect(listMentionsViaBird({ maxResults: 10 })).rejects.toThrow(
+			"Bash unavailable:",
+		);
+	});
+
 	it("tolerates bird json with raw newlines inside tweet text", async () => {
 		process.env.BIRDCLAW_BIRD_COMMAND = "/tmp/bird";
 		mockBirdStdoutOnce(
@@ -512,6 +610,22 @@ describe("bird transport wrapper", () => {
 			}),
 		).resolves.toEqual(payload);
 		expectBirdCommandCall(1, ["dm-reject", "111-333", "--json"]);
+	});
+
+	it("preserves missing-shell errors from failed bird DM mutations", async () => {
+		process.env.BIRDCLAW_BIRD_COMMAND = "/tmp/bird";
+		mockBirdRejectOnce(
+			Object.assign(new Error("spawn bash ENOENT"), { code: "ENOENT" }),
+		);
+
+		const { runDirectMessageRequestMutationViaBird } = await import("./bird");
+
+		await expect(
+			runDirectMessageRequestMutationViaBird({
+				action: "accept",
+				conversationId: "111-333",
+			}),
+		).rejects.toThrow("Bash unavailable:");
 	});
 
 	it("passes pagination options to bird DM block mutations", async () => {
@@ -1070,14 +1184,28 @@ describe("bird transport wrapper", () => {
 			text: "hello\nworld",
 			tab: "a\tb",
 		});
-		expect(__test__.formatBirdCommandError(enoent, "/missing/bird")).toEqual(
+		expect(
+			__test__.formatBirdCommandError(enoent, "/missing/bird", "bash.exe"),
+		).toEqual(
 			expect.objectContaining({
-				message: expect.stringContaining(
-					"bird command unavailable: /missing/bird",
-				),
+				message: expect.stringContaining("Bash unavailable: bash.exe"),
 			}),
 		);
-		expect(__test__.formatBirdCommandError("boom", "/tmp/bird")).toBe("boom");
+		expect(
+			__test__.formatBirdCommandError(
+				enoent,
+				"C:\\bird.cmd",
+				"bash.exe",
+				"win32",
+			),
+		).toEqual(
+			expect.objectContaining({
+				message: expect.stringContaining("Git Bash unavailable: bash.exe"),
+			}),
+		);
+		expect(
+			__test__.formatBirdCommandError("boom", "/tmp/bird", "/bin/bash"),
+		).toBe("boom");
 		expect(
 			__test__.isUnsupportedBirdOptionError(
 				Object.assign(new Error("bad"), {

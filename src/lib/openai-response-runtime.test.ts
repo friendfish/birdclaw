@@ -17,7 +17,9 @@ const originalBirdclawHome = process.env.BIRDCLAW_HOME;
 const tempRoots: string[] = [];
 
 beforeEach(() => {
-	const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-openai-runtime-"));
+	const tempRoot = mkdtempSync(
+		path.join(os.tmpdir(), "birdclaw-openai-runtime-"),
+	);
 	tempRoots.push(tempRoot);
 	process.env.BIRDCLAW_HOME = tempRoot;
 	resetBirdclawPathsForTests();

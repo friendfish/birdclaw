@@ -1,5 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Loader2, RefreshCw, Search, UserSearch, Sparkles, ArrowLeft } from "lucide-react";
+import {
+	Loader2,
+	RefreshCw,
+	Search,
+	UserSearch,
+	Sparkles,
+	ArrowLeft,
+} from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { AvatarChip } from "#/components/AvatarChip";
 import { MarkdownViewer } from "#/components/MarkdownViewer";
@@ -88,7 +95,9 @@ function ProfileAnalyzeRoute() {
 					setLanguage(data.language.aiLanguage);
 				}
 			})
-			.catch((err) => console.error("Failed to load global config language", err));
+			.catch((err) =>
+				console.error("Failed to load global config language", err),
+			);
 	}, []);
 
 	// Metadata for lists
@@ -102,7 +111,10 @@ function ProfileAnalyzeRoute() {
 	const [snapshots, setSnapshots] = useState<any[]>([]);
 	const [selectedSnapshot, setSelectedSnapshot] = useState<any | null>(null);
 	const [isAnalyzing, setIsAnalyzing] = useState(false);
-	const [activeStatus, setActiveStatus] = useState<{ label: string; detail?: string } | null>(null);
+	const [activeStatus, setActiveStatus] = useState<{
+		label: string;
+		detail?: string;
+	} | null>(null);
 	const [anyActive, setAnyActive] = useState(false);
 
 	const liveStatus = useMemo(() => {
@@ -117,14 +129,24 @@ function ProfileAnalyzeRoute() {
 
 	const profileInfo = useMemo(() => {
 		if (!submittedHandle) return null;
-		let found = metadata?.analyzed.find((p) => p.handle.toLowerCase() === submittedHandle.toLowerCase());
+		let found = metadata?.analyzed.find(
+			(p) => p.handle.toLowerCase() === submittedHandle.toLowerCase(),
+		);
 		if (!found) {
-			found = metadata?.following.find((p) => p.handle.toLowerCase() === submittedHandle.toLowerCase());
+			found = metadata?.following.find(
+				(p) => p.handle.toLowerCase() === submittedHandle.toLowerCase(),
+			);
 		}
 		if (!found && analysis.context?.profile) {
 			found = analysis.context.profile;
 		}
-		return found || { handle: submittedHandle, displayName: `@${submittedHandle}`, avatarHue: stableHue(submittedHandle) };
+		return (
+			found || {
+				handle: submittedHandle,
+				displayName: `@${submittedHandle}`,
+				avatarHue: stableHue(submittedHandle),
+			}
+		);
 	}, [submittedHandle, metadata, analysis.context]);
 
 	// Load snapshots when handle changes
@@ -135,7 +157,9 @@ function ProfileAnalyzeRoute() {
 		if (urlHandle) {
 			setSelectedSnapshot(null);
 			setIsAnalyzing(false);
-			fetch(`/api/profile-analysis-metadata?handle=${encodeURIComponent(urlHandle)}`)
+			fetch(
+				`/api/profile-analysis-metadata?handle=${encodeURIComponent(urlHandle)}`,
+			)
 				.then((res) => res.json())
 				.then((data) => {
 					if (data.ok) {
@@ -168,7 +192,9 @@ function ProfileAnalyzeRoute() {
 		if (!isAnalyzing || !submittedHandle) return;
 
 		const timer = setInterval(() => {
-			fetch(`/api/profile-analysis-metadata?handle=${encodeURIComponent(submittedHandle)}`)
+			fetch(
+				`/api/profile-analysis-metadata?handle=${encodeURIComponent(submittedHandle)}`,
+			)
 				.then((res) => res.json())
 				.then((data) => {
 					if (data.ok) {
@@ -261,7 +287,11 @@ function ProfileAnalyzeRoute() {
 
 							{/* Refresh or Analyse action button */}
 							<button
-								className={snapshots.length > 0 ? secondaryButtonClass : primaryButtonClass}
+								className={
+									snapshots.length > 0
+										? secondaryButtonClass
+										: primaryButtonClass
+								}
 								disabled={analysis.loading || isAnalyzing}
 								onClick={() => {
 									setSelectedSnapshot(null);
@@ -350,7 +380,11 @@ function ProfileAnalyzeRoute() {
 													{profile.displayName || profile.handle}
 												</div>
 												<div className="text-[10px] text-[var(--ink-soft)] truncate w-full mt-0.5">
-													{profile.lastAnalyzedAt ? new Date(profile.lastAnalyzedAt).toLocaleDateString() : ""}
+													{profile.lastAnalyzedAt
+														? new Date(
+																profile.lastAnalyzedAt,
+															).toLocaleDateString()
+														: ""}
 												</div>
 											</div>
 										</div>
@@ -440,7 +474,7 @@ function ProfileAnalyzeRoute() {
 							className="h-24 sm:h-28 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--bg-active)_68%,var(--accent)_32%),color-mix(in_srgb,var(--bg)_70%,var(--accent)_30%))]"
 							data-testid="profile-cover"
 						/>
-						
+
 						{/* Profile Info Details Area */}
 						<div className="px-4 pb-4">
 							<div className="flex items-start justify-between gap-3 -mt-6 sm:-mt-8">
@@ -448,18 +482,27 @@ function ProfileAnalyzeRoute() {
 									{/* Overlapping Avatar with White Ring */}
 									<span className="inline-grid rounded-full ring-4 ring-[var(--panel)]">
 										<AvatarChip
-											name={profileInfo?.displayName || profileInfo?.handle || submittedHandle}
+											name={
+												profileInfo?.displayName ||
+												profileInfo?.handle ||
+												submittedHandle
+											}
 											avatarUrl={profileInfo?.avatarUrl ?? undefined}
-											hue={profileInfo?.avatarHue ?? stableHue(profileInfo?.handle || submittedHandle)}
+											hue={
+												profileInfo?.avatarHue ??
+												stableHue(profileInfo?.handle || submittedHandle)
+											}
 											profileId={profileInfo?.id}
 											size="large"
 										/>
 									</span>
-									
+
 									{/* User Name & @id Handle Stack */}
 									<div className="min-w-0 pt-7 sm:pt-9">
 										<h1 className="m-0 text-[18px] sm:text-[20px] font-bold text-[var(--ink)] leading-snug truncate">
-											{profileInfo?.displayName || profileInfo?.handle || submittedHandle}
+											{profileInfo?.displayName ||
+												profileInfo?.handle ||
+												submittedHandle}
 										</h1>
 										<div className="text-[13px] sm:text-[14px] text-[var(--ink-soft)] leading-normal truncate mt-0.5">
 											@{profileInfo?.handle || submittedHandle}
@@ -481,7 +524,11 @@ function ProfileAnalyzeRoute() {
 												backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`,
 												backgroundSize: "1.25rem",
 											}}
-											value={selectedSnapshot ? snapshots.indexOf(selectedSnapshot).toString() : "current"}
+											value={
+												selectedSnapshot
+													? snapshots.indexOf(selectedSnapshot).toString()
+													: "current"
+											}
 											onChange={(e) => {
 												const val = e.target.value;
 												if (val === "current") {
@@ -497,7 +544,8 @@ function ProfileAnalyzeRoute() {
 											<option value="current">最新实时分析 (Current)</option>
 											{snapshots.map((snap, i) => (
 												<option key={snap.cacheKey} value={i.toString()}>
-													历史快照: {new Date(snap.updatedAt).toLocaleDateString()}
+													历史快照:{" "}
+													{new Date(snap.updatedAt).toLocaleDateString()}
 												</option>
 											))}
 										</select>
@@ -508,7 +556,9 @@ function ProfileAnalyzeRoute() {
 					</div>
 
 					{/* Profile Analysis Status Line (shows loading status, etc.) */}
-					{!selectedSnapshot && <ProfileAnalysisStatusLine analysis={analysis} className="mt-1" />}
+					{!selectedSnapshot && (
+						<ProfileAnalysisStatusLine analysis={analysis} className="mt-1" />
+					)}
 
 					{/* Error copy */}
 					{!selectedSnapshot && analysis.error ? (
@@ -523,7 +573,9 @@ function ProfileAnalyzeRoute() {
 							<div className="flex items-center gap-2 rounded-lg border border-[var(--brand)]/30 bg-[var(--brand-soft)]/20 px-4 py-2 text-[13px] text-[var(--brand)]">
 								<Sparkles className="size-4 shrink-0" strokeWidth={1.8} />
 								<span className="font-medium">
-									正在查看历史快照报告（生成于 {new Date(selectedSnapshot.updatedAt).toLocaleString()} · 模型: {selectedSnapshot.model.split("/").pop()}）
+									正在查看历史快照报告（生成于{" "}
+									{new Date(selectedSnapshot.updatedAt).toLocaleString()} ·
+									模型: {selectedSnapshot.model.split("/").pop()}）
 								</span>
 								<button
 									className="ml-auto text-[12px] font-bold underline cursor-pointer hover:opacity-80"
@@ -535,23 +587,35 @@ function ProfileAnalyzeRoute() {
 							<div className="max-w-3xl">
 								<MarkdownViewer
 									context={analysis.context}
-									markdown={stripMarkdownHeader(selectedSnapshot.markdown, submittedHandle)}
+									markdown={stripMarkdownHeader(
+										selectedSnapshot.markdown,
+										submittedHandle,
+									)}
 								/>
 							</div>
 						</div>
-					) : (isAnalyzing || analysis.loading) ? (
+					) : isAnalyzing || analysis.loading ? (
 						/* 💡 Beautiful Loading/Analyzing Placeholder for Background Task */
 						<div className="flex flex-col items-center justify-center text-center p-12 max-w-xl mx-auto mt-12 rounded-xl border border-[var(--line)] bg-[var(--panel)] gap-4 shadow-sm">
 							<div className="p-3 bg-[var(--brand-soft)]/20 rounded-full text-[var(--brand)]">
 								<RefreshCw className="size-8 animate-spin" strokeWidth={1.5} />
 							</div>
-							<h3 className="text-[16px] font-bold text-[var(--ink)]">后台画像拉取与总结中...</h3>
+							<h3 className="text-[16px] font-bold text-[var(--ink)]">
+								后台画像拉取与总结中...
+							</h3>
 							{liveStatus && liveStatus.label !== "Ready" && (
 								<div className="flex items-center justify-center gap-2 text-[13px] sm:text-[14px] font-medium text-[var(--ink-soft)] bg-[var(--bg)]/80 px-4 py-2 rounded-lg border border-[var(--line)] max-w-full">
-									{liveStatus.label.toLowerCase().includes("summarizing") || liveStatus.label.toLowerCase().includes("ai") ? (
-										<Sparkles className="size-4 text-[var(--brand)] shrink-0" strokeWidth={1.8} />
+									{liveStatus.label.toLowerCase().includes("summarizing") ||
+									liveStatus.label.toLowerCase().includes("ai") ? (
+										<Sparkles
+											className="size-4 text-[var(--brand)] shrink-0"
+											strokeWidth={1.8}
+										/>
 									) : (
-										<Loader2 className="size-4 animate-spin text-[var(--brand)] shrink-0" strokeWidth={1.8} />
+										<Loader2
+											className="size-4 animate-spin text-[var(--brand)] shrink-0"
+											strokeWidth={1.8}
+										/>
 									)}
 									<span>
 										{liveStatus.label}
@@ -560,18 +624,24 @@ function ProfileAnalyzeRoute() {
 								</div>
 							)}
 							<p className="text-[13px] text-[var(--ink-soft)] max-w-sm leading-relaxed">
-								该用户正在后台默默进行数据拉取与 AI 总结。你可以放心离开，也可以在此等待，完成落库后将自动秒开展现。
+								该用户正在后台默默进行数据拉取与 AI
+								总结。你可以放心离开，也可以在此等待，完成落库后将自动秒开展现。
 							</p>
 						</div>
-					) : snapshots.length === 0 && !analysis.loading && !analysis.markdown ? (
+					) : snapshots.length === 0 &&
+					  !analysis.loading &&
+					  !analysis.markdown ? (
 						/* 💡 Beautiful Consent Placeholder for Un-analyzed user */
 						<div className="flex flex-col items-center justify-center text-center p-12 max-w-xl mx-auto mt-12 rounded-xl border border-dashed border-[var(--line)] bg-[var(--panel)] gap-4">
 							<div className="p-3 bg-[var(--brand-soft)]/20 rounded-full text-[var(--brand)]">
 								<UserSearch className="size-8" strokeWidth={1.5} />
 							</div>
-							<h3 className="text-[16px] font-bold text-[var(--ink)]">该用户尚未进行过画像分析</h3>
+							<h3 className="text-[16px] font-bold text-[var(--ink)]">
+								该用户尚未进行过画像分析
+							</h3>
 							<p className="text-[13px] text-[var(--ink-soft)] max-w-sm leading-relaxed">
-								当前系统未有该用户的有效分析信息。你可以选定右上角的语言，然后点击 <strong>Analyse</strong> 按钮即刻启动 AI 抓取与画像生成。
+								当前系统未有该用户的有效分析信息。你可以选定右上角的语言，然后点击{" "}
+								<strong>Analyse</strong> 按钮即刻启动 AI 抓取与画像生成。
 							</p>
 							{anyActive && !isAnalyzing ? (
 								<div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-[13px] text-amber-600 font-medium max-w-sm">
@@ -596,7 +666,10 @@ function ProfileAnalyzeRoute() {
 								<div className="max-w-3xl">
 									<MarkdownViewer
 										context={analysis.context}
-										markdown={stripMarkdownHeader(analysis.markdown, submittedHandle)}
+										markdown={stripMarkdownHeader(
+											analysis.markdown,
+											submittedHandle,
+										)}
 									/>
 								</div>
 							) : (

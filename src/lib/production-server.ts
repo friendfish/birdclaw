@@ -7,8 +7,14 @@ import {
 } from "node:http";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 import { LOCAL_WEB_PEER_HEADER } from "./http-effect";
+import {
+	type BirdclawMcpRuntime,
+	handleBirdclawMcpExchange,
+	prepareBirdclawMcpRuntime,
+} from "./mcp-http";
 
 interface FetchHandler {
 	fetch(request: Request): Response | Promise<Response>;
@@ -20,7 +26,16 @@ export interface ProductionServerOptions {
 	port?: number;
 	clientDir?: string;
 	serverEntry?: string;
+	serverVersion?: string;
+	mcpRuntime?: BirdclawMcpRuntime | null;
+	requestTimeoutMs?: number;
+	headersTimeoutMs?: number;
+	mcpResponseTimeoutMs?: number;
 }
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 35_000;
+const DEFAULT_HEADERS_TIMEOUT_MS = 10_000;
+const DEFAULT_MCP_RESPONSE_TIMEOUT_MS = 30_000;
 
 const CONTENT_TYPES: Record<string, string> = {
 	".css": "text/css; charset=utf-8",
@@ -63,13 +78,115 @@ function requestHeaders(request: IncomingMessage) {
 	return headers;
 }
 
-function toWebRequest(request: IncomingMessage) {
-	const host = request.headers.host ?? "127.0.0.1";
-	const url = new URL(request.url ?? "/", `http://${host}`);
+class IncomingRequestError extends Error {}
+
+function rawHeaderValues(request: IncomingMessage, name: string) {
+	const values: string[] = [];
+	for (let index = 0; index < request.rawHeaders.length; index += 2) {
+		if (request.rawHeaders[index]?.toLowerCase() === name) {
+			values.push(request.rawHeaders[index + 1] ?? "");
+		}
+	}
+	return values;
+}
+
+function parseIncomingUrl(request: IncomingMessage) {
+	const hostHeaders = rawHeaderValues(request, "host");
+	if (hostHeaders.length !== 1 || !hostHeaders[0]) {
+		throw new IncomingRequestError("Exactly one Host header is required");
+	}
+	const rawTarget = request.url ?? "";
+	if (
+		!rawTarget.startsWith("/") ||
+		rawTarget.startsWith("//") ||
+		rawTarget.includes("\\")
+	) {
+		throw new IncomingRequestError(
+			"Only origin-form request targets are allowed",
+		);
+	}
+	let base: URL;
+	let url: URL;
+	try {
+		base = new URL(`http://${hostHeaders[0]}`);
+		url = new URL(rawTarget, base);
+	} catch {
+		throw new IncomingRequestError("Invalid request target or Host header");
+	}
+	if (url.origin !== base.origin) {
+		throw new IncomingRequestError("Request target changed the request origin");
+	}
+	return { rawTarget, url };
+}
+
+function canonicalDnsHostname(hostname: string) {
+	return hostname.toLowerCase().replace(/\.+$/u, "");
+}
+
+function hasReservedMcpHostname(url: URL, runtime: BirdclawMcpRuntime | null) {
+	return Boolean(
+		runtime?.config.reserveHost &&
+		canonicalDnsHostname(url.hostname) ===
+			canonicalDnsHostname(runtime.config.publicUrl.hostname),
+	);
+}
+
+function hasMcpPathPrefix(rawTarget: string, url: URL) {
+	const rawPath = rawTarget.split(/[?#]/u, 1)[0] ?? "";
+	let candidate = rawPath;
+	for (let depth = 0; depth < 3; depth += 1) {
+		if (candidate.toLowerCase().startsWith("/mcp")) return true;
+		try {
+			const normalized = new URL(candidate, "http://birdclaw.invalid");
+			if (
+				normalized.origin === "http://birdclaw.invalid" &&
+				normalized.pathname.toLowerCase().startsWith("/mcp")
+			) {
+				return true;
+			}
+			const decoded = decodeURIComponent(candidate);
+			if (decoded === candidate) break;
+			candidate = decoded;
+		} catch {
+			break;
+		}
+	}
+	return url.pathname.toLowerCase().startsWith("/mcp");
+}
+
+function rejectDuplicateAuthorization(request: IncomingMessage) {
+	if (rawHeaderValues(request, "authorization").length > 1) {
+		throw new IncomingRequestError(
+			"Multiple Authorization headers are not allowed",
+		);
+	}
+}
+
+function isExpectedClientDisconnect(
+	error: unknown,
+	request: IncomingMessage,
+	response: ServerResponse,
+) {
+	if (request.aborted || request.destroyed || response.destroyed) return true;
+	if (error instanceof Error && error.name === "AbortError") return true;
+	const code = (error as { code?: unknown } | null)?.code;
+	return (
+		code === "ECONNRESET" ||
+		code === "ERR_STREAM_DESTROYED" ||
+		code === "ERR_STREAM_PREMATURE_CLOSE"
+	);
+}
+
+function toWebRequest(
+	request: IncomingMessage,
+	url: URL,
+	signal?: AbortSignal,
+) {
 	const method = request.method ?? "GET";
 	const init: RequestInit & { duplex?: "half" } = {
 		method,
 		headers: requestHeaders(request),
+		...(signal ? { signal } : {}),
 	};
 	if (method !== "GET" && method !== "HEAD") {
 		init.body = Readable.toWeb(request) as ReadableStream;
@@ -78,7 +195,11 @@ function toWebRequest(request: IncomingMessage) {
 	return new Request(url, init);
 }
 
-async function sendWebResponse(response: Response, target: ServerResponse) {
+async function sendWebResponse(
+	response: Response,
+	target: ServerResponse,
+	timeoutMs?: number,
+) {
 	target.statusCode = response.status;
 	if (response.statusText) target.statusMessage = response.statusText;
 	const setCookies = response.headers.getSetCookie();
@@ -87,29 +208,36 @@ async function sendWebResponse(response: Response, target: ServerResponse) {
 	}
 	if (setCookies.length > 0) target.setHeader("set-cookie", setCookies);
 	if (!response.body) {
-		target.end();
+		await new Promise<void>((resolve, reject) => {
+			target.once("error", reject);
+			target.end(resolve);
+		});
 		return;
 	}
-	await new Promise<void>((resolve, reject) => {
-		const body = Readable.fromWeb(response.body as never);
-		body.once("error", reject);
-		target.once("error", reject);
-		target.once("finish", resolve);
-		body.pipe(target);
-	});
+	const body = Readable.fromWeb(response.body as never);
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	if (timeoutMs !== undefined) {
+		timeout = setTimeout(() => {
+			body.destroy(new Error("MCP response write timed out"));
+			target.destroy(new Error("MCP response write timed out"));
+		}, timeoutMs);
+	}
+	try {
+		await pipeline(body, target);
+	} finally {
+		if (timeout) clearTimeout(timeout);
+	}
 }
 
 async function sendStaticFile(
 	request: IncomingMessage,
 	target: ServerResponse,
 	clientDir: string,
+	pathname: string,
 ) {
 	if (request.method !== "GET" && request.method !== "HEAD") return false;
-	let pathname: string;
 	try {
-		pathname = decodeURIComponent(
-			new URL(request.url ?? "/", "http://local").pathname,
-		);
+		pathname = decodeURIComponent(pathname);
 	} catch {
 		target.writeHead(400).end("Bad request");
 		return true;
@@ -153,8 +281,17 @@ export async function startProductionServer({
 	port = 3000,
 	clientDir = path.join(packageRoot, "dist", "client"),
 	serverEntry = path.join(packageRoot, "dist", "server", "server.js"),
+	serverVersion = "0.0.0",
+	mcpRuntime: injectedMcpRuntime,
+	requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+	headersTimeoutMs = DEFAULT_HEADERS_TIMEOUT_MS,
+	mcpResponseTimeoutMs = DEFAULT_MCP_RESPONSE_TIMEOUT_MS,
 }: ProductionServerOptions) {
 	process.env.BIRDCLAW_LOCAL_WEB = "socket";
+	const mcpRuntime =
+		injectedMcpRuntime === undefined
+			? prepareBirdclawMcpRuntime(serverVersion)
+			: injectedMcpRuntime;
 	const loaded = (await import(pathToFileURL(serverEntry).href)) as {
 		default?: FetchHandler;
 	};
@@ -164,22 +301,105 @@ export async function startProductionServer({
 		);
 	}
 	const handler = loaded.default;
-	const server = createServer(async (request, response) => {
-		try {
-			if (await sendStaticFile(request, response, clientDir)) return;
-			await sendWebResponse(
-				await handler.fetch(toWebRequest(request)),
-				response,
-			);
-		} catch (error) {
-			if (!response.headersSent) {
-				response.statusCode = 500;
-				response.setHeader("content-type", "text/plain; charset=utf-8");
+	const server = createServer(
+		{
+			requireHostHeader: true,
+			requestTimeout: requestTimeoutMs,
+			headersTimeout: Math.min(headersTimeoutMs, requestTimeoutMs),
+			connectionsCheckingInterval: 1_000,
+			maxHeaderSize: 16 * 1024,
+		},
+		async (request, response) => {
+			try {
+				const { rawTarget, url } = parseIncomingUrl(request);
+				const isExactMcpTarget = rawTarget === "/mcp";
+				const isMcpNamespace = hasMcpPathPrefix(rawTarget, url);
+				const isReservedMcpHost = hasReservedMcpHostname(url, mcpRuntime);
+
+				if (!isExactMcpTarget && (isReservedMcpHost || isMcpNamespace)) {
+					if (!request.readableEnded) {
+						response.setHeader("connection", "close");
+						request.resume();
+					}
+					await sendWebResponse(
+						new Response(
+							JSON.stringify({ error: "The MCP hostname only serves /mcp" }),
+							{
+								status: 404,
+								headers: {
+									"cache-control": "no-store",
+									"content-type": "application/json",
+								},
+							},
+						),
+						response,
+					);
+					return;
+				}
+
+				if (isExactMcpTarget) {
+					rejectDuplicateAuthorization(request);
+					const requestAbort = new AbortController();
+					const abortRequest = () => requestAbort.abort();
+					const abortPrematureResponse = () => {
+						if (!response.writableFinished) abortRequest();
+					};
+					request.once("aborted", abortRequest);
+					request.once("error", abortRequest);
+					response.once("close", abortPrematureResponse);
+					const webRequest = toWebRequest(request, url, requestAbort.signal);
+					const exchange = await handleBirdclawMcpExchange(
+						webRequest,
+						mcpRuntime,
+						{ isLoopbackPeer: isLoopbackAddress(request.socket.remoteAddress) },
+					);
+					try {
+						if (!request.readableEnded) {
+							response.setHeader("connection", "close");
+							request.resume();
+						}
+						await sendWebResponse(
+							exchange.response,
+							response,
+							mcpResponseTimeoutMs,
+						);
+					} finally {
+						exchange.finalize();
+						request.removeListener("aborted", abortRequest);
+						request.removeListener("error", abortRequest);
+						response.removeListener("close", abortPrematureResponse);
+					}
+					return;
+				}
+
+				if (await sendStaticFile(request, response, clientDir, url.pathname))
+					return;
+				await sendWebResponse(
+					await handler.fetch(toWebRequest(request, url)),
+					response,
+				);
+			} catch (error) {
+				if (error instanceof IncomingRequestError) {
+					if (!response.headersSent) {
+						response.statusCode = 400;
+						response.setHeader("connection", "close");
+						response.setHeader("content-type", "text/plain; charset=utf-8");
+					}
+					request.resume();
+					response.end("Bad request");
+					return;
+				}
+				if (isExpectedClientDisconnect(error, request, response)) return;
+				if (!response.headersSent) {
+					response.statusCode = 500;
+					response.setHeader("content-type", "text/plain; charset=utf-8");
+				}
+				if (!response.destroyed) response.end("Internal server error");
+				console.error(error instanceof Error ? error.message : String(error));
 			}
-			response.end("Internal server error");
-			console.error(error instanceof Error ? error.message : String(error));
-		}
-	});
+		},
+	);
+	server.maxHeadersCount = 100;
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
 		server.listen(port, host, resolve);

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 as win32Path } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
 import { getBirdCommand } from "./config";
@@ -20,6 +20,11 @@ import type {
 const execFileAsync = promisify(execFile);
 const BIRD_JSON_MAX_BUFFER_BYTES = 512 * 1024 * 1024;
 const BIRD_STDOUT_REDIRECT_SCRIPT = 'out="$1"; shift; exec "$@" > "$out"';
+const WINDOWS_BASH_COMMAND_CANDIDATES = [
+	"C:\\Program Files\\Git\\bin\\bash.exe",
+	"C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+	"C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+];
 
 interface BirdTweetMedia {
 	type?: string;
@@ -237,7 +242,12 @@ function parseBirdJson(stdout: string) {
 	}
 }
 
-function formatBirdCommandError(error: unknown, birdCommand: string) {
+function formatBirdCommandError(
+	error: unknown,
+	birdCommand: string,
+	shellCommand: string,
+	platform: NodeJS.Platform = process.platform,
+) {
 	const text = [
 		error instanceof Error ? error.message : "",
 		error &&
@@ -254,11 +264,21 @@ function formatBirdCommandError(error: unknown, birdCommand: string) {
 			: "",
 	].join("\n");
 	if (
-		(error instanceof Error &&
-			"code" in error &&
-			(error as { code?: unknown }).code === "ENOENT") ||
-		(/No such file or directory|command not found|cannot execute/i.test(text) &&
-			text.includes(birdCommand))
+		error instanceof Error &&
+		"code" in error &&
+		(error as { code?: unknown }).code === "ENOENT"
+	) {
+		return platform === "win32"
+			? new Error(
+					`Git Bash unavailable: ${shellCommand}\nInstall Git for Windows, add bash.exe to PATH, or set BIRDCLAW_BASH_COMMAND to its full path.`,
+				)
+			: new Error(
+					`Bash unavailable: ${shellCommand}\nInstall Bash or set BIRDCLAW_BASH_COMMAND to its full path.`,
+				);
+	}
+	if (
+		/No such file or directory|command not found|cannot execute/i.test(text) &&
+		text.includes(birdCommand)
 	) {
 		return new Error(
 			`bird command unavailable: ${birdCommand}\nInstall bird on PATH, set BIRDCLAW_BIRD_COMMAND, or update ~/.birdclaw/config.json mentions.birdCommand.`,
@@ -291,6 +311,54 @@ function makeBirdStdoutTempEffect() {
 	);
 }
 
+function getBirdStdoutShellCommand(
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+	pathExists: (path: string) => boolean = existsSync,
+) {
+	if (env.BIRDCLAW_BASH_COMMAND) {
+		// Trust the explicit override for portable or non-standard Git installs.
+		return env.BIRDCLAW_BASH_COMMAND;
+	}
+	if (platform !== "win32") {
+		return "/bin/bash";
+	}
+	const candidates = [...WINDOWS_BASH_COMMAND_CANDIDATES];
+	if (env.LOCALAPPDATA && win32Path.isAbsolute(env.LOCALAPPDATA)) {
+		candidates.push(
+			win32Path.join(env.LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe"),
+		);
+	}
+	const candidate = candidates.find((candidate) => pathExists(candidate));
+	if (candidate) return candidate;
+	const pathValue = Object.entries(env).find(
+		([name]) => name.toLowerCase() === "path",
+	)?.[1];
+	for (const rawDirectory of pathValue?.split(";") ?? []) {
+		const directory = rawDirectory.trim().replace(/^"(.*)"$/, "$1");
+		if (!win32Path.isAbsolute(directory)) continue;
+		const directoryName = win32Path.basename(directory).toLowerCase();
+		if (directoryName !== "bin" && directoryName !== "cmd") continue;
+		const gitRoot = win32Path.dirname(directory);
+		const bashCandidate = win32Path.join(gitRoot, "bin", "bash.exe");
+		const gitCandidate = win32Path.join(gitRoot, "cmd", "git.exe");
+		if (pathExists(bashCandidate) && pathExists(gitCandidate)) {
+			return bashCandidate;
+		}
+	}
+	throw new Error(
+		"Git Bash unavailable: no trusted bash.exe found\nInstall Git for Windows, add its absolute bin directory to PATH, or set BIRDCLAW_BASH_COMMAND to its full path.",
+	);
+}
+
+function getBirdStdoutShellEnv(
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+) {
+	if (platform !== "win32") return env;
+	return { ...env, MSYS2_ARG_CONV_EXCL: "*" };
+}
+
 export const runBirdJsonCommandEffect = Effect.fn("bird.runJsonCommand")(
 	(args: string[], timeoutMs?: number) =>
 		Effect.scoped(
@@ -301,10 +369,15 @@ export const runBirdJsonCommandEffect = Effect.fn("bird.runJsonCommand")(
 						error instanceof Error ? error : new Error(String(error)),
 				});
 				const { stdoutPath } = yield* makeBirdStdoutTempEffect();
+				const shellCommand = yield* Effect.try({
+					try: () => getBirdStdoutShellCommand(),
+					catch: (error) =>
+						error instanceof Error ? error : new Error(String(error)),
+				});
 				yield* Effect.tryPromise({
 					try: () =>
 						execFileAsync(
-							"/bin/bash",
+							shellCommand,
 							[
 								"-c",
 								BIRD_STDOUT_REDIRECT_SCRIPT,
@@ -313,9 +386,14 @@ export const runBirdJsonCommandEffect = Effect.fn("bird.runJsonCommand")(
 								birdCommand,
 								...args,
 							],
-							{ maxBuffer: BIRD_JSON_MAX_BUFFER_BYTES, timeout: timeoutMs },
+							{
+								env: getBirdStdoutShellEnv(),
+								maxBuffer: BIRD_JSON_MAX_BUFFER_BYTES,
+								timeout: timeoutMs,
+							},
 						),
-					catch: (error) => formatBirdCommandError(error, birdCommand),
+					catch: (error) =>
+						formatBirdCommandError(error, birdCommand, shellCommand),
 				});
 				return yield* Effect.try({
 					try: () => readFileSync(stdoutPath, "utf8"),
@@ -336,10 +414,15 @@ const runBirdJsonCommandAllowFailureEffect = Effect.fn(
 					error instanceof Error ? error : new Error(String(error)),
 			});
 			const { stdoutPath } = yield* makeBirdStdoutTempEffect();
+			const shellCommand = yield* Effect.try({
+				try: () => getBirdStdoutShellCommand(),
+				catch: (error) =>
+					error instanceof Error ? error : new Error(String(error)),
+			});
 			yield* Effect.tryPromise({
 				try: () =>
 					execFileAsync(
-						"/bin/bash",
+						shellCommand,
 						[
 							"-c",
 							BIRD_STDOUT_REDIRECT_SCRIPT,
@@ -348,13 +431,19 @@ const runBirdJsonCommandAllowFailureEffect = Effect.fn(
 							birdCommand,
 							...args,
 						],
-						{ maxBuffer: BIRD_JSON_MAX_BUFFER_BYTES, timeout: timeoutMs },
+						{
+							env: getBirdStdoutShellEnv(),
+							maxBuffer: BIRD_JSON_MAX_BUFFER_BYTES,
+							timeout: timeoutMs,
+						},
 					).catch((error: unknown) => {
-						const stdout = readFileSync(stdoutPath, "utf8");
+						const stdout = existsSync(stdoutPath)
+							? readFileSync(stdoutPath, "utf8")
+							: "";
 						if (stdout.trim().length > 0) {
 							return { stdout: "", stderr: "" };
 						}
-						throw formatBirdCommandError(error, birdCommand);
+						throw formatBirdCommandError(error, birdCommand, shellCommand);
 					}),
 				catch: (error) => error,
 			});
@@ -1375,10 +1464,12 @@ export const __test__ = {
 	parseBirdJson,
 	formatBirdCommandError,
 	isUnsupportedBirdOptionError,
+	getBirdStdoutShellEnv,
 	getBirdTweetItems,
 	getBirdTweetItem,
 	toMediaEntities,
 	toTweetEntities,
 	toReferencedTweets,
+	getBirdStdoutShellCommand,
 	normalizeBirdTweets,
 };

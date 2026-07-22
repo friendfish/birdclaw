@@ -156,13 +156,14 @@ export class NativeSqliteDatabase {
 		);
 	}
 
-	transaction<TArgs extends unknown[], TResult>(
+	private wrapTransaction<TArgs extends unknown[], TResult>(
 		fn: (...args: TArgs) => TResult,
+		begin: "begin" | "begin immediate",
 	): (...args: TArgs) => TResult {
 		return (...args: TArgs) => {
 			const nested = this.db.isTransaction;
 			const savepoint = `__birdclaw_tx_${++this.transactionDepth}`;
-			this.exec(nested ? `savepoint ${savepoint}` : "begin immediate");
+			this.exec(nested ? `savepoint ${savepoint}` : begin);
 			try {
 				const result = fn(...args);
 				this.exec(nested ? `release ${savepoint}` : "commit");
@@ -177,6 +178,18 @@ export class NativeSqliteDatabase {
 				throw error;
 			}
 		};
+	}
+
+	transaction<TArgs extends unknown[], TResult>(
+		fn: (...args: TArgs) => TResult,
+	): (...args: TArgs) => TResult {
+		return this.wrapTransaction(fn, "begin immediate");
+	}
+
+	readTransaction<TArgs extends unknown[], TResult>(
+		fn: (...args: TArgs) => TResult,
+	): (...args: TArgs) => TResult {
+		return this.wrapTransaction(fn, "begin");
 	}
 }
 

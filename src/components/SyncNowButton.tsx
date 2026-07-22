@@ -95,16 +95,21 @@ export function SyncNowButton({
 		[accounts],
 	);
 	const accountId = globalAccountId ?? defaultAccountId;
-	const [lastAutoSyncedAt, setLastAutoSyncedAtState] = useState<number | null>(null);
-	const setLastAutoSyncedAt = useCallback((timestamp: number | null) => {
-		setLastAutoSyncedAtState(timestamp);
-		const lastSyncKey = `birdclaw:last-sync-at:${kind}:${accountId ?? "default"}`;
-		if (timestamp === null) {
-			window.localStorage.removeItem(lastSyncKey);
-		} else {
-			window.localStorage.setItem(lastSyncKey, String(timestamp));
-		}
-	}, [kind, accountId]);
+	const [lastAutoSyncedAt, setLastAutoSyncedAtState] = useState<number | null>(
+		null,
+	);
+	const setLastAutoSyncedAt = useCallback(
+		(timestamp: number | null) => {
+			setLastAutoSyncedAtState(timestamp);
+			const lastSyncKey = `birdclaw:last-sync-at:${kind}:${accountId ?? "default"}`;
+			if (timestamp === null) {
+				window.localStorage.removeItem(lastSyncKey);
+			} else {
+				window.localStorage.setItem(lastSyncKey, String(timestamp));
+			}
+		},
+		[kind, accountId],
+	);
 	const [nextAutoSyncAt, setNextAutoSyncAt] = useState<number | null>(null);
 	const autoSyncKey = autoSyncStorageKey(kind, accountId);
 	const autoSyncKeyRef = useRef(autoSyncKey);
@@ -157,7 +162,9 @@ export function SyncNowButton({
 		const lastSyncKey = `birdclaw:last-sync-at:${kind}:${accountId ?? "default"}`;
 		const storedLastSync = window.localStorage.getItem(lastSyncKey);
 		const lastSynced = storedLastSync ? Number(storedLastSync) : null;
-		setLastAutoSyncedAtState(lastSynced && !isNaN(lastSynced) ? lastSynced : null);
+		setLastAutoSyncedAtState(
+			lastSynced && !isNaN(lastSynced) ? lastSynced : null,
+		);
 
 		setNextAutoSyncAt(null);
 		setAutoCycle((current) => current + 1);

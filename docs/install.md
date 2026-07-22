@@ -9,15 +9,15 @@ description: "Install birdclaw via Homebrew, npm, or from source. Optional xurl 
 
 ## Requirements
 
-- **Node.js** 25.8.1 or Node 26.x (managed via `fnm`, `nvm`, or `volta`)
+- **Node.js** 26.5.0 (managed via `fnm`, `nvm`, or `volta`)
 - **pnpm** 10.x for source installs
 - **macOS** is recommended for archive autodiscovery (Spotlight `mdfind`); Linux works for everything else
 - **SQLite** uses Node's native `node:sqlite` runtime — no system install needed
 
 Optional but encouraged:
 
-- [`xurl`](https://github.com/xdevplatform/xurl) — official-API live reads/writes (likes, bookmarks, blocks, mutes, posting)
-- [`bird`](https://github.com/steipete/bird) — browser-cookie-backed reads/writes for surfaces where `xurl` is rate-limited or unavailable
+- [`xurl`](https://github.com/xdevplatform/xurl) — recommended official-API live reads/writes (likes, bookmarks, blocks, mutes, posting)
+- an existing private `bird` installation — optional browser-cookie-backed compatibility fallback
 - `OPENAI_API_KEY` — inbox scoring and low-signal filtering
 
 birdclaw still works in pure local/archive mode without any of the above.
@@ -64,7 +64,7 @@ birdclaw auth status --json
 birdclaw db stats --json
 ```
 
-`auth status` runs Birdclaw's coarse xurl status probe. Verify xurl with `xurl whoami` and bird with `bird whoami`. See [Sign in](auth.md) for the complete setup and transport-selection model.
+`auth status` runs Birdclaw's coarse xurl status probe. Verify xurl with `xurl whoami`. Existing private bird users can verify bird with `bird whoami`. See [Sign in](auth.md) for the complete setup and transport-selection model.
 
 ## Optional: xurl
 
@@ -81,14 +81,11 @@ xurl whoami
 
 Alternatively, use xurl's [no-sudo install script](https://github.com/xdevplatform/xurl#installation). Register `my-app` through the [xurl authentication guide](https://github.com/xdevplatform/xurl#authentication), keeping the client secret out of shared shell history and process listings. The redirect URI configured in the X developer portal must match xurl's configured URI. Birdclaw shells out to xurl and does not own `~/.xurl`.
 
-## Optional: bird
+## Existing bird installations
 
-```text
-npm install -g @steipete/bird
-bird whoami
-```
+Birdclaw preserves compatibility with existing private bird installations, but bird is not a public setup path for new users. If bird is already installed, verify it with `bird whoami`.
 
-bird reads cookies from a logged-in Safari, Chrome, or Firefox profile. This matters most for DMs, mentions, timeline reads, and moderation flows where X rejects OAuth2 writes.
+This compatibility path matters most for DMs, mentions, timeline reads, and moderation flows where X rejects OAuth2 writes.
 
 If you only run birdclaw via `launchd` (`jobs install-bookmarks-launchd`), `bird` may need its `AUTH_TOKEN`/`CT0` exported via an env file because launchd does not see your interactive browser session. See [Jobs](jobs.md#env-files-for-launchd).
 

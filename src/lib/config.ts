@@ -21,6 +21,9 @@ export type MentionsDataSource = "birdclaw" | "auto" | "xurl" | "bird";
 export type ActionsTransport = "auto" | "bird" | "xurl";
 
 export interface BirdclawConfig {
+	accounts?: {
+		default?: string;
+	};
 	mentions?: {
 		dataSource?: MentionsDataSource;
 		birdCommand?: string;
@@ -47,6 +50,11 @@ export interface BirdclawConfig {
 		aiLanguage?: string;
 		uiLanguage?: string;
 	};
+}
+
+export function getDefaultAccountSelector() {
+	const selector = getBirdclawConfig().accounts?.default?.trim();
+	return selector || undefined;
 }
 
 let cachedPaths: BirdclawPaths | undefined;

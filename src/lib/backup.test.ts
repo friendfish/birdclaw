@@ -56,15 +56,19 @@ function clearData() {
     delete from tweet_actions;
     delete from tweet_account_edges;
     delete from tweet_collections;
+		delete from tweet_sources;
     delete from link_occurrences;
     delete from url_expansions;
     delete from blocks;
     delete from mutes;
     delete from dm_fts;
     delete from tweets_fts;
-    delete from dm_messages;
-    delete from dm_conversations;
-    delete from tweets;
+		delete from dm_messages;
+		delete from dm_conversations;
+		delete from tweet_subordinate_tombstones;
+		delete from tweet_revision_edges;
+		delete from tweet_revisions;
+		delete from tweets;
     delete from profile_bio_entities;
     delete from profile_snapshots;
     delete from profile_affiliations;
@@ -163,6 +167,13 @@ function seedBackupFixture() {
       ('tweet_2024', 'Shipping text backups'),
       ('tweet_2025', 'Saved useful thing'),
       ('tweet_unknown_date', 'Unknown creation date like');
+
+    insert into tweet_sources (tweet_id, source, source_url, observed_at)
+    values (
+      'tweet_2024', 'fxtwitter',
+      'https://api.fxtwitter.com/2/status/tweet_2024',
+      '2025-01-03T00:00:00.000Z'
+    );
 
     insert into dm_conversations (
       id, account_id, participant_profile_id, title, inbox_kind, last_message_at, unread_count, needs_reply
@@ -409,6 +420,7 @@ describe("text backup", () => {
 			profile_snapshots: 1,
 			profile_bio_entities: 2,
 			tweets: 3,
+			tweet_sources: 1,
 			timeline_edges_home: 1,
 			timeline_edges_search: 1,
 			collections_bookmarks: 1,
@@ -433,6 +445,9 @@ describe("text backup", () => {
 			true,
 		);
 		expect(existsSync(path.join(repoPath, "data/tweets/unknown.jsonl"))).toBe(
+			true,
+		);
+		expect(existsSync(path.join(repoPath, "data/tweet_sources.jsonl"))).toBe(
 			true,
 		);
 		expect(existsSync(path.join(repoPath, "data/dms/2025.jsonl"))).toBe(true);
@@ -565,6 +580,16 @@ describe("text backup", () => {
 		expect(
 			getNativeDb({ seedDemoData: false })
 				.prepare(
+					"select source, source_url from tweet_sources where tweet_id = 'tweet_2024'",
+				)
+				.get(),
+		).toEqual({
+			source: "fxtwitter",
+			source_url: "https://api.fxtwitter.com/2/status/tweet_2024",
+		});
+		expect(
+			getNativeDb({ seedDemoData: false })
+				.prepare(
 					"select public_metrics_json from profiles where id = 'profile_friend'",
 				)
 				.get(),
@@ -584,7 +609,7 @@ describe("text backup", () => {
 		expect(validation.ok).toBe(true);
 	}, 20000);
 
-	it("emits byte-identical schema-v4 data and hashes for the same database", async () => {
+	it("emits byte-identical schema-v7 data and hashes for the same database", async () => {
 		switchHome("birdclaw-backup-stable-src-");
 		seedBackupFixture();
 		const firstRepoPath = makeTempDir("birdclaw-backup-stable-first-");
@@ -593,10 +618,7 @@ describe("text backup", () => {
 		const first = await exportBackup({ repoPath: firstRepoPath });
 		const second = await exportBackup({ repoPath: secondRepoPath });
 
-		expect(first.manifest.schemaVersion).toBe(4);
-		expect(first.manifest.backupHash).toBe(
-			"bec137fa89f0f39cef137e8e74dfc59a7a892972189019c7d5e841f9c4c17895",
-		);
+		expect(first.manifest.schemaVersion).toBe(7);
 		expect(second.manifest.files).toEqual(first.manifest.files);
 		expect(second.manifest.counts).toEqual(first.manifest.counts);
 		expect(second.manifest.backupHash).toBe(first.manifest.backupHash);
@@ -711,6 +733,176 @@ describe("text backup", () => {
 				.prepare("select count(*) from tweets where id = 'tweet_2025'")
 				.get() as { "count(*)": number },
 		).toEqual({ "count(*)": 1 });
+	}, 20000);
+
+	it("round-trips tweet tombstones, subordinate deletions, and edit revisions", async () => {
+		switchHome("birdclaw-backup-tombstone-src-");
+		seedBackupFixture();
+		const sourceDb = getNativeDb({ seedDemoData: false });
+		sourceDb.exec(`
+			insert into tweets (
+				id, author_profile_id, text, created_at, is_replied, reply_to_id,
+				like_count, media_count, entities_json, media_json, quoted_tweet_id,
+				superseded_at, superseded_by_id
+			) values (
+				'tweet_2025_v1', 'profile_me', 'before edit',
+				'2025-01-02T07:00:00.000Z', 0, null, 0, 0, '{}', '[]', null,
+				'2025-01-02T08:00:00.000Z', 'tweet_2025'
+			), (
+				'tweet_2025_v2', 'profile_me', 'middle edit',
+				'2025-01-02T07:30:00.000Z', 0, null, 0, 0, '{}', '[]', null,
+				'2025-01-02T08:00:00.000Z', 'tweet_2025'
+			);
+			update tweets
+			set deleted_at = '2026-07-18T12:00:00.000Z',
+				deletion_source = 'twitter_archive',
+				deletion_reason = 'explicit_deleted_tweet_record',
+				media_json = '[{"media_key":"media-1","type":"photo"}]'
+			where id = 'tweet_2025';
+			insert into tweet_revisions (
+				root_tweet_id, revision_id, revision_index, payload_json, source, observed_at
+			) values
+				('tweet_2025_v1', 'tweet_2025_v1', 0, null, 'xurl', '2025-01-02T07:00:00.000Z'),
+				('tweet_2025_v1', 'tweet_2025_v2', 1, '{"text":"middle"}', 'xurl', '2025-01-02T07:30:00.000Z'),
+				('tweet_2025_v1', 'tweet_2025', 2, '{"text":"after"}', 'xurl', '2025-01-02T08:00:00.000Z');
+			insert into tweet_revisions (
+				root_tweet_id, revision_id, revision_index, payload_json, source, observed_at
+			) values
+				('partial_root', 'partial_root', 0, null, 'xurl', '2025-01-02T07:00:00.000Z'),
+				('partial_root', 'partial_left', 1, null, 'xurl', '2025-01-02T08:00:00.000Z'),
+				('partial_root', 'partial_right', 1, null, 'xurl', '2025-01-02T08:00:00.000Z');
+			insert into tweet_revision_edges (
+				older_revision_id, newer_revision_id, source, observed_at
+			) values
+				('tweet_2025_v1', 'tweet_2025_v2', 'xurl', '2025-01-02T07:30:00.000Z'),
+				('tweet_2025_v2', 'tweet_2025', 'xurl', '2025-01-02T08:00:00.000Z'),
+				('partial_root', 'partial_left', 'xurl', '2025-01-02T08:00:00.000Z'),
+				('partial_root', 'partial_right', 'xurl', '2025-01-02T08:00:00.000Z');
+			insert into tweet_subordinate_tombstones (
+				tweet_id, kind, subordinate_id, deleted_at, deletion_source, deletion_reason
+			) values
+				('tweet_2025', 'media', 'media-1', '2026-07-18T12:00:00.000Z', 'twitter_archive', 'parent_tweet_deleted'),
+				('tweet_2025', 'quote', 'tweet_quote', '2026-07-18T12:00:00.000Z', 'twitter_archive', 'parent_tweet_deleted');
+		`);
+		const repoPath = makeTempDir("birdclaw-tombstone-store-");
+		await exportBackup({ repoPath });
+
+		switchHome("birdclaw-backup-tombstone-dst-");
+		const db = getNativeDb({ seedDemoData: false });
+		insertTestTweet(db, {
+			id: "tweet_2025",
+			authorProfileId: "profile_me",
+			text: "later local copy",
+		});
+		db.exec(`
+			update tweets
+			set deleted_at = '2026-07-18T12:00:00.000Z',
+				deletion_source = null,
+				deletion_reason = null
+			where id = 'tweet_2025';
+			insert into tweet_subordinate_tombstones (
+				tweet_id, kind, subordinate_id, deleted_at, deletion_source, deletion_reason
+			) values
+			(
+				'tweet_2025', 'media', 'media-1', '2027-01-01T00:00:00.000Z',
+				'local_later', 'later_local_event'
+			),
+			(
+				'tweet_2025', 'quote', 'tweet_quote', '2026-07-18T12:00:00.000Z',
+				null, 'parent_tweet_deleted'
+			);
+			insert into tweet_revisions (
+				root_tweet_id, revision_id, revision_index, payload_json, source, observed_at
+			) values
+				('tweet_2025_v2', 'tweet_2025_v2', 0, null, 'xurl', '2025-01-02T07:30:00.000Z'),
+				('tweet_2025_v2', 'tweet_2025', 1, null, 'xurl', '2025-01-02T08:00:00.000Z');
+			insert into tweet_revision_edges (
+				older_revision_id, newer_revision_id, source, observed_at
+			) values
+				('tweet_2025_v2', 'tweet_2025', 'xurl', '2025-01-02T08:00:00.000Z');
+		`);
+		const result = await importBackup({ repoPath });
+
+		expect(result.mode).toBe("merge");
+		expect(
+			db
+				.prepare(
+					"select superseded_at, superseded_by_id from tweets where id = 'tweet_2025_v1'",
+				)
+				.get(),
+		).toEqual({
+			superseded_at: "2025-01-02T08:00:00.000Z",
+			superseded_by_id: "tweet_2025",
+		});
+		expect(
+			db
+				.prepare(
+					"select deleted_at, deletion_source, deletion_reason from tweets where id = 'tweet_2025'",
+				)
+				.get(),
+		).toEqual({
+			deleted_at: "2026-07-18T12:00:00.000Z",
+			deletion_source: "twitter_archive",
+			deletion_reason: "explicit_deleted_tweet_record",
+		});
+		expect(
+			db
+				.prepare(
+					"select kind, subordinate_id, deleted_at, deletion_source, deletion_reason from tweet_subordinate_tombstones where tweet_id = 'tweet_2025' order by kind, subordinate_id",
+				)
+				.all(),
+		).toEqual([
+			{
+				kind: "media",
+				subordinate_id: "media-1",
+				deleted_at: "2026-07-18T12:00:00.000Z",
+				deletion_source: "twitter_archive",
+				deletion_reason: "parent_tweet_deleted",
+			},
+			{
+				kind: "quote",
+				subordinate_id: "tweet_quote",
+				deleted_at: "2026-07-18T12:00:00.000Z",
+				deletion_source: "twitter_archive",
+				deletion_reason: "parent_tweet_deleted",
+			},
+		]);
+		expect(
+			db
+				.prepare(
+					"select revision_id, revision_index, payload_json is not null as hydrated from tweet_revisions where root_tweet_id = 'tweet_2025_v1' order by revision_index",
+				)
+				.all(),
+		).toEqual([
+			{ revision_id: "tweet_2025_v1", revision_index: 0, hydrated: 0 },
+			{ revision_id: "tweet_2025_v2", revision_index: 1, hydrated: 1 },
+			{ revision_id: "tweet_2025", revision_index: 2, hydrated: 1 },
+		]);
+		expect(
+			db
+				.prepare(
+					"select revision_id, revision_index from tweet_revisions where root_tweet_id = 'partial_root' order by revision_index, revision_id",
+				)
+				.all(),
+		).toEqual([
+			{ revision_id: "partial_root", revision_index: 0 },
+			{ revision_id: "partial_left", revision_index: 1 },
+			{ revision_id: "partial_right", revision_index: 1 },
+		]);
+		expect(
+			db
+				.prepare(
+					"select count(*) as count from tweets_fts where tweet_id = 'tweet_2025'",
+				)
+				.get(),
+		).toEqual({ count: 0 });
+		expect(
+			db
+				.prepare(
+					"select count(*) as count from tweets_fts where tweet_id = 'tweet_2025_v1'",
+				)
+				.get(),
+		).toEqual({ count: 0 });
 	}, 20000);
 
 	it("syncs through git by pulling, merging, exporting, committing, and pushing", async () => {

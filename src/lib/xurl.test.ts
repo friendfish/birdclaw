@@ -62,6 +62,9 @@ describe("xurl transport wrapper", () => {
 
 		expect(result.availableTransport).toBe("local");
 		expect(result.installed).toBe(false);
+		expect(result.statusText).toBe(
+			"xurl not installed. local/archive mode active.",
+		);
 	});
 
 	it("reports xurl auth state when available", async () => {
@@ -109,7 +112,9 @@ describe("xurl transport wrapper", () => {
 
 		expect(result.installed).toBe(true);
 		expect(result.availableTransport).toBe("local");
-		expect(result.statusText).toContain("not authenticated");
+		expect(result.statusText).toBe(
+			"xurl installed but not authenticated. local/archive mode active.",
+		);
 		expect(result.rawStatus).toContain("No apps registered");
 	});
 
@@ -126,7 +131,9 @@ describe("xurl transport wrapper", () => {
 
 		expect(result.installed).toBe(true);
 		expect(result.availableTransport).toBe("local");
-		expect(result.statusText).toContain("not authenticated");
+		expect(result.statusText).toBe(
+			"xurl installed but not authenticated. local/archive mode active.",
+		);
 		expect(result.rawStatus).toContain("No authenticated user");
 	});
 
@@ -154,6 +161,7 @@ describe("xurl transport wrapper", () => {
 		expect(result.installed).toBe(true);
 		expect(result.availableTransport).toBe("local");
 		expect(result.statusText).toContain("auth unavailable");
+		expect(result.statusText).toContain("local/archive mode active");
 	});
 
 	it("uses an unknown-error fallback for non-Error auth failures", async () => {
@@ -166,6 +174,7 @@ describe("xurl transport wrapper", () => {
 
 		expect(result.availableTransport).toBe("local");
 		expect(result.statusText).toContain("unknown error");
+		expect(result.statusText).toContain("local/archive mode active");
 	});
 
 	it("looks up users and the authenticated account via raw json endpoints", async () => {
@@ -188,6 +197,19 @@ describe("xurl transport wrapper", () => {
 			id: "1",
 			username: "steipete",
 		});
+	});
+
+	it("keeps the unscoped authenticated lookup independent of ambient selection", async () => {
+		process.env.BIRDCLAW_XURL_OAUTH2_USERNAME = "secondary";
+		execFileAsyncMock.mockResolvedValueOnce({
+			stdout: JSON.stringify({ data: { id: "1", username: "primary" } }),
+			stderr: "",
+		});
+		const { lookupAuthenticatedUserUnscopedEffect } = await import("./xurl");
+
+		await Effect.runPromise(lookupAuthenticatedUserUnscopedEffect());
+
+		expect(execFileAsyncMock).toHaveBeenCalledWith("xurl", ["whoami"]);
 	});
 
 	it("exposes xurl lookup helpers as lazy Effect programs", async () => {
@@ -1664,6 +1686,52 @@ describe("xurl transport wrapper", () => {
 			"hello",
 		]);
 		expect(result).toEqual({ ok: true, output: "sent" });
+	});
+
+	it("routes reads and writes through the configured operation account", async () => {
+		process.env.BIRDCLAW_XURL_OAUTH2_APP = "personal";
+		process.env.BIRDCLAW_XURL_OAUTH2_USERNAME = "selected_user";
+		execFileAsyncMock
+			.mockResolvedValueOnce({ stdout: '{"data":{"id":"1"}}', stderr: "" })
+			.mockResolvedValueOnce({ stdout: "posted", stderr: "" })
+			.mockResolvedValueOnce({ stdout: "blocked", stderr: "" });
+		const { blockUserViaXurl, lookupAuthenticatedUserFresh, postViaXurl } =
+			await import("./xurl");
+
+		await lookupAuthenticatedUserFresh();
+		await postViaXurl("ship");
+		await blockUserViaXurl("1", "2");
+
+		expect(execFileAsyncMock).toHaveBeenNthCalledWith(1, "xurl", [
+			"--app",
+			"personal",
+			"--auth",
+			"oauth2",
+			"--username",
+			"selected_user",
+			"whoami",
+		]);
+		expect(execFileAsyncMock).toHaveBeenNthCalledWith(2, "xurl", [
+			"--app",
+			"personal",
+			"--username",
+			"selected_user",
+			"post",
+			"ship",
+		]);
+		expect(execFileAsyncMock).toHaveBeenNthCalledWith(3, "xurl", [
+			"--app",
+			"personal",
+			"--auth",
+			"oauth2",
+			"--username",
+			"selected_user",
+			"-X",
+			"POST",
+			"/2/users/1/blocking",
+			"-d",
+			'{"target_user_id":"2"}',
+		]);
 	});
 
 	it("passes through existing @ handles and reports shortcut failures", async () => {

@@ -13,16 +13,20 @@ const configRequestSchema = z.object({
 	baseUrl: z.string().optional(),
 	apiKey: z.string().optional(),
 	model: z.string().optional(),
-	ai: z.object({
-		provider: z.string().optional(),
-		baseUrl: z.string().optional(),
-		apiKey: z.string().optional(),
-		model: z.string().optional(),
-	}).optional(),
-	language: z.object({
-		aiLanguage: z.string().optional(),
-		uiLanguage: z.string().optional(),
-	}).optional(),
+	ai: z
+		.object({
+			provider: z.string().optional(),
+			baseUrl: z.string().optional(),
+			apiKey: z.string().optional(),
+			model: z.string().optional(),
+		})
+		.optional(),
+	language: z
+		.object({
+			aiLanguage: z.string().optional(),
+			uiLanguage: z.string().optional(),
+		})
+		.optional(),
 });
 
 export const Route = createFileRoute("/api/config")({
@@ -39,7 +43,10 @@ export const Route = createFileRoute("/api/config")({
 						return jsonResponse({
 							ok: true,
 							ai: config.ai || {},
-							language: config.language || { aiLanguage: "zh-CN", uiLanguage: "zh-CN" },
+							language: config.language || {
+								aiLanguage: "zh-CN",
+								uiLanguage: "zh-CN",
+							},
 						});
 					}),
 				),
@@ -61,15 +68,21 @@ export const Route = createFileRoute("/api/config")({
 							...config,
 							ai: {
 								...config.ai,
-								...(parsed.ai || {}),
-								...(parsed.provider !== undefined ? { provider: parsed.provider } : {}),
-								...(parsed.baseUrl !== undefined ? { baseUrl: parsed.baseUrl } : {}),
-								...(parsed.apiKey !== undefined ? { apiKey: parsed.apiKey } : {}),
+								...parsed.ai,
+								...(parsed.provider !== undefined
+									? { provider: parsed.provider }
+									: {}),
+								...(parsed.baseUrl !== undefined
+									? { baseUrl: parsed.baseUrl }
+									: {}),
+								...(parsed.apiKey !== undefined
+									? { apiKey: parsed.apiKey }
+									: {}),
 								...(parsed.model !== undefined ? { model: parsed.model } : {}),
 							},
 							language: {
 								...config.language,
-								...(parsed.language || {}),
+								...parsed.language,
 							},
 						};
 
