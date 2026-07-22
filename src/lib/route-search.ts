@@ -1,4 +1,5 @@
 import type { NetworkMapKind } from "./network-map";
+import type { PeriodDigestContentSource } from "./period-digest";
 import type { SearchDiscussionSource } from "./search-discussion";
 import type { TweetSearchMode } from "./tweet-search-live";
 import type {
@@ -137,6 +138,7 @@ export type PeriodRouteSearch = "today" | "24h" | "yesterday" | "week";
 export interface TodayRouteSearch {
 	period: PeriodRouteSearch;
 	includeDms: boolean;
+	contentSource: PeriodDigestContentSource;
 }
 
 export function validateTodaySearch(
@@ -149,6 +151,11 @@ export function validateTodaySearch(
 			"today",
 		),
 		includeDms: booleanValue(search.includeDms),
+		contentSource: enumValue(
+			search.contentSource,
+			["all", "for_you", "following"],
+			"all",
+		),
 	};
 }
 

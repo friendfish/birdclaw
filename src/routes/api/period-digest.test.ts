@@ -87,6 +87,7 @@ describe("api period digest route", () => {
 				until: "2026-05-16",
 				account: "acct_primary",
 				includeDms: true,
+				contentSource: "all",
 				refresh: true,
 				model: "gpt-5.5",
 				language: "zh-CN",

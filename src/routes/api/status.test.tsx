@@ -60,7 +60,15 @@ describe("status api route", () => {
 		});
 
 		await expect(response.json()).resolves.toEqual({
-			stats: { home: 4, mentions: 2, dms: 4, needsReply: 2, inbox: 4 },
+			stats: {
+				home: 4,
+				homeForYou: 0,
+				homeFollowing: 0,
+				mentions: 2,
+				dms: 4,
+				needsReply: 2,
+				inbox: 4,
+			},
 			accounts: [
 				{
 					id: "acct_primary",

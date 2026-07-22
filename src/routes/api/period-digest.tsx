@@ -13,12 +13,17 @@ import { createEffectNdjsonResponse } from "#/lib/ndjson-stream";
 import {
 	normalizeDigestLanguage,
 	streamPeriodDigestEffect,
+	type PeriodDigestContentSource,
 	type PeriodDigestOptions,
 	type PeriodDigestStreamEvent,
 } from "#/lib/period-digest";
 
 function parseBoolean(value: string | null) {
 	return value === "true" || value === "1" || value === "yes";
+}
+
+function parseContentSource(value: string | null): PeriodDigestContentSource {
+	return value === "for_you" || value === "following" ? value : "all";
 }
 
 function parseOptions(url: URL): PeriodDigestOptions {
@@ -28,6 +33,7 @@ function parseOptions(url: URL): PeriodDigestOptions {
 		until: url.searchParams.get("until") ?? undefined,
 		account: url.searchParams.get("account") ?? undefined,
 		includeDms: parseBoolean(url.searchParams.get("includeDms")),
+		contentSource: parseContentSource(url.searchParams.get("contentSource")),
 		refresh: parseBoolean(url.searchParams.get("refresh")),
 		model: url.searchParams.get("model") === "gpt-5.5" ? "gpt-5.5" : undefined,
 		language: normalizeDigestLanguage(

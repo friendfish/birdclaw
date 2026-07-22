@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { SyncNowButton } from "#/components/SyncNowButton";
 import { TimelineCard } from "#/components/TimelineCard";
 import {
@@ -44,6 +44,10 @@ interface TimelineRouteFrameProps {
 	// button's auto-sync state to a specific home feed (For You/Following).
 	feed?: HomeFeed;
 	autoSyncScope?: string;
+	// Rendered inside the sticky header, directly below the title/count row
+	// and above search + the reply-filter tabs (e.g. Home's For You/Following
+	// switcher).
+	feedTabs?: ReactNode;
 }
 
 export function TimelineRouteFrame({
@@ -62,6 +66,7 @@ export function TimelineRouteFrame({
 	subtitle,
 	feed,
 	autoSyncScope,
+	feedTabs,
 }: TimelineRouteFrameProps) {
 	const [replyFilter, setReplyFilter] =
 		useState<ReplyFilter>(initialReplyFilter);
@@ -111,6 +116,7 @@ export function TimelineRouteFrame({
 					}
 					controls={
 						<>
+							{feedTabs}
 							<TimelineSearchField
 								onChange={setSearch}
 								placeholder={searchPlaceholder}

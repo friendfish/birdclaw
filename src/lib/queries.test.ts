@@ -2041,6 +2041,8 @@ describe("birdclaw queries", () => {
 
 		expect(envelope.stats).toEqual({
 			home: 4,
+			homeForYou: 0,
+			homeFollowing: 0,
 			mentions: 2,
 			dms: 4,
 			needsReply: 2,
@@ -2052,6 +2054,73 @@ describe("birdclaw queries", () => {
 		]);
 		expect(envelope.archives).toHaveLength(1);
 		expect(envelope.transport.availableTransport).toBe("xurl");
+	});
+
+	it("counts home items per feed independently of the total", async () => {
+		setupTempHome();
+		const db = getNativeDb();
+
+		insertTestTweet(db, {
+			id: "tweet_env_following",
+			text: "following only",
+			createdAt: "2026-05-01T00:00:00.000Z",
+		});
+		insertTestEdge(db, "tweet_env_following", "2026-05-01T00:00:00.000Z");
+		insertTestFeedEdge(
+			db,
+			"tweet_env_following",
+			"following",
+			"2026-05-01T00:00:00.000Z",
+		);
+
+		insertTestTweet(db, {
+			id: "tweet_env_for_you",
+			text: "for you only",
+			createdAt: "2026-05-01T00:01:00.000Z",
+		});
+		insertTestEdge(db, "tweet_env_for_you", "2026-05-01T00:01:00.000Z");
+		insertTestFeedEdge(
+			db,
+			"tweet_env_for_you",
+			"for_you",
+			"2026-05-01T00:01:00.000Z",
+		);
+
+		const envelope = await getQueryEnvelope();
+
+		expect(envelope.stats.home).toBe(6);
+		expect(envelope.stats.homeFollowing).toBe(1);
+		expect(envelope.stats.homeForYou).toBe(1);
+	});
+
+	it("excludes feed-tagged tweets that never joined the home timeline", async () => {
+		setupTempHome();
+		const db = getNativeDb();
+
+		// A mention-only tweet that happens to carry a (historical/stray) feed
+		// tag but was never part of the home timeline sync.
+		insertTestTweet(db, {
+			id: "tweet_mention_with_stray_feed_tag",
+			text: "mention with stray feed tag",
+			createdAt: "2026-05-01T00:00:00.000Z",
+		});
+		insertTestEdge(
+			db,
+			"tweet_mention_with_stray_feed_tag",
+			"2026-05-01T00:00:00.000Z",
+			"mention",
+		);
+		insertTestFeedEdge(
+			db,
+			"tweet_mention_with_stray_feed_tag",
+			"following",
+			"2026-05-01T00:00:00.000Z",
+		);
+
+		const envelope = await getQueryEnvelope();
+
+		expect(envelope.stats.homeFollowing).toBe(0);
+		expect(envelope.stats.homeForYou).toBe(0);
 	});
 
 	it("exposes the status envelope as a lazy Effect program", async () => {

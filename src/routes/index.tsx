@@ -1,11 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { TimelineRouteFrame } from "#/components/TimelineRouteFrame";
-import { fetchJson } from "#/lib/api-client";
+import { useBirdAvailable } from "#/components/useBirdAvailable";
 import type { QueryEnvelope } from "#/lib/api-contracts";
-import { liveDataSourcesResponseSchema } from "#/lib/api-contracts";
-import { queryKeys } from "#/lib/query-client";
 import {
 	type HomeRouteSearch,
 	type RouteSearchChange,
@@ -13,9 +10,10 @@ import {
 } from "#/lib/route-search";
 import {
 	cx,
-	segmentAccentActiveClass,
-	segmentClass,
-	segmentedClass,
+	tabButtonActiveClass,
+	tabButtonClass,
+	tabButtonIndicatorClass,
+	tabStripClass,
 } from "#/lib/ui";
 
 export const Route = createFileRoute("/")({
@@ -30,28 +28,8 @@ const FEED_TABS = [
 
 function homeSubtitle(meta: QueryEnvelope | null) {
 	if (!meta) return "Loading local context...";
-	return `${String(meta.stats.home)} items · ${String(meta.stats.needsReply)} waiting · ${meta.transport.statusText}`;
-}
-
-async function fetchDataSources() {
-	return fetchJson(
-		"/api/data-sources",
-		undefined,
-		liveDataSourcesResponseSchema,
-		"Data source status failed",
-	);
-}
-
-function useBirdAvailable() {
-	const dataSourcesQuery = useQuery({
-		queryKey: queryKeys.dataSources,
-		queryFn: fetchDataSources,
-	});
-	return (
-		dataSourcesQuery.data?.sources.some(
-			(source) => source.source === "bird" && source.works,
-		) ?? false
-	);
+	const { home, homeForYou, homeFollowing, needsReply } = meta.stats;
+	return `${String(home)} items (For You ${String(homeForYou)} + Following ${String(homeFollowing)}) · ${String(needsReply)} waiting · ${meta.transport.statusText}`;
 }
 
 function HomeRoute() {
@@ -86,50 +64,49 @@ export function HomeRouteView({
 			? "following"
 			: searchState.feed;
 
-	return (
-		<div className="flex min-h-screen flex-col">
-			{birdAvailable ? (
-				<div className="flex flex-wrap items-center gap-2 px-4 pt-3">
-					<div className={segmentedClass} aria-label="Home feed">
-						{FEED_TABS.map((tab) => (
-							<button
-								key={tab.value}
-								type="button"
-								aria-pressed={effectiveFeed === tab.value}
-								className={cx(
-									segmentClass,
-									effectiveFeed === tab.value && segmentAccentActiveClass,
-								)}
-								onClick={() =>
-									updateSearch({ ...searchState, feed: tab.value })
-								}
-							>
-								{tab.label}
-							</button>
-						))}
-					</div>
-				</div>
-			) : null}
-			<TimelineRouteFrame
-				key={effectiveFeed}
-				autoSyncScope={effectiveFeed}
-				emptyDetail="Try a different filter or sync the timeline again."
-				emptyLabel="No posts in this view"
-				errorFallback="Timeline unavailable"
-				errorTitle="Could not load posts"
-				feed={effectiveFeed}
-				initialReplyFilter="all"
-				loadingDetail="Reading the local timeline store"
-				loadingLabel="Loading posts"
-				resource="home"
-				searchPlaceholder="Search local timeline"
-				subtitle={homeSubtitle}
-				syncKind="timeline"
-				syncLabel={
-					effectiveFeed === "for_you" ? "Sync For You" : "Sync Following"
-				}
-				title="Home"
-			/>
+	const feedTabs = birdAvailable ? (
+		<div className={tabStripClass} aria-label="Home feed">
+			{FEED_TABS.map((tab) => {
+				const active = effectiveFeed === tab.value;
+				return (
+					<button
+						key={tab.value}
+						type="button"
+						aria-pressed={active}
+						className={cx(tabButtonClass, active && tabButtonActiveClass)}
+						onClick={() => updateSearch({ ...searchState, feed: tab.value })}
+					>
+						<span className="relative inline-flex flex-col items-center justify-center py-1">
+							{tab.label}
+							{active ? <span className={tabButtonIndicatorClass} /> : null}
+						</span>
+					</button>
+				);
+			})}
 		</div>
+	) : null;
+
+	return (
+		<TimelineRouteFrame
+			key={effectiveFeed}
+			autoSyncScope={effectiveFeed}
+			emptyDetail="Try a different filter or sync the timeline again."
+			emptyLabel="No posts in this view"
+			errorFallback="Timeline unavailable"
+			errorTitle="Could not load posts"
+			feed={effectiveFeed}
+			feedTabs={feedTabs}
+			initialReplyFilter="all"
+			loadingDetail="Reading the local timeline store"
+			loadingLabel="Loading posts"
+			resource="home"
+			searchPlaceholder="Search local timeline"
+			subtitle={homeSubtitle}
+			syncKind="timeline"
+			syncLabel={
+				effectiveFeed === "for_you" ? "Sync For You" : "Sync Following"
+			}
+			title="Home"
+		/>
 	);
 }

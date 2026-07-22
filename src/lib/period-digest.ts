@@ -25,12 +25,14 @@ import { readSyncCache, writeSyncCache } from "./sync-cache";
 import { syncHomeTimelineEffect, type HomeTimelineMode } from "./timeline-live";
 import type {
 	EmbeddedTweet,
+	HomeFeed,
 	ProfileRecord,
 	TweetEntities,
 	TweetMediaItem,
 } from "./types";
 
 export type PeriodDigestPreset = "today" | "yesterday" | "24h" | "week";
+export type PeriodDigestContentSource = "all" | "for_you" | "following";
 export type PeriodDigestSourceKind =
 	| "home"
 	| "mentions"
@@ -45,6 +47,7 @@ export interface PeriodDigestOptions {
 	until?: string;
 	account?: string;
 	includeDms?: boolean;
+	contentSource?: PeriodDigestContentSource;
 	refresh?: boolean;
 	model?: string;
 	language?: string;
@@ -215,6 +218,9 @@ export interface PeriodDigestContext {
 	window: PeriodDigestWindow;
 	account?: string;
 	includeDms: boolean;
+	// Optional so fixtures/tests built before this field existed keep
+	// compiling; absent is equivalent to "all" everywhere it's read.
+	contentSource?: PeriodDigestContentSource;
 	counts: Record<PeriodDigestSourceKind | "links", number>;
 	tweets: CompactTweet[];
 	dms: CompactDm[];
@@ -405,6 +411,8 @@ function collectTweetsForSource(
 		account?: string;
 		window: PeriodDigestWindow;
 		limit: number;
+		// Only honored for source === "home"; other sources aren't feed-scoped.
+		feed?: HomeFeed;
 	},
 ) {
 	if (source === "likes" || source === "bookmarks") {
@@ -424,6 +432,7 @@ function collectTweetsForSource(
 		since: options.window.since,
 		until: options.window.until,
 		limit: source === "home" ? options.limit : Math.ceil(options.limit / 2),
+		...(source === "home" ? { feed: options.feed } : {}),
 	}).map((item) => compactTweet(source, item));
 }
 
@@ -500,6 +509,7 @@ function contextHash(context: Omit<PeriodDigestContext, "hash">) {
 				},
 				account: context.account,
 				includeDms: context.includeDms,
+				contentSource: context.contentSource ?? "all",
 				tweets: context.tweets.map((tweet) => [
 					tweet.id,
 					tweet.url,
@@ -547,31 +557,49 @@ export function collectPeriodDigestContext(
 		3,
 		Math.trunc(options.maxLinks ?? DEFAULT_MAX_LINKS),
 	);
+	const contentSource = options.contentSource ?? "all";
+	// For You stays algorithm-only; Following adds the user's own curated
+	// activity (authored/likes/bookmarks) but not mentions, which are a
+	// needs-a-reply signal orthogonal to the feed-source axis and only
+	// surface in the unfiltered "all" view so they're never accidentally
+	// missed by picking the "wrong" narrow tab.
+	const includeMentions = contentSource === "all";
+	const includeOwnActivity =
+		contentSource === "all" || contentSource === "following";
 	const home = collectTweetsForSource("home", {
 		account: options.account,
 		window,
 		limit: maxTweets,
+		feed: contentSource === "all" ? undefined : contentSource,
 	});
-	const mentions = collectTweetsForSource("mentions", {
-		account: options.account,
-		window,
-		limit: maxTweets,
-	});
-	const authored = collectTweetsForSource("authored", {
-		account: options.account,
-		window,
-		limit: maxTweets,
-	});
-	const likes = collectTweetsForSource("likes", {
-		account: options.account,
-		window,
-		limit: maxTweets,
-	});
-	const bookmarks = collectTweetsForSource("bookmarks", {
-		account: options.account,
-		window,
-		limit: maxTweets,
-	});
+	const mentions = includeMentions
+		? collectTweetsForSource("mentions", {
+				account: options.account,
+				window,
+				limit: maxTweets,
+			})
+		: [];
+	const authored = includeOwnActivity
+		? collectTweetsForSource("authored", {
+				account: options.account,
+				window,
+				limit: maxTweets,
+			})
+		: [];
+	const likes = includeOwnActivity
+		? collectTweetsForSource("likes", {
+				account: options.account,
+				window,
+				limit: maxTweets,
+			})
+		: [];
+	const bookmarks = includeOwnActivity
+		? collectTweetsForSource("bookmarks", {
+				account: options.account,
+				window,
+				limit: maxTweets,
+			})
+		: [];
 	const dms = collectDms({
 		account: options.account,
 		includeDms: Boolean(options.includeDms),
@@ -594,6 +622,7 @@ export function collectPeriodDigestContext(
 		window,
 		...(options.account ? { account: options.account } : {}),
 		includeDms: Boolean(options.includeDms),
+		contentSource,
 		counts: {
 			home: home.length,
 			mentions: mentions.length,
@@ -903,6 +932,7 @@ function latestDigestCacheKey(options: PeriodDigestOptions) {
 		until: options.until?.trim() || null,
 		account: options.account?.trim() || null,
 		includeDms: Boolean(options.includeDms),
+		contentSource: options.contentSource ?? "all",
 		maxTweets: Math.max(
 			20,
 			Math.trunc(options.maxTweets ?? DEFAULT_MAX_TWEETS),
@@ -1020,6 +1050,16 @@ function emitCachedDigest(
 	handlers.onEvent?.({ type: "done", result });
 }
 
+function contentSourceDescription(contentSource: PeriodDigestContentSource) {
+	if (contentSource === "for_you") {
+		return "For You algorithmic recommendations only — no mentions, own posts, likes, or bookmarks are included.";
+	}
+	if (contentSource === "following") {
+		return "Following timeline plus the account's own posts, likes, and bookmarks — mentions are excluded.";
+	}
+	return "Full daily overview: Following + For You timeline, mentions, own posts, likes, and bookmarks.";
+}
+
 function buildPrompt(
 	context: PeriodDigestContext,
 	options?: { language?: string },
@@ -1100,6 +1140,7 @@ function buildPrompt(
 	return `Window: ${context.window.label}
 Since: ${context.window.since}
 Until: ${context.window.until}
+Content scope: ${contentSourceDescription(context.contentSource ?? "all")}
 Sources: ${JSON.stringify(context.counts)}
 Prompt tweets: ${String(tweetCount)} of ${String(context.tweets.length)} selected context tweets
 
@@ -1393,6 +1434,7 @@ export const __test__ = {
 	PeriodDigestSchema,
 	buildPrompt,
 	digestCacheKey,
+	latestDigestCacheKey,
 	languageFromOptions,
 	normalizeDigestLanguage,
 	readOpenAIStreamEffect,
