@@ -11,6 +11,7 @@ import {
 	type TweetAccountEdgeKind,
 	upsertTweetAccountEdge,
 } from "./tweet-account-edges";
+import { type HomeFeed, upsertTweetFeedEdge } from "./tweet-feed-edges";
 import { ensureStubProfileForXUser, upsertProfileFromXUser } from "./x-profile";
 
 export interface IngestTweetPayloadOptions {
@@ -20,6 +21,7 @@ export interface IngestTweetPayloadOptions {
 	edgeKind?: TweetAccountEdgeKind;
 	collectionKind?: "likes" | "bookmarks";
 	markRepliesAsReplied?: boolean;
+	feed?: HomeFeed;
 	provenance?: {
 		sourceUrlByTweetId: ReadonlyMap<string, string>;
 	};
@@ -65,6 +67,7 @@ export function ingestTweetPayload(
 		edgeKind,
 		collectionKind,
 		markRepliesAsReplied = false,
+		feed,
 		provenance,
 	}: IngestTweetPayloadOptions,
 ) {
@@ -164,6 +167,13 @@ export function ingestTweetPayload(
 					source,
 					seenAt: observedAt,
 					rawJson: JSON.stringify(tweet),
+				});
+			}
+			if (feed && isPrimaryTweet) {
+				upsertTweetFeedEdge(db, {
+					tweetId: tweet.id,
+					feed,
+					seenAt: observedAt,
 				});
 			}
 			if (isPrimaryTweet) {

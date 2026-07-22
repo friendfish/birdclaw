@@ -25,6 +25,10 @@ function parseDmInbox(value: unknown): WebSyncDmInbox | undefined {
 		: undefined;
 }
 
+function parseHomeFeed(value: unknown) {
+	return value === "following" || value === "for_you" ? value : undefined;
+}
+
 function parsePositiveInteger(value: unknown, max: number) {
 	const parsed =
 		typeof value === "number"
@@ -37,6 +41,12 @@ function parsePositiveInteger(value: unknown, max: number) {
 }
 
 function parseSyncOptions(kind: string, body: Record<string, unknown>) {
+	if (kind === "timeline") {
+		const options: WebSyncOptions = {};
+		const feed = parseHomeFeed(body.feed);
+		if (feed) options.feed = feed;
+		return options;
+	}
 	if (kind !== "dms") return {};
 	const options: WebSyncOptions = {};
 	const inbox = parseDmInbox(body.inbox);

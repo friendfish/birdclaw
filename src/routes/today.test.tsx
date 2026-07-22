@@ -231,6 +231,118 @@ describe("today route", () => {
 		).toBe(true);
 	});
 
+	it("scopes the digest request by content source and hides For You without bird", async () => {
+		const urls: URL[] = [];
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			// fetchDataSources() passes a bare relative path (unlike digestUrl(),
+			// which is already absolute); resolve against a base like a real
+			// browser fetch() would instead of letting new URL() throw.
+			const url = new URL(String(input), "http://localhost");
+			urls.push(url);
+			if (url.pathname === "/api/data-sources") {
+				return Response.json({
+					generatedAt: "2026-05-16T00:00:00.000Z",
+					sources: [],
+					capabilities: [],
+				});
+			}
+			if (url.pathname === "/api/profile-hydrate") {
+				return new Response(JSON.stringify({ ok: true, results: [] }), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+			const contentSource = url.searchParams.get("contentSource") ?? "all";
+			const markdown = `# ${contentSource}\n\n## What people are talking about\n\n- signal`;
+			return ndjsonResponse([
+				{ type: "delta", delta: `${markdown}\n` },
+				{ type: "done", result: digestResult(contentSource, markdown) },
+			]);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(<TodayRoute />);
+
+		expect(
+			await screen.findByRole("heading", { name: "all", level: 1 }),
+		).toBeInTheDocument();
+		// bird is unavailable (empty data sources), so For You never renders.
+		expect(screen.queryByRole("button", { name: "For You" })).toBeNull();
+		expect(screen.getByRole("button", { name: "All" })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Following" }));
+		expect(
+			await screen.findByRole("heading", { name: "following", level: 1 }),
+		).toBeInTheDocument();
+		expect(
+			urls.some(
+				(url) =>
+					url.pathname === "/api/period-digest" &&
+					url.searchParams.get("contentSource") === "following",
+			),
+		).toBe(true);
+	});
+
+	it("shows For You and honors it once bird is available", async () => {
+		const urls: URL[] = [];
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			// fetchDataSources() passes a bare relative path (unlike digestUrl(),
+			// which is already absolute); resolve against a base like a real
+			// browser fetch() would instead of letting new URL() throw.
+			const url = new URL(String(input), "http://localhost");
+			urls.push(url);
+			if (url.pathname === "/api/data-sources") {
+				return Response.json({
+					generatedAt: "2026-05-16T00:00:00.000Z",
+					sources: [
+						{
+							source: "bird",
+							label: "bird",
+							works: true,
+							status: "ok",
+							detail: "ready",
+							accounts: [],
+						},
+					],
+					capabilities: [],
+				});
+			}
+			if (url.pathname === "/api/profile-hydrate") {
+				return new Response(JSON.stringify({ ok: true, results: [] }), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+			const contentSource = url.searchParams.get("contentSource") ?? "all";
+			const markdown = `# ${contentSource}\n\n## What people are talking about\n\n- signal`;
+			return ndjsonResponse([
+				{ type: "delta", delta: `${markdown}\n` },
+				{ type: "done", result: digestResult(contentSource, markdown) },
+			]);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(<TodayRoute />);
+		await screen.findByRole("heading", { name: "all", level: 1 });
+
+		const forYouButton = await screen.findByRole("button", {
+			name: "For You",
+		});
+		fireEvent.click(forYouButton);
+		expect(
+			await screen.findByRole("heading", { name: "for_you", level: 1 }),
+		).toBeInTheDocument();
+		expect(forYouButton).toHaveAttribute("aria-pressed", "true");
+		expect(
+			urls.some(
+				(url) =>
+					url.pathname === "/api/period-digest" &&
+					url.searchParams.get("contentSource") === "for_you",
+			),
+		).toBe(true);
+	});
+
 	it("exports a completed digest through the browser PDF flow", async () => {
 		document.title = "birdclaw";
 		const printMock = vi.spyOn(window, "print").mockImplementation(() => {
@@ -315,7 +427,17 @@ describe("today route", () => {
 	});
 
 	it("shows an actionable message when the digest connection drops", async () => {
-		const fetchMock = vi.fn(async () => {
+		let digestCalls = 0;
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.includes("/api/data-sources")) {
+				return Response.json({
+					generatedAt: "2026-05-15T12:00:00.000Z",
+					sources: [],
+					capabilities: [],
+				});
+			}
+			digestCalls += 1;
 			throw new TypeError("network error");
 		});
 		vi.stubGlobal("fetch", fetchMock);
@@ -336,7 +458,7 @@ describe("today route", () => {
 		).not.toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(digestCalls).toBe(2));
 	});
 
 	it("shows fetch status before the first markdown token", async () => {

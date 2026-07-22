@@ -418,7 +418,7 @@ describe("database init", () => {
 		}) as number;
 		expect(busyTimeout).toBe(SQLITE_BUSY_TIMEOUT_MS);
 		expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
-		expect(db.pragma("user_version", { simple: true })).toBe(7);
+		expect(db.pragma("user_version", { simple: true })).toBe(8);
 	});
 
 	it("adds revision edges without rewriting v6 revision rows", () => {
@@ -441,7 +441,7 @@ describe("database init", () => {
 		resetDatabaseForTests();
 
 		const migrated = getNativeDb({ seedDemoData: false });
-		expect(migrated.pragma("user_version", { simple: true })).toBe(7);
+		expect(migrated.pragma("user_version", { simple: true })).toBe(8);
 		expect(
 			migrated
 				.prepare(
@@ -549,7 +549,7 @@ describe("database init", () => {
 
 	it.each([
 		{ kind: "stale", version: 4 },
-		{ kind: "future", version: 8 },
+		{ kind: "future", version: 9 },
 	])(
 		"rejects a $kind schema and closes its provisional reader",
 		({ version }) => {
@@ -584,10 +584,10 @@ describe("database init", () => {
 
 		const writer = getNativeDb({ seedDemoData: false });
 		getReadDb({ seedDemoData: false });
-		writer.pragma("user_version = 8");
+		writer.pragma("user_version = 9");
 
 		expect(() => getStrictReadDb()).toThrow(
-			/schema 8 is not ready for version 7/,
+			/schema 9 is not ready for version 8/,
 		);
 	});
 

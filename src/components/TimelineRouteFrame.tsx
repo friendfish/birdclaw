@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { SyncNowButton } from "#/components/SyncNowButton";
 import { TimelineCard } from "#/components/TimelineCard";
 import {
@@ -8,8 +8,8 @@ import {
 	TimelineSearchField,
 } from "#/components/TimelineFeedShell";
 import type { QueryEnvelope } from "#/lib/api-contracts";
-import type { ReplyFilter } from "#/lib/types";
-import type { WebSyncKind } from "#/lib/web-sync";
+import type { HomeFeed, ReplyFilter } from "#/lib/types";
+import type { WebSyncKind, WebSyncOptions } from "#/lib/web-sync";
 import {
 	cx,
 	tabButtonActiveClass,
@@ -40,6 +40,14 @@ interface TimelineRouteFrameProps {
 	emptyLabel: string;
 	emptyDetail: string;
 	subtitle: (meta: QueryEnvelope | null) => string;
+	// Only meaningful for resource="home": scopes the query and the sync
+	// button's auto-sync state to a specific home feed (For You/Following).
+	feed?: HomeFeed;
+	autoSyncScope?: string;
+	// Rendered inside the sticky header, directly below the title/count row
+	// and above search + the reply-filter tabs (e.g. Home's For You/Following
+	// switcher).
+	feedTabs?: ReactNode;
 }
 
 export function TimelineRouteFrame({
@@ -56,6 +64,9 @@ export function TimelineRouteFrame({
 	emptyLabel,
 	emptyDetail,
 	subtitle,
+	feed,
+	autoSyncScope,
+	feedTabs,
 }: TimelineRouteFrameProps) {
 	const [replyFilter, setReplyFilter] =
 		useState<ReplyFilter>(initialReplyFilter);
@@ -77,7 +88,9 @@ export function TimelineRouteFrame({
 		replyFilter,
 		search,
 		errorFallback,
+		feed,
 	});
+	const syncOptions: WebSyncOptions | undefined = feed ? { feed } : undefined;
 	const subtitleText = useMemo(() => subtitle(meta), [meta, subtitle]);
 
 	return (
@@ -93,14 +106,17 @@ export function TimelineRouteFrame({
 							accounts={meta?.accounts}
 							allowAutoSync
 							autoSyncBlocked={loading}
+							autoSyncScope={autoSyncScope}
 							kind={syncKind}
 							label={syncLabel}
 							onSynced={refreshLocalView}
 							showAccountPicker
+							syncOptions={syncOptions}
 						/>
 					}
 					controls={
 						<>
+							{feedTabs}
 							<TimelineSearchField
 								onChange={setSearch}
 								placeholder={searchPlaceholder}

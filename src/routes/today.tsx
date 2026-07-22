@@ -9,12 +9,14 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MarkdownViewer } from "#/components/MarkdownViewer";
+import { useBirdAvailable } from "#/components/useBirdAvailable";
 import { useNdjsonRun } from "#/components/useNdjsonRun";
 import {
 	isTerminalStreamEvent,
 	periodDigestStreamEventSchema,
 } from "#/lib/client-stream-contracts";
 import type {
+	PeriodDigestContentSource,
 	PeriodDigestContext,
 	PeriodDigestRunResult,
 	PeriodDigestStreamEvent,
@@ -42,6 +44,10 @@ import {
 	segmentAccentActiveClass,
 	segmentClass,
 	segmentedClass,
+	tabButtonActiveClass,
+	tabButtonClass,
+	tabButtonIndicatorClass,
+	tabStripClass,
 } from "#/lib/ui";
 
 export const Route = createFileRoute("/today")({
@@ -61,6 +67,15 @@ const periods: Array<{ value: PeriodOption; label: string }> = [
 	{ value: "24h", label: "24h" },
 	{ value: "yesterday", label: "Yesterday" },
 	{ value: "week", label: "Week" },
+];
+
+const CONTENT_SOURCES: Array<{
+	value: PeriodDigestContentSource;
+	label: string;
+}> = [
+	{ value: "all", label: "All" },
+	{ value: "for_you", label: "For You" },
+	{ value: "following", label: "Following" },
 ];
 
 function periodLabel(period: PeriodOption) {
@@ -86,11 +101,13 @@ function exportCurrentDigestPdf(title: string) {
 function digestUrl(
 	period: PeriodOption,
 	includeDms: boolean,
+	contentSource: PeriodDigestContentSource,
 	refresh: boolean,
 ) {
 	const url = new URL("/api/period-digest", window.location.origin);
 	url.searchParams.set("period", period);
 	url.searchParams.set("includeDms", String(includeDms));
+	url.searchParams.set("contentSource", contentSource);
 	url.searchParams.set("maxTweets", "5000");
 	url.searchParams.set("maxLinks", "20");
 	// Cloudflare caps proxied requests; live timeline sync remains a separate job/UI action.
@@ -196,7 +213,11 @@ function applyHydratedProfilesToResult(
 	return context === result.context ? result : { ...result, context };
 }
 
-function useDigestStream(period: PeriodOption, includeDms: boolean) {
+function useDigestStream(
+	period: PeriodOption,
+	includeDms: boolean,
+	contentSource: PeriodDigestContentSource,
+) {
 	const queryClient = useQueryClient();
 	const [markdown, setMarkdown] = useState("");
 	const [context, setContext] = useState<PeriodDigestContext | null>(null);
@@ -213,11 +234,11 @@ function useDigestStream(period: PeriodOption, includeDms: boolean) {
 	}, []);
 	const request = useCallback(
 		(signal: AbortSignal, refresh: boolean) =>
-			fetch(digestUrl(period, includeDms, refresh), {
+			fetch(digestUrl(period, includeDms, contentSource, refresh), {
 				cache: "no-store",
 				signal,
 			}),
-		[includeDms, period],
+		[contentSource, includeDms, period],
 	);
 	const onEvent = useCallback((event: PeriodDigestStreamEvent) => {
 		if (event.type === "status") {
@@ -350,9 +371,14 @@ export function TodayRouteView({
 	const searchState = controlledSearch ?? localSearch;
 	const updateSearch: RouteSearchChange<TodayRouteSearch> = (next, options) =>
 		onSearchChange ? onSearchChange(next, options) : setLocalSearch(next);
-	const { period, includeDms } = searchState;
+	const { period, includeDms, contentSource } = searchState;
+	const birdAvailable = useBirdAvailable();
+	// For You requires bird; fall back to the safe "all" default when it
+	// isn't available, regardless of what the URL/local state currently says.
+	const effectiveContentSource =
+		contentSource === "for_you" && !birdAvailable ? "all" : contentSource;
 	const { context, error, loading, markdown, result, run, status } =
-		useDigestStream(period, includeDms);
+		useDigestStream(period, includeDms, effectiveContentSource);
 	useEffect(() => {
 		const root = document.documentElement;
 		root.classList.add("today-pdf-route");
@@ -422,6 +448,33 @@ export function TodayRouteView({
 							<span>Generated {exportUpdatedAt}</span>
 						</>
 					) : null}
+				</div>
+				<div className="today-screen-only">
+					<div className={tabStripClass} aria-label="Digest content">
+						{CONTENT_SOURCES.filter(
+							(item) => item.value !== "for_you" || birdAvailable,
+						).map((item) => {
+							const active = effectiveContentSource === item.value;
+							return (
+								<button
+									key={item.value}
+									type="button"
+									aria-pressed={active}
+									className={cx(tabButtonClass, active && tabButtonActiveClass)}
+									onClick={() =>
+										updateSearch({ ...searchState, contentSource: item.value })
+									}
+								>
+									<span className="relative inline-flex flex-col items-center justify-center py-1">
+										{item.label}
+										{active ? (
+											<span className={tabButtonIndicatorClass} />
+										) : null}
+									</span>
+								</button>
+							);
+						})}
+					</div>
 				</div>
 				<div className="today-screen-only flex flex-wrap items-center gap-2 px-4 pb-3">
 					<div className={segmentedClass} aria-label="Digest period">

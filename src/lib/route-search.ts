@@ -1,7 +1,9 @@
 import type { NetworkMapKind } from "./network-map";
+import type { PeriodDigestContentSource } from "./period-digest";
 import type { SearchDiscussionSource } from "./search-discussion";
 import type { TweetSearchMode } from "./tweet-search-live";
 import type {
+	HomeFeed,
 	InboxKind,
 	LinkInsightKind,
 	LinkInsightRange,
@@ -136,6 +138,7 @@ export type PeriodRouteSearch = "today" | "24h" | "yesterday" | "week";
 export interface TodayRouteSearch {
 	period: PeriodRouteSearch;
 	includeDms: boolean;
+	contentSource: PeriodDigestContentSource;
 }
 
 export function validateTodaySearch(
@@ -148,6 +151,23 @@ export function validateTodaySearch(
 			"today",
 		),
 		includeDms: booleanValue(search.includeDms),
+		contentSource: enumValue(
+			search.contentSource,
+			["all", "for_you", "following"],
+			"all",
+		),
+	};
+}
+
+export interface HomeRouteSearch {
+	feed: HomeFeed;
+}
+
+export function validateHomeSearch(
+	search: Record<string, unknown>,
+): HomeRouteSearch {
+	return {
+		feed: enumValue(search.feed, ["for_you", "following"], "for_you"),
 	};
 }
 

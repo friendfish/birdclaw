@@ -262,6 +262,8 @@ export const queryEnvelopeSchema = z.object({
 	transport: transportStatusSchema,
 	stats: z.object({
 		home: z.number(),
+		homeForYou: z.number().default(0),
+		homeFollowing: z.number().default(0),
 		mentions: z.number(),
 		dms: z.number(),
 		needsReply: z.number(),

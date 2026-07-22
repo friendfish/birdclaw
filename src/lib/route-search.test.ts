@@ -26,6 +26,12 @@ describe("route search schemas", () => {
 		});
 		expect(validateDiscussSearch({ mode: "bad" }).mode).toBe("xurl");
 		expect(validateTodaySearch({ period: "bad" }).period).toBe("today");
+		expect(validateTodaySearch({ contentSource: "bad" }).contentSource).toBe(
+			"all",
+		);
+		expect(
+			validateTodaySearch({ contentSource: "following" }).contentSource,
+		).toBe("following");
 		expect(validateNetworkMapSearch({ type: "bad" }).type).toBe("all");
 	});
 

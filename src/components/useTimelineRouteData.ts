@@ -11,7 +11,12 @@ import {
 	postAction,
 } from "#/lib/api-client";
 import { queryKeys } from "#/lib/query-client";
-import type { ReplyFilter, ResourceKind, TimelineItem } from "#/lib/types";
+import type {
+	HomeFeed,
+	ReplyFilter,
+	ResourceKind,
+	TimelineItem,
+} from "#/lib/types";
 import { useSelectedAccountId } from "./account-selection";
 import { useDebouncedValue } from "./useDebouncedValue";
 
@@ -25,6 +30,7 @@ interface UseTimelineRouteDataOptions {
 	replyFilter?: ReplyFilter;
 	likedOnly?: boolean;
 	bookmarkedOnly?: boolean;
+	feed?: HomeFeed;
 }
 
 interface TimelinePageParam {
@@ -38,6 +44,7 @@ function buildTimelineQueryUrl({
 	replyFilter,
 	likedOnly,
 	bookmarkedOnly,
+	feed,
 	selectedAccountId,
 	pageParam,
 }: {
@@ -46,6 +53,7 @@ function buildTimelineQueryUrl({
 	replyFilter?: ReplyFilter;
 	likedOnly: boolean;
 	bookmarkedOnly: boolean;
+	feed?: HomeFeed;
 	selectedAccountId?: string;
 	pageParam?: TimelinePageParam;
 }) {
@@ -57,6 +65,7 @@ function buildTimelineQueryUrl({
 	if (replyFilter) params.set("replyFilter", replyFilter);
 	if (likedOnly) params.set("liked", "true");
 	if (bookmarkedOnly) params.set("bookmarked", "true");
+	if (feed) params.set("feed", feed);
 	if (search.trim()) params.set("search", search.trim());
 	if (pageParam) {
 		params.set("until", pageParam.until);
@@ -77,6 +86,7 @@ export function useTimelineRouteData({
 	replyFilter,
 	likedOnly = false,
 	bookmarkedOnly = false,
+	feed,
 }: UseTimelineRouteDataOptions) {
 	const queryClient = useQueryClient();
 	const statusQuery = useQuery({
@@ -94,6 +104,7 @@ export function useTimelineRouteData({
 			replyFilter: replyFilter ?? "all",
 			likedOnly,
 			bookmarkedOnly,
+			feed: feed ?? null,
 			selectedAccountId: selectedAccountId ?? null,
 		},
 	] as const;
@@ -108,6 +119,7 @@ export function useTimelineRouteData({
 					replyFilter,
 					likedOnly,
 					bookmarkedOnly,
+					feed,
 					selectedAccountId,
 					pageParam,
 				}),

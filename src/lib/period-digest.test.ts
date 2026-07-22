@@ -140,6 +140,123 @@ describe("period digest", () => {
 		expect(changed.hash).not.toBe(first.hash);
 	});
 
+	describe("content source scoping", () => {
+		const window = {
+			since: "2026-01-01T00:00:00.000Z",
+			until: "2027-01-01T00:00:00.000Z",
+			maxTweets: 20,
+		};
+
+		it("defaults to all: mentions and home stay unrestricted", () => {
+			const all = collectPeriodDigestContext(window);
+
+			expect(all.contentSource).toBe("all");
+			expect(all.counts.mentions).toBeGreaterThan(0);
+			expect(all.counts.home).toBeGreaterThan(0);
+		});
+
+		it("excludes mentions but keeps own activity for following", () => {
+			const all = collectPeriodDigestContext(window);
+			const following = collectPeriodDigestContext({
+				...window,
+				contentSource: "following",
+			});
+
+			expect(following.contentSource).toBe("following");
+			expect(following.counts.mentions).toBe(0);
+			// authored/likes/bookmarks inclusion doesn't depend on feed, so it
+			// matches the "all" run exactly; only mentions differs.
+			expect(following.counts.authored).toBe(all.counts.authored);
+			expect(following.counts.likes).toBe(all.counts.likes);
+			expect(following.counts.bookmarks).toBe(all.counts.bookmarks);
+		});
+
+		it("excludes mentions and own activity for for_you, home only", () => {
+			const forYou = collectPeriodDigestContext({
+				...window,
+				contentSource: "for_you",
+			});
+
+			expect(forYou.contentSource).toBe("for_you");
+			expect(forYou.counts.mentions).toBe(0);
+			expect(forYou.counts.authored).toBe(0);
+			expect(forYou.counts.likes).toBe(0);
+			expect(forYou.counts.bookmarks).toBe(0);
+			// Demo seed data predates tweet_feed_edges and carries no feed tags,
+			// so a feed-scoped home query correctly finds nothing here; the
+			// positive "a tagged tweet is found" case is covered separately.
+			expect(forYou.counts.home).toBe(0);
+		});
+
+		it("only returns home tweets tagged with the matching feed", () => {
+			const db = getNativeDb();
+			const seenAt = "2026-06-01T00:00:00.000Z";
+			for (const [tweetId, feed] of [
+				["tweet_digest_following", "following"],
+				["tweet_digest_for_you", "for_you"],
+			] as const) {
+				db.prepare(
+					`insert into tweets (id, author_profile_id, text, created_at, is_replied, entities_json, media_json)
+					 values (?, 'profile_me', ?, ?, 0, '{}', '[]')`,
+				).run(tweetId, `digest scoping test ${feed}`, seenAt);
+				db.prepare(
+					`insert into tweet_account_edges (account_id, tweet_id, kind, first_seen_at, last_seen_at, seen_count, source, raw_json, updated_at)
+					 values ('acct_primary', ?, 'home', ?, ?, 1, 'test', '{}', ?)`,
+				).run(tweetId, seenAt, seenAt, seenAt);
+				db.prepare(
+					`insert into tweet_feed_edges (tweet_id, feed, first_seen_at) values (?, ?, ?)`,
+				).run(tweetId, feed, seenAt);
+			}
+
+			const following = collectPeriodDigestContext({
+				...window,
+				contentSource: "following",
+			});
+			const forYou = collectPeriodDigestContext({
+				...window,
+				contentSource: "for_you",
+			});
+
+			expect(
+				following.tweets.some((tweet) => tweet.id === "tweet_digest_following"),
+			).toBe(true);
+			expect(
+				following.tweets.some((tweet) => tweet.id === "tweet_digest_for_you"),
+			).toBe(false);
+			expect(
+				forYou.tweets.some((tweet) => tweet.id === "tweet_digest_for_you"),
+			).toBe(true);
+			expect(
+				forYou.tweets.some((tweet) => tweet.id === "tweet_digest_following"),
+			).toBe(false);
+		});
+
+		it("keeps context hashes and cache keys distinct across content sources", () => {
+			const all = collectPeriodDigestContext(window);
+			const following = collectPeriodDigestContext({
+				...window,
+				contentSource: "following",
+			});
+			const forYou = collectPeriodDigestContext({
+				...window,
+				contentSource: "for_you",
+			});
+
+			expect(new Set([all.hash, following.hash, forYou.hash]).size).toBe(3);
+
+			const allKey = __test__.latestDigestCacheKey({ period: "today" });
+			const followingKey = __test__.latestDigestCacheKey({
+				period: "today",
+				contentSource: "following",
+			});
+			const forYouKey = __test__.latestDigestCacheKey({
+				period: "today",
+				contentSource: "for_you",
+			});
+			expect(new Set([allKey, followingKey, forYouKey]).size).toBe(3);
+		});
+	});
+
 	it("keeps fitting tweets in the prompt dataset", () => {
 		const context = collectPeriodDigestContext({
 			since: "2026-01-01T00:00:00.000Z",

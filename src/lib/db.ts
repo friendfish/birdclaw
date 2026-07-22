@@ -529,6 +529,27 @@ function ensureTweetRevisionEdgeSchema(db: Database) {
 	}
 }
 
+function ensureTweetFeedEdgesTable(db: Database) {
+	db.exec(`
+		create table if not exists tweet_feed_edges (
+			tweet_id text not null,
+			feed text not null check (feed in ('following', 'for_you')),
+			first_seen_at text not null,
+			primary key (tweet_id, feed)
+		);
+		create index if not exists idx_tweet_feed_edges_feed on tweet_feed_edges(feed, tweet_id);
+	`);
+	const tweetColumnNames = getColumnNames(db, "tweets");
+	if (tweetColumnNames.has("feed_types")) {
+		db.exec(`
+			insert or ignore into tweet_feed_edges (tweet_id, feed, first_seen_at)
+			select t.id, je.value, t.created_at
+			from tweets t, json_each(t.feed_types) je;
+		`);
+		db.exec("alter table tweets drop column feed_types");
+	}
+}
+
 function ensureTweetRetentionSchema(db: Database) {
 	const columnNames = getColumnNames(db, "tweets");
 	if (!columnNames.has("deleted_at")) {
@@ -1079,6 +1100,11 @@ const DATABASE_MIGRATIONS: readonly DatabaseMigration[] = [
 		version: 7,
 		name: "retain observable tweet revision ordering",
 		up: ensureTweetRevisionEdgeSchema,
+	},
+	{
+		version: 8,
+		name: "track home timeline feed membership",
+		up: ensureTweetFeedEdgesTable,
 	},
 ];
 

@@ -12,6 +12,7 @@ import {
 import NativeSqliteDatabase from "./sqlite";
 import { syncTimelineCollectionEffect } from "./timeline-collections-live";
 import { syncHomeTimelineEffect } from "./timeline-live";
+import type { HomeFeed } from "./tweet-feed-edges";
 import { getBirdclawConfig } from "./config";
 import { syncFollowGraphEffect } from "./follow-graph";
 
@@ -62,6 +63,7 @@ export interface WebSyncOptions {
 	limit?: number;
 	maxPages?: number;
 	allPages?: boolean;
+	feed?: HomeFeed;
 }
 
 interface WebSyncPlan {
@@ -135,8 +137,9 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 	timeline: {
 		label: "Home timeline",
 		accountAware: true,
-		run: (account, _options, runtime) =>
+		run: (account, options, runtime) =>
 			Effect.gen(function* () {
+				const feed = options.feed ?? "following";
 				const result = yield* syncHomeTimelineEffect({
 					account,
 					mode:
@@ -147,13 +150,13 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 								: "xurl",
 					limit: 100,
 					maxPages: 3,
-					following: true,
+					following: feed !== "for_you",
 					refresh: true,
 				});
 				return [
 					{
 						kind: "timeline",
-						label: "Home timeline",
+						label: feed === "for_you" ? "For You timeline" : "Home timeline",
 						count: readNumber(result, "count"),
 						source: readString(result, "source"),
 					},
@@ -364,6 +367,7 @@ function resolveDefaultSyncAccountId(runtime: ServerRuntimeServices) {
 }
 
 function serializeSyncOptions(kind: WebSyncKind, options: WebSyncOptions) {
+	if (kind === "timeline") return options.feed ?? "following";
 	if (kind !== "dms") return "";
 	const parts = [
 		options.inbox ?? "all",
@@ -380,11 +384,12 @@ function getRunningSyncKey(
 	options: WebSyncOptions = {},
 	runtime: ServerRuntimeServices = defaultServerRuntimeServices,
 ) {
+	const optionKey = serializeSyncOptions(kind, options);
 	if (!WEB_SYNC_PLANS[kind].accountAware) {
-		const optionKey = serializeSyncOptions(kind, options);
 		return optionKey ? `${kind}:${optionKey}` : kind;
 	}
-	return `${kind}:${accountId ?? resolveDefaultSyncAccountId(runtime)}`;
+	const accountKey = `${kind}:${accountId ?? resolveDefaultSyncAccountId(runtime)}`;
+	return optionKey ? `${accountKey}:${optionKey}` : accountKey;
 }
 
 function getEffectiveAccountId(
