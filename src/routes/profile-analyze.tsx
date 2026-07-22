@@ -101,6 +101,19 @@ function ProfileAnalyzeRoute() {
 	// Snapshots for selected handle
 	const [snapshots, setSnapshots] = useState<any[]>([]);
 	const [selectedSnapshot, setSelectedSnapshot] = useState<any | null>(null);
+	const [isAnalyzing, setIsAnalyzing] = useState(false);
+	const [activeStatus, setActiveStatus] = useState<{ label: string; detail?: string } | null>(null);
+	const [anyActive, setAnyActive] = useState(false);
+
+	const liveStatus = useMemo(() => {
+		if (analysis.loading) {
+			return {
+				label: analysis.status.split(" · ")[0],
+				detail: analysis.status.split(" · ")[1] || undefined,
+			};
+		}
+		return activeStatus;
+	}, [analysis.loading, analysis.status, activeStatus]);
 
 	const profileInfo = useMemo(() => {
 		if (!submittedHandle) return null;
@@ -121,14 +134,20 @@ function ProfileAnalyzeRoute() {
 
 		if (urlHandle) {
 			setSelectedSnapshot(null);
+			setIsAnalyzing(false);
 			fetch(`/api/profile-analysis-metadata?handle=${encodeURIComponent(urlHandle)}`)
 				.then((res) => res.json())
 				.then((data) => {
-					if (data.ok && data.snapshots) {
-						setSnapshots(data.snapshots);
-						// If snapshots exist, default to loading the most recent snapshot immediately
-						if (data.snapshots.length > 0) {
-							setSelectedSnapshot(data.snapshots[0]);
+					if (data.ok) {
+						setIsAnalyzing(!!data.isAnalyzing);
+						setActiveStatus(data.activeStatus || null);
+						setAnyActive(!!data.anyActive);
+						if (data.snapshots) {
+							setSnapshots(data.snapshots);
+							// If snapshots exist, default to loading the most recent snapshot immediately
+							if (data.snapshots.length > 0) {
+								setSelectedSnapshot(data.snapshots[0]);
+							}
 						}
 					}
 				})
@@ -138,8 +157,36 @@ function ProfileAnalyzeRoute() {
 		} else {
 			setSnapshots([]);
 			setSelectedSnapshot(null);
+			setIsAnalyzing(false);
+			setActiveStatus(null);
+			setAnyActive(false);
 		}
 	}, [search.handle]);
+
+	// Poll metadata when the user is currently being analyzed in the background
+	useEffect(() => {
+		if (!isAnalyzing || !submittedHandle) return;
+
+		const timer = setInterval(() => {
+			fetch(`/api/profile-analysis-metadata?handle=${encodeURIComponent(submittedHandle)}`)
+				.then((res) => res.json())
+				.then((data) => {
+					if (data.ok) {
+						setIsAnalyzing(!!data.isAnalyzing);
+						setActiveStatus(data.activeStatus || null);
+						setAnyActive(!!data.anyActive);
+						if (data.snapshots && data.snapshots.length > 0) {
+							setSnapshots(data.snapshots);
+							setSelectedSnapshot(data.snapshots[0]);
+							clearInterval(timer);
+						}
+					}
+				})
+				.catch((err) => console.error("Polling metadata failed", err));
+		}, 3000);
+
+		return () => clearInterval(timer);
+	}, [isAnalyzing, submittedHandle]);
 
 	// Load metadata (following & analyzed lists)
 	useEffect(() => {
@@ -149,6 +196,7 @@ function ProfileAnalyzeRoute() {
 				.then((res) => res.json())
 				.then((data) => {
 					if (data.ok) {
+						setAnyActive(!!data.anyActive);
 						setMetadata({
 							following: data.following || [],
 							analyzed: data.analyzed || [],
@@ -214,7 +262,7 @@ function ProfileAnalyzeRoute() {
 							{/* Refresh or Analyse action button */}
 							<button
 								className={snapshots.length > 0 ? secondaryButtonClass : primaryButtonClass}
-								disabled={analysis.loading}
+								disabled={analysis.loading || isAnalyzing}
 								onClick={() => {
 									setSelectedSnapshot(null);
 									analysis.run(true);
@@ -491,6 +539,30 @@ function ProfileAnalyzeRoute() {
 								/>
 							</div>
 						</div>
+					) : (isAnalyzing || analysis.loading) ? (
+						/* 💡 Beautiful Loading/Analyzing Placeholder for Background Task */
+						<div className="flex flex-col items-center justify-center text-center p-12 max-w-xl mx-auto mt-12 rounded-xl border border-[var(--line)] bg-[var(--panel)] gap-4 shadow-sm">
+							<div className="p-3 bg-[var(--brand-soft)]/20 rounded-full text-[var(--brand)]">
+								<RefreshCw className="size-8 animate-spin" strokeWidth={1.5} />
+							</div>
+							<h3 className="text-[16px] font-bold text-[var(--ink)]">后台画像拉取与总结中...</h3>
+							{liveStatus && liveStatus.label !== "Ready" && (
+								<div className="flex items-center justify-center gap-2 text-[13px] sm:text-[14px] font-medium text-[var(--ink-soft)] bg-[var(--bg)]/80 px-4 py-2 rounded-lg border border-[var(--line)] max-w-full">
+									{liveStatus.label.toLowerCase().includes("summarizing") || liveStatus.label.toLowerCase().includes("ai") ? (
+										<Sparkles className="size-4 text-[var(--brand)] shrink-0" strokeWidth={1.8} />
+									) : (
+										<Loader2 className="size-4 animate-spin text-[var(--brand)] shrink-0" strokeWidth={1.8} />
+									)}
+									<span>
+										{liveStatus.label}
+										{liveStatus.detail ? ` · ${liveStatus.detail}` : ""}
+									</span>
+								</div>
+							)}
+							<p className="text-[13px] text-[var(--ink-soft)] max-w-sm leading-relaxed">
+								该用户正在后台默默进行数据拉取与 AI 总结。你可以放心离开，也可以在此等待，完成落库后将自动秒开展现。
+							</p>
+						</div>
 					) : snapshots.length === 0 && !analysis.loading && !analysis.markdown ? (
 						/* 💡 Beautiful Consent Placeholder for Un-analyzed user */
 						<div className="flex flex-col items-center justify-center text-center p-12 max-w-xl mx-auto mt-12 rounded-xl border border-dashed border-[var(--line)] bg-[var(--panel)] gap-4">
@@ -501,11 +573,17 @@ function ProfileAnalyzeRoute() {
 							<p className="text-[13px] text-[var(--ink-soft)] max-w-sm leading-relaxed">
 								当前系统未有该用户的有效分析信息。你可以选定右上角的语言，然后点击 <strong>Analyse</strong> 按钮即刻启动 AI 抓取与画像生成。
 							</p>
+							{anyActive && !isAnalyzing ? (
+								<div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-[13px] text-amber-600 font-medium max-w-sm">
+									⚠️ 有分析任务执行中，建议任务完毕后5分钟再启动分析
+								</div>
+							) : null}
 							<button
 								onClick={() => {
 									setSelectedSnapshot(null);
 									analysis.run(true);
 								}}
+								disabled={anyActive}
 								className={cx(primaryButtonClass, "mt-2 px-6")}
 							>
 								<Sparkles className="size-4" />

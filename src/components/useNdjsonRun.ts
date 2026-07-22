@@ -107,7 +107,12 @@ export function useNdjsonRun<TEvent, TArgs extends unknown[]>({
 		],
 	);
 
+	const abort = useCallback(() => {
+		abortRef.current?.abort();
+		setLoading(false);
+	}, []);
+
 	useEffect(() => () => abortRef.current?.abort(), []);
 
-	return { error, loading, run, setError };
+	return { error, loading, run, setError, abort };
 }
