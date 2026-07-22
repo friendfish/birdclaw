@@ -44,6 +44,10 @@ import {
 	segmentAccentActiveClass,
 	segmentClass,
 	segmentedClass,
+	tabButtonActiveClass,
+	tabButtonClass,
+	tabButtonIndicatorClass,
+	tabStripClass,
 } from "#/lib/ui";
 
 export const Route = createFileRoute("/today")({
@@ -445,27 +449,31 @@ export function TodayRouteView({
 						</>
 					) : null}
 				</div>
-				<div className="today-screen-only flex flex-wrap items-center gap-2 px-4 pb-2">
-					<div className={segmentedClass} aria-label="Digest content">
+				<div className="today-screen-only">
+					<div className={tabStripClass} aria-label="Digest content">
 						{CONTENT_SOURCES.filter(
 							(item) => item.value !== "for_you" || birdAvailable,
-						).map((item) => (
-							<button
-								key={item.value}
-								type="button"
-								aria-pressed={effectiveContentSource === item.value}
-								className={cx(
-									segmentClass,
-									effectiveContentSource === item.value &&
-										segmentAccentActiveClass,
-								)}
-								onClick={() =>
-									updateSearch({ ...searchState, contentSource: item.value })
-								}
-							>
-								{item.label}
-							</button>
-						))}
+						).map((item) => {
+							const active = effectiveContentSource === item.value;
+							return (
+								<button
+									key={item.value}
+									type="button"
+									aria-pressed={active}
+									className={cx(tabButtonClass, active && tabButtonActiveClass)}
+									onClick={() =>
+										updateSearch({ ...searchState, contentSource: item.value })
+									}
+								>
+									<span className="relative inline-flex flex-col items-center justify-center py-1">
+										{item.label}
+										{active ? (
+											<span className={tabButtonIndicatorClass} />
+										) : null}
+									</span>
+								</button>
+							);
+						})}
 					</div>
 				</div>
 				<div className="today-screen-only flex flex-wrap items-center gap-2 px-4 pb-3">
