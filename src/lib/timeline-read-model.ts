@@ -577,7 +577,13 @@ export function buildTimelineItemsQuery(
 		!since?.trim() &&
 		!until?.trim() &&
 		includeReplies &&
-		qualityFilter === "all";
+		qualityFilter === "all" &&
+		// A feed-tagged tweet can be far sparser than the general home-edge
+		// population within the most-recent-N-tweets-overall candidate window,
+		// so the window is a poor proxy here. The unwindowed fallback below
+		// already corrects an under-filled first page, but skipping straight to
+		// it avoids paying for two queries on every sparse-feed first load.
+		!feed;
 
 	if (likedOnly || bookmarkedOnly) {
 		// This CTE is also reused by the all-account dedupe subquery below. Keep

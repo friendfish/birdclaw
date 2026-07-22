@@ -28,6 +28,13 @@ interface SyncNowButtonProps {
 	// SyncNowButton for the same kind/account, e.g. Home's For You and
 	// Following tabs sharing kind="timeline".
 	autoSyncScope?: string;
+	// Some otherwise account-aware kinds still only work for the default
+	// account in certain modes, e.g. Home's For You feed: xurl can't fetch it
+	// at all (only bird can), and bird only ever authenticates as one,
+	// single account. Sync would fail for any other selected account, so
+	// block it client-side with the same messaging already used for
+	// bird-only kinds instead of letting the request fail.
+	requiresDefaultAccount?: boolean;
 }
 
 const AUTO_SYNC_INTERVALS = [
@@ -98,6 +105,7 @@ export function SyncNowButton({
 	showAccountPicker = false,
 	syncOptions,
 	autoSyncScope,
+	requiresDefaultAccount = false,
 }: SyncNowButtonProps) {
 	const [syncing, setSyncing] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
@@ -146,7 +154,7 @@ export function SyncNowButton({
 		accounts === undefined &&
 		(showAccountPicker || kind !== "timeline");
 	const birdOnlyWrongAccount =
-		!accountAwareSync &&
+		(!accountAwareSync || requiresDefaultAccount) &&
 		accountId !== undefined &&
 		defaultAccountId !== undefined &&
 		accountId !== defaultAccountId;

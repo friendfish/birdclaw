@@ -110,6 +110,7 @@ export function TimelineRouteFrame({
 							kind={syncKind}
 							label={syncLabel}
 							onSynced={refreshLocalView}
+							requiresDefaultAccount={feed === "for_you"}
 							showAccountPicker
 							syncOptions={syncOptions}
 						/>
