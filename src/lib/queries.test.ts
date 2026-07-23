@@ -648,6 +648,76 @@ describe("birdclaw queries", () => {
 		);
 	});
 
+	// A feed-tagged tweet can be far sparser than the general home-edge
+	// population, so folding it into the recent-N-tweets-overall candidate
+	// window (like the FTS guard below, this is a from-production regression
+	// class) risks scanning right past a sparse/older feed's real matches.
+	it("skips the recent-edge-window fast path when a feed filter is set", () => {
+		const plan = buildTimelineItemsQuery({
+			resource: "home",
+			feed: "for_you",
+			limit: 50,
+		});
+		expect(plan.usedRecentEdgeWindow).toBe(false);
+	});
+
+	it("finds every match of a sparse, older feed across full pagination", () => {
+		setupTempHome();
+		const db = getNativeDb();
+
+		const insertTweet = db.prepare(`
+			insert into tweets (id, author_profile_id, text, created_at, is_replied, entities_json, media_json)
+			values (?, 'profile_me', 'noise', ?, 0, '{}', '[]')
+		`);
+		const insertEdge = db.prepare(`
+			insert into tweet_account_edges (account_id, tweet_id, kind, first_seen_at, last_seen_at, seen_count, source, raw_json, updated_at)
+			values ('acct_primary', ?, ?, ?, ?, 1, 'test', '{}', ?)
+		`);
+		db.transaction(() => {
+			// Noise tweets recent enough to fill the fast path's candidate window
+			// (RECENT_TIMELINE_EDGE_CANDIDATES = 5000) entirely on their own.
+			for (let i = 0; i < 5200; i++) {
+				const id = `noise_${String(i).padStart(5, "0")}`;
+				const createdAt = new Date(2026, 5, 1, 0, 0, i).toISOString();
+				insertTweet.run(id, createdAt);
+				insertEdge.run(id, "mention", createdAt, createdAt, createdAt);
+			}
+		})();
+
+		const insertFeedEdge = db.prepare(`
+			insert into tweet_feed_edges (tweet_id, feed, first_seen_at) values (?, 'for_you', ?)
+		`);
+		db.transaction(() => {
+			// Older than every noise tweet above, so a window limited to the most
+			// recent 5000 tweets overall would exclude all of these.
+			for (let i = 0; i < 120; i++) {
+				const id = `foryou_${String(i).padStart(5, "0")}`;
+				const createdAt = new Date(2025, 0, 1, 0, 0, i).toISOString();
+				insertTweet.run(id, createdAt);
+				insertEdge.run(id, "home", createdAt, createdAt, createdAt);
+				insertFeedEdge.run(id, createdAt);
+			}
+		})();
+
+		const seen = new Set<string>();
+		let cursor: { until: string; untilId: string } | undefined;
+		for (let page = 0; page < 10 && seen.size < 120; page++) {
+			const items = listTimelineItems({
+				resource: "home",
+				feed: "for_you",
+				limit: 50,
+				...cursor,
+			});
+			if (items.length === 0) break;
+			for (const item of items) seen.add(item.id);
+			const last = items.at(-1);
+			if (!last || items.length < 50) break;
+			cursor = { until: last.createdAt, untilId: last.id };
+		}
+
+		expect(seen.size).toBe(120);
+	});
+
 	// Perf regression guard: with bound parameters SQLite used to pick a plan
 	// that re-ran the whole tweets_fts MATCH scan for every timeline edge row,
 	// turning limited searches into minutes on large archives. Every tweets_fts

@@ -525,6 +525,115 @@ describe("SyncNowButton", () => {
 		});
 	});
 
+	it("blocks sync for a non-default account when requiresDefaultAccount is set", () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		setStoredAccountId("acct_studio");
+
+		render(
+			<SyncNowButton
+				accounts={[
+					{
+						id: "acct_primary",
+						name: "Peter",
+						handle: "@steipete",
+						transport: "bird",
+						isDefault: 1,
+						createdAt: "2026-05-15T12:00:00.000Z",
+					},
+					{
+						id: "acct_studio",
+						name: "Studio",
+						handle: "@studio",
+						transport: "xurl",
+						isDefault: 0,
+						createdAt: "2026-05-15T12:00:00.000Z",
+					},
+				]}
+				kind="timeline"
+				label="Sync For You"
+				onSynced={vi.fn()}
+				requiresDefaultAccount
+			/>,
+		);
+
+		const button = screen.getByRole("button", {
+			name: "Sync For You: default account only",
+		});
+		expect(button).toBeDisabled();
+		expect(screen.getByText("Switch to default to sync")).toBeInTheDocument();
+
+		fireEvent.click(button);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("allows sync for the default account even when requiresDefaultAccount is set", async () => {
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(
+					JSON.stringify({
+						id: "sync_timeline_2",
+						kind: "timeline",
+						status: "succeeded",
+						startedAt: "2026-05-15T12:00:00.000Z",
+						summary: "Synced 3 items",
+						inProgress: false,
+						result: {
+							ok: true,
+							kind: "timeline",
+							summary: "Synced 3 items",
+							steps: [],
+						},
+					}),
+				),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		setStoredAccountId("acct_primary");
+
+		render(
+			<SyncNowButton
+				accounts={[
+					{
+						id: "acct_primary",
+						name: "Peter",
+						handle: "@steipete",
+						transport: "bird",
+						isDefault: 1,
+						createdAt: "2026-05-15T12:00:00.000Z",
+					},
+					{
+						id: "acct_studio",
+						name: "Studio",
+						handle: "@studio",
+						transport: "xurl",
+						isDefault: 0,
+						createdAt: "2026-05-15T12:00:00.000Z",
+					},
+				]}
+				kind="timeline"
+				label="Sync For You"
+				onSynced={vi.fn()}
+				requiresDefaultAccount
+			/>,
+		);
+
+		const button = screen.getByRole("button", { name: "Sync For You" });
+		expect(button).toBeEnabled();
+
+		fireEvent.click(button);
+		await waitFor(() => {
+			expect(fetchMock).toHaveBeenCalledWith(
+				"/api/sync",
+				expect.objectContaining({
+					body: JSON.stringify({
+						kind: "timeline",
+						accountId: "acct_primary",
+					}),
+				}),
+			);
+		});
+	});
+
 	it("surfaces sync failures", async () => {
 		vi.stubGlobal(
 			"fetch",

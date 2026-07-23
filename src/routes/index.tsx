@@ -29,7 +29,9 @@ const FEED_TABS = [
 function homeSubtitle(meta: QueryEnvelope | null) {
 	if (!meta) return "Loading local context...";
 	const { home, homeForYou, homeFollowing, needsReply } = meta.stats;
-	return `${String(home)} items (For You ${String(homeForYou)} + Following ${String(homeFollowing)}) · ${String(needsReply)} waiting · ${meta.transport.statusText}`;
+	// "·" rather than "+": a tweet can be tagged with both feeds, so the two
+	// counts can legitimately add up to more than the total.
+	return `${String(home)} items (For You ${String(homeForYou)} · Following ${String(homeFollowing)}) · ${String(needsReply)} waiting · ${meta.transport.statusText}`;
 }
 
 function HomeRoute() {
