@@ -734,7 +734,17 @@ function refreshPeriodDigestInputsEffect(
 	const includeThreads = phase.threads ?? true;
 	const window = resolvePeriodDigestWindow(options);
 	const liveStartTime = floorIsoToHour(window.since);
-	const mode = options.liveSyncMode ?? "xurl";
+	// For You isn't a "following" fetch, and xurl can't fetch it at all (see
+	// timeline-live.ts's fetchViaXurl rejecting following: false) — bird is
+	// the only transport that can, so force it (or auto, which resolves to
+	// bird when configured) instead of falling through to the xurl default
+	// that every other content source uses.
+	const timelineFollowing = options.contentSource !== "for_you";
+	const mode = timelineFollowing
+		? (options.liveSyncMode ?? "xurl")
+		: getBirdclawConfig().mentions?.dataSource === "bird"
+			? "bird"
+			: "auto";
 	const contextTweetBudget = Math.max(
 		20,
 		Math.trunc(options.maxTweets ?? DEFAULT_MAX_TWEETS),
@@ -777,7 +787,7 @@ function refreshPeriodDigestInputsEffect(
 				limit: timelineLimit,
 				maxPages: timelineMaxPages,
 				startTime: liveStartTime,
-				following: true,
+				following: timelineFollowing,
 				refresh: Boolean(options.refresh),
 				cacheTtlMs: 2 * 60_000,
 				timeoutMs: 30_000,
