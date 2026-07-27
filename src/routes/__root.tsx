@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { AppNav } from "#/components/AppNav";
+import { GlobalBackgroundSync } from "#/components/GlobalBackgroundSync";
 import { BirdclawQueryProvider } from "#/lib/query-client";
 import { ThemeProvider, themeScript } from "#/lib/theme";
 import {
@@ -66,6 +67,7 @@ function RootDocument({ children }: { children: ReactNode }) {
 			<body className={bodyClass}>
 				<BirdclawQueryProvider>
 					<ThemeProvider>
+						<GlobalBackgroundSync />
 						<div className={siteShellClass}>
 							<AppNav compact={wideMode} />
 							<main className={wideMode ? mainColumnDmClass : mainColumnClass}>
