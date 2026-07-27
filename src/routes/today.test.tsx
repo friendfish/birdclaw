@@ -107,6 +107,22 @@ function digestResult(label: string, markdown: string, includeDms = false) {
 	};
 }
 
+function periodDigestMetadataResponse(
+	overrides: Partial<{
+		isGenerating: boolean;
+		activeStatus: { label: string; detail?: string } | null;
+		result: unknown;
+	}> = {},
+) {
+	return Response.json({
+		ok: true,
+		isGenerating: false,
+		activeStatus: null,
+		result: null,
+		...overrides,
+	});
+}
+
 describe("today route", () => {
 	beforeEach(() => {
 		vi.restoreAllMocks();
@@ -138,9 +154,12 @@ describe("today route", () => {
 					{ headers: { "content-type": "application/json" } },
 				);
 			}
+			if (url.pathname === "/api/period-digest-metadata") {
+				return periodDigestMetadataResponse();
+			}
 			const period = url.searchParams.get("period") ?? "today";
 			const includeDms = url.searchParams.get("includeDms") === "true";
-			const label = period === "week" ? "Last 7 days" : "Today";
+			const label = period === "24h" ? "Last 24 hours" : "Today";
 			const markdown = includeDms
 				? "# With DMs\n\n## What people are talking about\n\n- **Reply:** ask @alice about tweet_1"
 				: `# ${label}\n\n## What people are talking about\n\n- **Reply:** ask @alice about tweet_1`;
@@ -177,13 +196,13 @@ describe("today route", () => {
 			screen.getByText("3 home · 2 mentions · 4 links"),
 		).toBeInTheDocument();
 		const todayButton = screen.getByRole("button", { name: "Today" });
-		const weekButton = screen.getByRole("button", { name: "Week" });
+		const hour24Button = screen.getByRole("button", { name: "24h" });
 		expect(todayButton).toHaveAttribute("aria-pressed", "true");
 		expect(todayButton).toHaveClass(
 			"bg-[var(--accent-soft)]!",
 			"text-[var(--accent)]!",
 		);
-		expect(weekButton).toHaveAttribute("aria-pressed", "false");
+		expect(hour24Button).toHaveAttribute("aria-pressed", "false");
 		await waitFor(() =>
 			expect(urls.some((url) => url.pathname === "/api/profile-hydrate")).toBe(
 				true,
@@ -196,13 +215,13 @@ describe("today route", () => {
 			expect.stringContaining("/api/avatar?profileId=profile_alice&v="),
 		);
 
-		fireEvent.click(screen.getByRole("button", { name: "Week" }));
+		fireEvent.click(screen.getByRole("button", { name: "24h" }));
 		expect(
-			await screen.findByRole("heading", { name: "Last 7 days", level: 1 }),
+			await screen.findByRole("heading", { name: "Last 24 hours", level: 1 }),
 		).toBeInTheDocument();
 		expect(todayButton).toHaveAttribute("aria-pressed", "false");
-		expect(weekButton).toHaveAttribute("aria-pressed", "true");
-		expect(weekButton).toHaveClass(
+		expect(hour24Button).toHaveAttribute("aria-pressed", "true");
+		expect(hour24Button).toHaveClass(
 			"bg-[var(--accent-soft)]!",
 			"text-[var(--accent)]!",
 		);
@@ -224,7 +243,7 @@ describe("today route", () => {
 		expect(
 			urls.some(
 				(url) =>
-					url.searchParams.get("period") === "week" &&
+					url.searchParams.get("period") === "24h" &&
 					url.searchParams.get("includeDms") === "true" &&
 					url.searchParams.get("liveSync") === "false",
 			),
@@ -250,6 +269,9 @@ describe("today route", () => {
 				return new Response(JSON.stringify({ ok: true, results: [] }), {
 					headers: { "content-type": "application/json" },
 				});
+			}
+			if (url.pathname === "/api/period-digest-metadata") {
+				return periodDigestMetadataResponse();
 			}
 			const contentSource = url.searchParams.get("contentSource") ?? "all";
 			const markdown = `# ${contentSource}\n\n## What people are talking about\n\n- signal`;
@@ -314,6 +336,9 @@ describe("today route", () => {
 					headers: { "content-type": "application/json" },
 				});
 			}
+			if (url.pathname === "/api/period-digest-metadata") {
+				return periodDigestMetadataResponse();
+			}
 			const contentSource = url.searchParams.get("contentSource") ?? "all";
 			const markdown = `# ${contentSource}\n\n## What people are talking about\n\n- signal`;
 			return ndjsonResponse([
@@ -358,6 +383,9 @@ describe("today route", () => {
 						headers: { "content-type": "application/json" },
 					});
 				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse();
+				}
 				const markdown = "# Today\n\nDone.";
 				return ndjsonResponse([
 					{ type: "delta", delta: markdown },
@@ -382,12 +410,16 @@ describe("today route", () => {
 		const printMock = vi.spyOn(window, "print").mockImplementation(() => {});
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () =>
-				ndjsonResponse([
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse();
+				}
+				return ndjsonResponse([
 					{ type: "delta", delta: "# Partial digest" },
 					{ type: "error", error: "Digest generation failed" },
-				]),
-			),
+				]);
+			}),
 		);
 
 		render(<TodayRoute />);
@@ -437,6 +469,12 @@ describe("today route", () => {
 					capabilities: [],
 				});
 			}
+			if (url.includes("/api/digest-archive-status")) {
+				return Response.json({ ok: true, runningPeriods: [] });
+			}
+			if (url.includes("/api/period-digest-metadata")) {
+				return periodDigestMetadataResponse();
+			}
 			digestCalls += 1;
 			throw new TypeError("network error");
 		});
@@ -472,6 +510,9 @@ describe("today route", () => {
 					return new Response(JSON.stringify({ ok: true, results: [] }), {
 						headers: { "content-type": "application/json" },
 					});
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse();
 				}
 				return new Response(
 					new ReadableStream<Uint8Array>({
@@ -523,13 +564,292 @@ describe("today route", () => {
 	it("shows streamed error events", async () => {
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () =>
-				ndjsonResponse([{ type: "error", error: "model failed" }]),
-			),
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse();
+				}
+				return ndjsonResponse([{ type: "error", error: "model failed" }]);
+			}),
 		);
 
 		render(<TodayRoute />);
 
 		expect(await screen.findByText("model failed")).toBeInTheDocument();
+	});
+
+	describe("background-detached generation (resume instead of restart)", () => {
+		it("adopts a fresh cached result from metadata without starting a new generation request", async () => {
+			let generationCalls = 0;
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return Response.json({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse({
+						isGenerating: false,
+						result: digestResult(
+							"Today",
+							"# Today\n\nAlready generated in the background.",
+						),
+					});
+				}
+				if (url.pathname === "/api/profile-hydrate") {
+					return Response.json({ ok: true, results: [] });
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return Response.json({ ok: true, runningPeriods: [] });
+				}
+				generationCalls += 1;
+				return ndjsonResponse([
+					{ type: "done", result: digestResult("Today", "# Should not run") },
+				]);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(<TodayRoute />);
+
+			expect(
+				await screen.findByRole("heading", { name: "Today", level: 1 }),
+			).toBeInTheDocument();
+			expect(
+				screen.getByText("Already generated in the background."),
+			).toBeInTheDocument();
+			expect(generationCalls).toBe(0);
+		});
+
+		it("watches an in-progress background generation instead of starting a duplicate request", async () => {
+			let generationCalls = 0;
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return Response.json({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse({
+						isGenerating: true,
+						activeStatus: {
+							label: "Streaming AI summary",
+							detail: "background run from another tab",
+						},
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return Response.json({ ok: true, runningPeriods: [] });
+				}
+				generationCalls += 1;
+				return ndjsonResponse([
+					{ type: "done", result: digestResult("Today", "# Should not run") },
+				]);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(<TodayRoute />);
+
+			expect(
+				await screen.findAllByText(
+					"Streaming AI summary · background run from another tab",
+				),
+			).not.toHaveLength(0);
+			const refreshButton = await screen.findByRole("button", {
+				name: /refresh/i,
+			});
+			expect(refreshButton).toBeDisabled();
+			expect(generationCalls).toBe(0);
+		});
+	});
+
+	describe("archived periods (Yesterday/Week)", () => {
+		function jsonResponse(body: unknown) {
+			return new Response(JSON.stringify(body), {
+				headers: { "content-type": "application/json" },
+			});
+		}
+
+		it("reads the latest archived entry for Yesterday, with no refresh button or DMs toggle", async () => {
+			const entryDates: Array<string | null> = [];
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({ ok: true, runningPeriods: [] });
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					return jsonResponse({
+						ok: true,
+						dates: [
+							{ date: "2026-07-21", contentSources: ["all"] },
+							{ date: "2026-07-20", contentSources: ["all"] },
+						],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-entry") {
+					entryDates.push(url.searchParams.get("date"));
+					return jsonResponse({
+						ok: true,
+						result: digestResult("Yesterday", "# Archived yesterday"),
+					});
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(
+				<TodayRoute
+					searchState={{
+						period: "yesterday",
+						includeDms: false,
+						contentSource: "all",
+						archiveDate: "",
+					}}
+				/>,
+			);
+
+			expect(
+				await screen.findByRole("heading", {
+					name: "Archived yesterday",
+					level: 1,
+				}),
+			).toBeInTheDocument();
+			expect(entryDates).toEqual(["2026-07-21"]);
+			expect(screen.queryByRole("button", { name: /refresh/i })).toBeNull();
+			expect(screen.queryByLabelText("DMs")).toBeNull();
+		});
+
+		it("reads a specific archived date when archiveDate is set", async () => {
+			const entryDates: Array<string | null> = [];
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({ ok: true, runningPeriods: [] });
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					return jsonResponse({
+						ok: true,
+						dates: [
+							{ date: "2026-07-21", contentSources: ["all"] },
+							{ date: "2026-07-14", contentSources: ["all"] },
+						],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-entry") {
+					entryDates.push(url.searchParams.get("date"));
+					return jsonResponse({
+						ok: true,
+						result: digestResult("Week of 7/14", "# Older week"),
+					});
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(
+				<TodayRoute
+					searchState={{
+						period: "week",
+						includeDms: false,
+						contentSource: "all",
+						archiveDate: "2026-07-14",
+					}}
+				/>,
+			);
+
+			expect(
+				await screen.findByRole("heading", { name: "Older week", level: 1 }),
+			).toBeInTheDocument();
+			expect(entryDates).toEqual(["2026-07-14"]);
+		});
+
+		it("shows a not-yet-scheduled empty state when a period has never archived", async () => {
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({ ok: true, runningPeriods: [] });
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					return jsonResponse({ ok: true, dates: [] });
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(
+				<TodayRoute
+					searchState={{
+						period: "yesterday",
+						includeDms: false,
+						contentSource: "all",
+						archiveDate: "",
+					}}
+				/>,
+			);
+
+			expect(
+				await screen.findByText(/hasn't run on a schedule yet/i),
+			).toBeInTheDocument();
+		});
+
+		it("disables Today's refresh button while a scheduled archive job holds the lock", async () => {
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({ ok: true, runningPeriods: ["today"] });
+				}
+				if (url.pathname === "/api/profile-hydrate") {
+					return jsonResponse({ ok: true, results: [] });
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse();
+				}
+				return ndjsonResponse([
+					{ type: "delta", delta: "# Today\n" },
+					{ type: "done", result: digestResult("Today", "# Today") },
+				]);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(<TodayRoute />);
+
+			const refreshButton = await screen.findByRole("button", {
+				name: /refresh/i,
+			});
+			await waitFor(() => expect(refreshButton).toBeDisabled());
+		});
 	});
 });

@@ -11,6 +11,7 @@ import {
 	getDefaultAccountSelector,
 	resetBirdclawPathsForTests,
 	resolveActionsTransport,
+	resolveDigestArchiveDir,
 	resolveMentionsDataSource,
 	setActionsTransport,
 } from "./config";
@@ -26,6 +27,7 @@ afterEach(() => {
 	delete process.env.BIRDCLAW_ACTIONS_TRANSPORT;
 	delete process.env.BIRDCLAW_BIRD_COMMAND;
 	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	delete process.env.BIRDCLAW_DIGEST_ARCHIVE_DIR;
 
 	for (const tempRoot of tempRoots.splice(0)) {
 		rmSync(tempRoot, { recursive: true, force: true });
@@ -142,6 +144,31 @@ describe("config", () => {
 			},
 		});
 		expect(resolveActionsTransport()).toBe("xurl");
+	});
+
+	it("resolves the digest archive directory in explicit > env > config > default order", () => {
+		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
+		tempRoots.push(tempRoot);
+		process.env.BIRDCLAW_HOME = tempRoot;
+
+		expect(resolveDigestArchiveDir()).toBe(
+			path.join(tempRoot, "digest-archive"),
+		);
+
+		writeFileSync(
+			path.join(tempRoot, "config.json"),
+			JSON.stringify({ digest: { archiveDir: "/tmp/from-config" } }),
+		);
+		resetBirdclawPathsForTests();
+		process.env.BIRDCLAW_HOME = tempRoot;
+		expect(resolveDigestArchiveDir()).toBe(path.resolve("/tmp/from-config"));
+
+		process.env.BIRDCLAW_DIGEST_ARCHIVE_DIR = "/tmp/from-env";
+		expect(resolveDigestArchiveDir()).toBe(path.resolve("/tmp/from-env"));
+
+		expect(resolveDigestArchiveDir("/tmp/from-param")).toBe(
+			path.resolve("/tmp/from-param"),
+		);
 	});
 
 	it("defaults bird command to PATH lookup", () => {

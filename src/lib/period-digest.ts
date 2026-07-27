@@ -272,7 +272,7 @@ function floorIsoToHour(value: string) {
 	return date.toISOString();
 }
 
-function normalizePeriod(value: string | undefined): PeriodDigestPreset {
+export function normalizePeriod(value: string | undefined): PeriodDigestPreset {
 	const normalized = value?.trim().toLowerCase();
 	if (normalized === "yesterday") return "yesterday";
 	if (normalized === "24h" || normalized === "day") return "24h";
@@ -929,7 +929,7 @@ function digestCacheKey(
 	return parts.join(":");
 }
 
-function latestDigestCacheKey(options: PeriodDigestOptions) {
+export function latestDigestCacheKey(options: PeriodDigestOptions) {
 	const period = normalizePeriod(options.period);
 	const window = resolvePeriodDigestWindow(options);
 	const identity = {
@@ -954,6 +954,36 @@ function latestDigestCacheKey(options: PeriodDigestOptions) {
 		serviceTier: serviceTierFromOptions(options),
 	};
 	return `period-digest-latest:v1:${createHash("sha1")
+		.update(JSON.stringify(identity))
+		.digest("hex")}`;
+}
+
+/**
+ * Identity for "is a generation for this content already running/cached",
+ * independent of *how* it'll be summarized. Deliberately narrower than
+ * latestDigestCacheKey — that one embeds the current model/reasoningEffort/
+ * serviceTier config, which is right for "does a fresh cached result exist
+ * under the config I'd use right now" but wrong for "is the request I fired
+ * a minute ago (with whatever config was active then) still in flight" —
+ * changing the AI model mid-generation would otherwise make the in-progress
+ * run invisible to a poll that recomputes the key with the new config.
+ */
+export function periodDigestGenerationKey(options: PeriodDigestOptions) {
+	const period = normalizePeriod(options.period);
+	const window = resolvePeriodDigestWindow(options);
+	const identity = {
+		period,
+		day:
+			period === "today" || period === "yesterday"
+				? window.since
+				: localDateStart(new Date()).toISOString(),
+		since: options.since?.trim() || null,
+		until: options.until?.trim() || null,
+		account: options.account?.trim() || null,
+		includeDms: Boolean(options.includeDms),
+		contentSource: options.contentSource ?? "all",
+	};
+	return `period-digest-generation:v1:${createHash("sha1")
 		.update(JSON.stringify(identity))
 		.digest("hex")}`;
 }
@@ -989,7 +1019,7 @@ function enrichContextWithCitedTweets(
 		: context;
 }
 
-interface CachedPeriodDigestValue {
+export interface CachedPeriodDigestValue {
 	context?: PeriodDigestContext;
 	digest: PeriodDigest;
 	markdown: string;
@@ -1033,7 +1063,7 @@ function getDigestFreshnessMs(): number {
 	return DEFAULT_DIGEST_FRESHNESS_MS;
 }
 
-function isFreshDigestCache(updatedAt: string, period?: string) {
+export function isFreshDigestCache(updatedAt: string, period?: string) {
 	const normalized = period?.trim().toLowerCase();
 	// Historical periods (yesterday, week) never expire automatically on tab switch
 	if (

@@ -19,6 +19,16 @@ export interface BirdclawPaths {
 
 export type MentionsDataSource = "birdclaw" | "auto" | "xurl" | "bird";
 export type ActionsTransport = "auto" | "bird" | "xurl";
+// Deliberately not imported from period-digest.ts's PeriodDigestPreset to
+// avoid a circular import (period-digest.ts already imports getBirdclawConfig
+// from here) — structurally identical, no runtime dependency needed.
+export type DigestSchedulePeriod = "today" | "yesterday" | "24h" | "week";
+
+export interface DigestScheduleTime {
+	hour?: number;
+	minute?: number;
+	weekday?: number;
+}
 
 export interface BirdclawConfig {
 	accounts?: {
@@ -33,6 +43,8 @@ export interface BirdclawConfig {
 	};
 	digest?: {
 		freshnessSeconds?: number;
+		archiveDir?: string;
+		schedule?: Partial<Record<DigestSchedulePeriod, DigestScheduleTime>>;
 	};
 	backup?: {
 		repoPath?: string;
@@ -162,6 +174,19 @@ export function resolveMentionsDataSource(
 	}
 
 	return "birdclaw";
+}
+
+export function resolveDigestArchiveDir(requested?: string): string {
+	const explicit = requested?.trim();
+	if (explicit) return path.resolve(explicit);
+
+	const envDir = process.env.BIRDCLAW_DIGEST_ARCHIVE_DIR?.trim();
+	if (envDir) return path.resolve(envDir);
+
+	const configuredDir = getBirdclawConfig().digest?.archiveDir?.trim();
+	if (configuredDir) return path.resolve(configuredDir);
+
+	return path.join(getBirdclawPaths().rootDir, "digest-archive");
 }
 
 export function resolveActionsTransport(

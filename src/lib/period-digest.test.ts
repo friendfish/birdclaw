@@ -10,6 +10,7 @@ import { getNativeDb, resetDatabaseForTests } from "./db";
 import {
 	__test__,
 	collectPeriodDigestContext,
+	periodDigestGenerationKey,
 	resolvePeriodDigestWindow,
 	streamPeriodDigest,
 	streamPeriodDigestEffect,
@@ -254,6 +255,28 @@ describe("period digest", () => {
 				contentSource: "for_you",
 			});
 			expect(new Set([allKey, followingKey, forYouKey]).size).toBe(3);
+		});
+
+		it("keeps periodDigestGenerationKey stable across an AI config change, unlike latestDigestCacheKey", () => {
+			// The active-generation registry uses periodDigestGenerationKey so
+			// that changing the AI model mid-generation doesn't make an
+			// in-progress run invisible to a later /api/period-digest-metadata
+			// poll (which recomputes the key with whatever config is current at
+			// poll time) — see PR #31 review discussion.
+			const before = { period: "today", contentSource: "for_you" as const };
+			const after = {
+				period: "today",
+				contentSource: "for_you" as const,
+				model: "gpt-5.5" as const,
+				reasoningEffort: "high" as const,
+			};
+
+			expect(periodDigestGenerationKey(before)).toBe(
+				periodDigestGenerationKey(after),
+			);
+			expect(__test__.latestDigestCacheKey(before)).not.toBe(
+				__test__.latestDigestCacheKey(after),
+			);
 		});
 
 		it("gives the richest content source the biggest output token budget", () => {

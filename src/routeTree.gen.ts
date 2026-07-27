@@ -31,11 +31,16 @@ import { Route as ApiConfigRouteImport } from './routes/api/config'
 import { Route as ApiConfigModelsRouteImport } from './routes/api/config-models'
 import { Route as ApiConversationRouteImport } from './routes/api/conversation'
 import { Route as ApiDataSourcesRouteImport } from './routes/api/data-sources'
+import { Route as ApiDigestArchiveDatesRouteImport } from './routes/api/digest-archive-dates'
+import { Route as ApiDigestArchiveEntryRouteImport } from './routes/api/digest-archive-entry'
+import { Route as ApiDigestArchiveStatusRouteImport } from './routes/api/digest-archive-status'
+import { Route as ApiDigestScheduleRouteImport } from './routes/api/digest-schedule'
 import { Route as ApiInboxRouteImport } from './routes/api/inbox'
 import { Route as ApiLinkInsightsRouteImport } from './routes/api/link-insights'
 import { Route as ApiLinkPreviewRouteImport } from './routes/api/link-preview'
 import { Route as ApiNetworkMapRouteImport } from './routes/api/network-map'
 import { Route as ApiPeriodDigestRouteImport } from './routes/api/period-digest'
+import { Route as ApiPeriodDigestMetadataRouteImport } from './routes/api/period-digest-metadata'
 import { Route as ApiProfileAnalysisRouteImport } from './routes/api/profile-analysis'
 import { Route as ApiProfileAnalysisMetadataRouteImport } from './routes/api/profile-analysis-metadata'
 import { Route as ApiProfileHydrateRouteImport } from './routes/api/profile-hydrate'
@@ -156,6 +161,26 @@ const ApiDataSourcesRoute = ApiDataSourcesRouteImport.update({
   path: '/api/data-sources',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDigestArchiveDatesRoute = ApiDigestArchiveDatesRouteImport.update({
+  id: '/api/digest-archive-dates',
+  path: '/api/digest-archive-dates',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDigestArchiveEntryRoute = ApiDigestArchiveEntryRouteImport.update({
+  id: '/api/digest-archive-entry',
+  path: '/api/digest-archive-entry',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDigestArchiveStatusRoute = ApiDigestArchiveStatusRouteImport.update({
+  id: '/api/digest-archive-status',
+  path: '/api/digest-archive-status',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDigestScheduleRoute = ApiDigestScheduleRouteImport.update({
+  id: '/api/digest-schedule',
+  path: '/api/digest-schedule',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInboxRoute = ApiInboxRouteImport.update({
   id: '/api/inbox',
   path: '/api/inbox',
@@ -179,6 +204,11 @@ const ApiNetworkMapRoute = ApiNetworkMapRouteImport.update({
 const ApiPeriodDigestRoute = ApiPeriodDigestRouteImport.update({
   id: '/api/period-digest',
   path: '/api/period-digest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPeriodDigestMetadataRoute = ApiPeriodDigestMetadataRouteImport.update({
+  id: '/api/period-digest-metadata',
+  path: '/api/period-digest-metadata',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiProfileAnalysisRoute = ApiProfileAnalysisRouteImport.update({
@@ -251,11 +281,16 @@ export interface FileRoutesByFullPath {
   '/api/config-models': typeof ApiConfigModelsRoute
   '/api/conversation': typeof ApiConversationRoute
   '/api/data-sources': typeof ApiDataSourcesRoute
+  '/api/digest-archive-dates': typeof ApiDigestArchiveDatesRoute
+  '/api/digest-archive-entry': typeof ApiDigestArchiveEntryRoute
+  '/api/digest-archive-status': typeof ApiDigestArchiveStatusRoute
+  '/api/digest-schedule': typeof ApiDigestScheduleRoute
   '/api/inbox': typeof ApiInboxRoute
   '/api/link-insights': typeof ApiLinkInsightsRoute
   '/api/link-preview': typeof ApiLinkPreviewRoute
   '/api/network-map': typeof ApiNetworkMapRoute
   '/api/period-digest': typeof ApiPeriodDigestRoute
+  '/api/period-digest-metadata': typeof ApiPeriodDigestMetadataRoute
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
   '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
@@ -289,11 +324,16 @@ export interface FileRoutesByTo {
   '/api/config-models': typeof ApiConfigModelsRoute
   '/api/conversation': typeof ApiConversationRoute
   '/api/data-sources': typeof ApiDataSourcesRoute
+  '/api/digest-archive-dates': typeof ApiDigestArchiveDatesRoute
+  '/api/digest-archive-entry': typeof ApiDigestArchiveEntryRoute
+  '/api/digest-archive-status': typeof ApiDigestArchiveStatusRoute
+  '/api/digest-schedule': typeof ApiDigestScheduleRoute
   '/api/inbox': typeof ApiInboxRoute
   '/api/link-insights': typeof ApiLinkInsightsRoute
   '/api/link-preview': typeof ApiLinkPreviewRoute
   '/api/network-map': typeof ApiNetworkMapRoute
   '/api/period-digest': typeof ApiPeriodDigestRoute
+  '/api/period-digest-metadata': typeof ApiPeriodDigestMetadataRoute
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
   '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
@@ -328,11 +368,16 @@ export interface FileRoutesById {
   '/api/config-models': typeof ApiConfigModelsRoute
   '/api/conversation': typeof ApiConversationRoute
   '/api/data-sources': typeof ApiDataSourcesRoute
+  '/api/digest-archive-dates': typeof ApiDigestArchiveDatesRoute
+  '/api/digest-archive-entry': typeof ApiDigestArchiveEntryRoute
+  '/api/digest-archive-status': typeof ApiDigestArchiveStatusRoute
+  '/api/digest-schedule': typeof ApiDigestScheduleRoute
   '/api/inbox': typeof ApiInboxRoute
   '/api/link-insights': typeof ApiLinkInsightsRoute
   '/api/link-preview': typeof ApiLinkPreviewRoute
   '/api/network-map': typeof ApiNetworkMapRoute
   '/api/period-digest': typeof ApiPeriodDigestRoute
+  '/api/period-digest-metadata': typeof ApiPeriodDigestMetadataRoute
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
   '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
@@ -368,11 +413,16 @@ export interface FileRouteTypes {
     | '/api/config-models'
     | '/api/conversation'
     | '/api/data-sources'
+    | '/api/digest-archive-dates'
+    | '/api/digest-archive-entry'
+    | '/api/digest-archive-status'
+    | '/api/digest-schedule'
     | '/api/inbox'
     | '/api/link-insights'
     | '/api/link-preview'
     | '/api/network-map'
     | '/api/period-digest'
+    | '/api/period-digest-metadata'
     | '/api/profile-analysis'
     | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
@@ -406,11 +456,16 @@ export interface FileRouteTypes {
     | '/api/config-models'
     | '/api/conversation'
     | '/api/data-sources'
+    | '/api/digest-archive-dates'
+    | '/api/digest-archive-entry'
+    | '/api/digest-archive-status'
+    | '/api/digest-schedule'
     | '/api/inbox'
     | '/api/link-insights'
     | '/api/link-preview'
     | '/api/network-map'
     | '/api/period-digest'
+    | '/api/period-digest-metadata'
     | '/api/profile-analysis'
     | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
@@ -444,11 +499,16 @@ export interface FileRouteTypes {
     | '/api/config-models'
     | '/api/conversation'
     | '/api/data-sources'
+    | '/api/digest-archive-dates'
+    | '/api/digest-archive-entry'
+    | '/api/digest-archive-status'
+    | '/api/digest-schedule'
     | '/api/inbox'
     | '/api/link-insights'
     | '/api/link-preview'
     | '/api/network-map'
     | '/api/period-digest'
+    | '/api/period-digest-metadata'
     | '/api/profile-analysis'
     | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
@@ -483,11 +543,16 @@ export interface RootRouteChildren {
   ApiConfigModelsRoute: typeof ApiConfigModelsRoute
   ApiConversationRoute: typeof ApiConversationRoute
   ApiDataSourcesRoute: typeof ApiDataSourcesRoute
+  ApiDigestArchiveDatesRoute: typeof ApiDigestArchiveDatesRoute
+  ApiDigestArchiveEntryRoute: typeof ApiDigestArchiveEntryRoute
+  ApiDigestArchiveStatusRoute: typeof ApiDigestArchiveStatusRoute
+  ApiDigestScheduleRoute: typeof ApiDigestScheduleRoute
   ApiInboxRoute: typeof ApiInboxRoute
   ApiLinkInsightsRoute: typeof ApiLinkInsightsRoute
   ApiLinkPreviewRoute: typeof ApiLinkPreviewRoute
   ApiNetworkMapRoute: typeof ApiNetworkMapRoute
   ApiPeriodDigestRoute: typeof ApiPeriodDigestRoute
+  ApiPeriodDigestMetadataRoute: typeof ApiPeriodDigestMetadataRoute
   ApiProfileAnalysisRoute: typeof ApiProfileAnalysisRoute
   ApiProfileAnalysisMetadataRoute: typeof ApiProfileAnalysisMetadataRoute
   ApiProfileHydrateRoute: typeof ApiProfileHydrateRoute
@@ -655,6 +720,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDataSourcesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/digest-archive-dates': {
+      id: '/api/digest-archive-dates'
+      path: '/api/digest-archive-dates'
+      fullPath: '/api/digest-archive-dates'
+      preLoaderRoute: typeof ApiDigestArchiveDatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/digest-archive-entry': {
+      id: '/api/digest-archive-entry'
+      path: '/api/digest-archive-entry'
+      fullPath: '/api/digest-archive-entry'
+      preLoaderRoute: typeof ApiDigestArchiveEntryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/digest-archive-status': {
+      id: '/api/digest-archive-status'
+      path: '/api/digest-archive-status'
+      fullPath: '/api/digest-archive-status'
+      preLoaderRoute: typeof ApiDigestArchiveStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/digest-schedule': {
+      id: '/api/digest-schedule'
+      path: '/api/digest-schedule'
+      fullPath: '/api/digest-schedule'
+      preLoaderRoute: typeof ApiDigestScheduleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/inbox': {
       id: '/api/inbox'
       path: '/api/inbox'
@@ -688,6 +781,13 @@ declare module '@tanstack/react-router' {
       path: '/api/period-digest'
       fullPath: '/api/period-digest'
       preLoaderRoute: typeof ApiPeriodDigestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/period-digest-metadata': {
+      id: '/api/period-digest-metadata'
+      path: '/api/period-digest-metadata'
+      fullPath: '/api/period-digest-metadata'
+      preLoaderRoute: typeof ApiPeriodDigestMetadataRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/profile-analysis': {
@@ -779,11 +879,16 @@ const rootRouteChildren: RootRouteChildren = {
   ApiConfigModelsRoute: ApiConfigModelsRoute,
   ApiConversationRoute: ApiConversationRoute,
   ApiDataSourcesRoute: ApiDataSourcesRoute,
+  ApiDigestArchiveDatesRoute: ApiDigestArchiveDatesRoute,
+  ApiDigestArchiveEntryRoute: ApiDigestArchiveEntryRoute,
+  ApiDigestArchiveStatusRoute: ApiDigestArchiveStatusRoute,
+  ApiDigestScheduleRoute: ApiDigestScheduleRoute,
   ApiInboxRoute: ApiInboxRoute,
   ApiLinkInsightsRoute: ApiLinkInsightsRoute,
   ApiLinkPreviewRoute: ApiLinkPreviewRoute,
   ApiNetworkMapRoute: ApiNetworkMapRoute,
   ApiPeriodDigestRoute: ApiPeriodDigestRoute,
+  ApiPeriodDigestMetadataRoute: ApiPeriodDigestMetadataRoute,
   ApiProfileAnalysisRoute: ApiProfileAnalysisRoute,
   ApiProfileAnalysisMetadataRoute: ApiProfileAnalysisMetadataRoute,
   ApiProfileHydrateRoute: ApiProfileHydrateRoute,

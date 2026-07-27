@@ -8,9 +8,13 @@ import { runSubprocessEffect } from "./subprocess";
 const DEFAULT_LAUNCHD_PATH =
 	"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
+export type LaunchAgentSchedule =
+	| { kind: "interval"; intervalSeconds: number }
+	| { kind: "calendar"; hour: number; minute: number; weekday?: number };
+
 export interface LaunchAgent {
 	label: string;
-	intervalSeconds: number;
+	schedule: LaunchAgentSchedule;
 	logPath: string;
 	stdoutPath: string;
 	stderrPath: string;
@@ -28,7 +32,7 @@ export interface LaunchAgentInstallResult {
 	logPath: string;
 	stdoutPath: string;
 	stderrPath: string;
-	intervalSeconds: number;
+	schedule: LaunchAgentSchedule;
 	envFile?: string;
 }
 
@@ -91,9 +95,29 @@ function stringEntry(value: string) {
 	return `<string>${xmlEscape(value)}</string>`;
 }
 
+function scheduleXml(schedule: LaunchAgentSchedule) {
+	if (schedule.kind === "interval") {
+		return `<key>StartInterval</key>
+  <integer>${String(schedule.intervalSeconds)}</integer>`;
+	}
+	const weekdayEntry =
+		schedule.weekday === undefined
+			? ""
+			: `
+    <key>Weekday</key>
+    <integer>${String(schedule.weekday)}</integer>`;
+	return `<key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>${String(schedule.hour)}</integer>
+    <key>Minute</key>
+    <integer>${String(schedule.minute)}</integer>${weekdayEntry}
+  </dict>`;
+}
+
 export function buildLaunchAgent({
 	label,
-	intervalSeconds,
+	schedule,
 	logPath,
 	stdoutPath,
 	stderrPath,
@@ -114,8 +138,7 @@ export function buildLaunchAgent({
   <array>
     ${programArguments.map(stringEntry).join("\n    ")}
   </array>
-  <key>StartInterval</key>
-  <integer>${String(intervalSeconds)}</integer>
+  ${scheduleXml(schedule)}
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
@@ -132,7 +155,7 @@ export function buildLaunchAgent({
 `;
 	return {
 		label,
-		intervalSeconds,
+		schedule,
 		logPath: resolvedLogPath,
 		stdoutPath: resolvedStdoutPath,
 		stderrPath: resolvedStderrPath,
@@ -183,7 +206,7 @@ export function installLaunchAgentEffect(
 			logPath: agent.logPath,
 			stdoutPath: agent.stdoutPath,
 			stderrPath: agent.stderrPath,
-			intervalSeconds: agent.intervalSeconds,
+			schedule: agent.schedule,
 			...(agent.envFile ? { envFile: agent.envFile } : {}),
 		};
 	});

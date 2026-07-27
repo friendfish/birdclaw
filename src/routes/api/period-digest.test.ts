@@ -9,6 +9,7 @@ vi.mock("#/lib/config", () => ({
 
 const maybeAutoUpdateBackupMock = vi.fn();
 const streamPeriodDigestMock = vi.fn();
+const peekScheduledJobLockMock = vi.fn();
 
 vi.mock("#/lib/backup", () => ({
 	maybeAutoUpdateBackup: () => maybeAutoUpdateBackupMock(),
@@ -23,11 +24,32 @@ vi.mock("#/lib/period-digest", () => ({
 			"Digest language must be a valid Unicode locale identifier",
 		);
 	},
+	normalizePeriod: (value: string | undefined) => {
+		const normalized = value?.trim().toLowerCase();
+		if (normalized === "yesterday") return "yesterday";
+		if (normalized === "24h" || normalized === "day") return "24h";
+		if (normalized === "week" || normalized === "7d") return "week";
+		return "today";
+	},
+	latestDigestCacheKey: (options: Record<string, unknown>) =>
+		`period-digest-latest:test:${JSON.stringify(options)}`,
+	periodDigestGenerationKey: (options: Record<string, unknown>) =>
+		`period-digest-generation:test:${JSON.stringify(options)}`,
 	streamPeriodDigest: (...args: unknown[]) => streamPeriodDigestMock(...args),
 	streamPeriodDigestEffect: (...args: unknown[]) =>
 		Effect.promise(() => streamPeriodDigestMock(...args)),
 }));
+vi.mock("#/lib/digest-archive-job", () => ({
+	digestArchiveLockPath: (period: string) =>
+		`/tmp/digest-archive-${period}.lock`,
+	DEFAULT_LOCK_STALE_MS: 45 * 60 * 1000,
+}));
+vi.mock("#/lib/scheduled-job", () => ({
+	peekScheduledJobLockEffect: (...args: unknown[]) =>
+		Effect.promise(() => peekScheduledJobLockMock(...args)),
+}));
 
+import { activePeriodDigestsRegistry } from "#/lib/period-digest-active-registry";
 import { Route } from "./period-digest";
 
 const GET = getRouteHandler(Route, "GET");
@@ -36,7 +58,9 @@ describe("api period digest route", () => {
 	beforeEach(() => {
 		maybeAutoUpdateBackupMock.mockReset();
 		streamPeriodDigestMock.mockReset();
+		peekScheduledJobLockMock.mockReset();
 		maybeAutoUpdateBackupMock.mockResolvedValue({ skipped: true });
+		peekScheduledJobLockMock.mockResolvedValue(false);
 		streamPeriodDigestMock.mockImplementation(
 			async (
 				_options: unknown,
@@ -97,7 +121,10 @@ describe("api period digest route", () => {
 				liveSyncMode: "xurl",
 				liveTimelineLimit: undefined,
 				liveTimelineMaxPages: undefined,
-				signal: expect.any(AbortSignal),
+				// Deliberately not the request's AbortSignal — see the "Option A"
+				// comment in period-digest.tsx: the summarization keeps running
+				// server-side even if the client navigates away mid-stream.
+				signal: undefined,
 			},
 			expect.objectContaining({ onEvent: expect.any(Function) }),
 		);
@@ -141,6 +168,61 @@ describe("api period digest route", () => {
 
 		resolveBackup?.({ skipped: true });
 		await reader!.cancel();
+	});
+
+	it("emits an error event and skips generation when a scheduled archive job holds the period's lock", async () => {
+		peekScheduledJobLockMock.mockResolvedValue(true);
+
+		const response = await GET({
+			request: new Request("http://localhost/api/period-digest?period=today"),
+		});
+
+		expect(await response.text()).toContain('"type":"error"');
+		expect(peekScheduledJobLockMock).toHaveBeenCalledWith(
+			"/tmp/digest-archive-today.lock",
+			45 * 60 * 1000,
+		);
+		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
+	});
+
+	it("registers the run in the active-digest registry while streaming and clears it once done", async () => {
+		let registeredMidRun: unknown;
+		let registryKeyMidRun: string | undefined;
+		streamPeriodDigestMock.mockImplementation(
+			async (
+				options: Record<string, unknown>,
+				handlers?: { onEvent?: (event: unknown) => void },
+			) => {
+				const registry = activePeriodDigestsRegistry();
+				registryKeyMidRun = `period-digest-generation:test:${JSON.stringify(options)}`;
+				registeredMidRun = registry.get(registryKeyMidRun);
+				handlers?.onEvent?.({
+					type: "done",
+					result: {
+						markdown: "# Today",
+						model: "gpt-5.5",
+						cached: false,
+						serviceTier: "priority",
+						context: {
+							window: { label: "Today" },
+							counts: { home: 0, mentions: 0, links: 0, dms: 0 },
+							includeDms: false,
+							tweets: [],
+						},
+						digest: { actionItems: [] },
+					},
+				});
+			},
+		);
+
+		const response = await GET({
+			request: new Request("http://localhost/api/period-digest?period=today"),
+		});
+		await response.text();
+
+		expect(registeredMidRun).toEqual({ label: "Preparing local archive" });
+		expect(registryKeyMidRun).toBeDefined();
+		expect(activePeriodDigestsRegistry().has(registryKeyMidRun!)).toBe(false);
 	});
 
 	it("emits an error event when the digest runner rejects", async () => {

@@ -32,6 +32,12 @@ function booleanValue(value: unknown, fallback = false) {
 	return fallback;
 }
 
+function dateValue(value: unknown) {
+	return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+		? value
+		: "";
+}
+
 export interface RouteSearchUpdateOptions {
 	replace?: boolean;
 }
@@ -139,6 +145,9 @@ export interface TodayRouteSearch {
 	period: PeriodRouteSearch;
 	includeDms: boolean;
 	contentSource: PeriodDigestContentSource;
+	// "" = unspecified, take the latest archived date; else "YYYY-MM-DD".
+	// Only meaningful when period is "yesterday" or "week".
+	archiveDate: string;
 }
 
 export function validateTodaySearch(
@@ -156,6 +165,7 @@ export function validateTodaySearch(
 			["all", "for_you", "following"],
 			"all",
 		),
+		archiveDate: dateValue(search.archiveDate),
 	};
 }
 

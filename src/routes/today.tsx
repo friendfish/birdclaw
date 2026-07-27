@@ -8,9 +8,14 @@ import {
 	Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DigestArchiveCalendarPicker } from "#/components/DigestArchiveCalendarPicker";
+import { DigestArchiveWeekPicker } from "#/components/DigestArchiveWeekPicker";
 import { MarkdownViewer } from "#/components/MarkdownViewer";
 import { useBirdAvailable } from "#/components/useBirdAvailable";
+import { useDigestArchiveRunningPeriods } from "#/components/useDigestArchiveStatus";
 import { useNdjsonRun } from "#/components/useNdjsonRun";
+import { usePeriodDigestMetadata } from "#/components/usePeriodDigestMetadata";
+import { useReadOnlyDigest } from "#/components/useReadOnlyDigest";
 import {
 	isTerminalStreamEvent,
 	periodDigestStreamEventSchema,
@@ -21,6 +26,7 @@ import type {
 	PeriodDigestRunResult,
 	PeriodDigestStreamEvent,
 } from "#/lib/period-digest";
+import { applyPeriodDigestIdentityParams } from "#/lib/period-digest-url";
 import type { ProfileRecord } from "#/lib/types";
 import {
 	hydrateProfileHandles,
@@ -105,13 +111,7 @@ function digestUrl(
 	refresh: boolean,
 ) {
 	const url = new URL("/api/period-digest", window.location.origin);
-	url.searchParams.set("period", period);
-	url.searchParams.set("includeDms", String(includeDms));
-	url.searchParams.set("contentSource", contentSource);
-	url.searchParams.set("maxTweets", "5000");
-	url.searchParams.set("maxLinks", "20");
-	// Cloudflare caps proxied requests; live timeline sync remains a separate job/UI action.
-	url.searchParams.set("liveSync", "false");
+	applyPeriodDigestIdentityParams(url, period, includeDms, contentSource);
 	if (refresh) {
 		url.searchParams.set("refresh", "true");
 	}
@@ -217,13 +217,22 @@ function useDigestStream(
 	period: PeriodOption,
 	includeDms: boolean,
 	contentSource: PeriodDigestContentSource,
+	enabled: boolean,
 ) {
 	const queryClient = useQueryClient();
 	const [markdown, setMarkdown] = useState("");
 	const [context, setContext] = useState<PeriodDigestContext | null>(null);
 	const [result, setResult] = useState<PeriodDigestRunResult | null>(null);
 	const [status, setStatus] = useState("Starting digest");
+	const [isWatching, setIsWatching] = useState(false);
 	const latestStatusRef = useRef("Starting digest");
+	const startedRef = useRef(false);
+	const metadata = usePeriodDigestMetadata({
+		period,
+		includeDms,
+		contentSource,
+		enabled,
+	});
 
 	const onStart = useCallback(() => {
 		setMarkdown("");
@@ -287,8 +296,72 @@ function useDigestStream(
 	});
 
 	useEffect(() => {
-		run(false);
-	}, [run]);
+		startedRef.current = false;
+		setIsWatching(false);
+	}, [period, includeDms, contentSource, enabled]);
+
+	useEffect(() => {
+		// Yesterday/Week are scheduled-only (see the archived viewMode branch
+		// in TodayRouteView) — this hook must not fetch/generate anything
+		// while they're the active period.
+		if (!enabled) return;
+		// Wait for the first metadata check before deciding anything — this is
+		// what lets a generation started before the user navigated away keep
+		// being watched instead of restarted from scratch (the server keeps it
+		// running regardless; see /api/period-digest's decoupled signal).
+		if (metadata.isLoading) return;
+
+		const adoptCachedResult = (cachedResult: PeriodDigestRunResult) => {
+			setResult(cachedResult);
+			setContext(cachedResult.context);
+			setMarkdown(cachedResult.markdown);
+			setStatus(cachedResult.cached ? "Loaded cached report" : "Ready");
+		};
+		const showActiveStatus = () => {
+			const label = metadata.activeStatus?.detail
+				? `${metadata.activeStatus.label} · ${metadata.activeStatus.detail}`
+				: (metadata.activeStatus?.label ?? "Generating in background");
+			latestStatusRef.current = label;
+			setStatus(label);
+		};
+
+		if (!startedRef.current) {
+			startedRef.current = true;
+			if (metadata.isGenerating) {
+				setIsWatching(true);
+				showActiveStatus();
+				return;
+			}
+			if (metadata.result) {
+				adoptCachedResult(metadata.result);
+				return;
+			}
+			run(false);
+			return;
+		}
+
+		if (!isWatching) return;
+		if (metadata.isGenerating) {
+			showActiveStatus();
+			return;
+		}
+		setIsWatching(false);
+		if (metadata.result) {
+			adoptCachedResult(metadata.result);
+		} else {
+			// The background run we were watching finished without leaving a
+			// usable result (e.g. it failed) — fall back to a normal run.
+			run(false);
+		}
+	}, [
+		enabled,
+		isWatching,
+		metadata.isLoading,
+		metadata.isGenerating,
+		metadata.result,
+		metadata.activeStatus,
+		run,
+	]);
 
 	useEffect(() => {
 		if (!result) return;
@@ -344,7 +417,15 @@ function useDigestStream(
 		};
 	}, [queryClient, result]);
 
-	return { context, error, loading, markdown, result, run, status };
+	return {
+		context,
+		error,
+		loading: loading || isWatching,
+		markdown,
+		result,
+		run,
+		status,
+	};
 }
 
 function TodayRoute() {
@@ -371,14 +452,37 @@ export function TodayRouteView({
 	const searchState = controlledSearch ?? localSearch;
 	const updateSearch: RouteSearchChange<TodayRouteSearch> = (next, options) =>
 		onSearchChange ? onSearchChange(next, options) : setLocalSearch(next);
-	const { period, includeDms, contentSource } = searchState;
+	const { period, includeDms, contentSource, archiveDate } = searchState;
 	const birdAvailable = useBirdAvailable();
 	// For You requires bird; fall back to the safe "all" default when it
 	// isn't available, regardless of what the URL/local state currently says.
 	const effectiveContentSource =
 		contentSource === "for_you" && !birdAvailable ? "all" : contentSource;
-	const { context, error, loading, markdown, result, run, status } =
-		useDigestStream(period, includeDms, effectiveContentSource);
+	// Yesterday/Week are scheduled-only (no manual refresh, see the design
+	// discussion in issue #30/PR #31): their "current" view is just "the
+	// latest archived date," and picking an explicit historical date reads
+	// the same way — there's no separate live-generation path for either.
+	const isArchivedPeriod = period === "yesterday" || period === "week";
+	const live = useDigestStream(
+		period,
+		includeDms,
+		effectiveContentSource,
+		!isArchivedPeriod,
+	);
+	const archived = useReadOnlyDigest({
+		period,
+		contentSource: effectiveContentSource,
+		archiveDate,
+		enabled: isArchivedPeriod,
+	});
+	const runningPeriods = useDigestArchiveRunningPeriods();
+	const context = isArchivedPeriod ? archived.context : live.context;
+	const markdown = isArchivedPeriod ? archived.markdown : live.markdown;
+	const result = isArchivedPeriod ? archived.result : live.result;
+	const loading = isArchivedPeriod ? archived.loading : live.loading;
+	const error = isArchivedPeriod ? archived.error : live.error;
+	const retry = isArchivedPeriod ? archived.retry : () => live.run(true);
+	const status = isArchivedPeriod ? "Loading archive" : live.status;
 	useEffect(() => {
 		const root = document.documentElement;
 		root.classList.add("today-pdf-route");
@@ -424,18 +528,20 @@ export function TodayRouteView({
 								Export PDF
 							</button>
 						) : null}
-						<button
-							type="button"
-							className={secondaryButtonClass}
-							onClick={() => run(true)}
-							disabled={loading}
-						>
-							<RefreshCw
-								className={cx("size-4", loading && "animate-spin")}
-								aria-hidden="true"
-							/>
-							Refresh
-						</button>
+						{isArchivedPeriod ? null : (
+							<button
+								type="button"
+								className={secondaryButtonClass}
+								onClick={() => live.run(true)}
+								disabled={loading || runningPeriods.has(period)}
+							>
+								<RefreshCw
+									className={cx("size-4", loading && "animate-spin")}
+									aria-hidden="true"
+								/>
+								Refresh
+							</button>
+						)}
 					</div>
 				</div>
 				<div className="today-pdf-meta" aria-hidden="true">
@@ -488,26 +594,50 @@ export function TodayRouteView({
 									period === item.value && segmentAccentActiveClass,
 								)}
 								onClick={() =>
-									updateSearch({ ...searchState, period: item.value })
+									updateSearch({
+										...searchState,
+										period: item.value,
+										archiveDate: "",
+									})
 								}
 							>
 								{item.label}
 							</button>
 						))}
 					</div>
-					<label className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] px-3 py-1 text-[13px] font-medium text-[var(--ink-soft)]">
-						<input
-							type="checkbox"
-							checked={includeDms}
-							onChange={(event) =>
-								updateSearch({
-									...searchState,
-									includeDms: event.currentTarget.checked,
-								})
+					{period === "yesterday" ? (
+						<DigestArchiveCalendarPicker
+							dates={archived.dates}
+							value={archiveDate}
+							onChange={(date) =>
+								updateSearch({ ...searchState, archiveDate: date })
 							}
 						/>
-						DMs
-					</label>
+					) : null}
+					{period === "week" ? (
+						<DigestArchiveWeekPicker
+							dates={archived.dates}
+							value={archiveDate}
+							onChange={(date) =>
+								updateSearch({ ...searchState, archiveDate: date })
+							}
+						/>
+					) : null}
+					{isArchivedPeriod ? null : (
+						<label className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] px-3 py-1 text-[13px] font-medium text-[var(--ink-soft)]">
+							<input
+								type="checkbox"
+								checked={includeDms}
+								onChange={(event) =>
+									updateSearch({
+										...searchState,
+										includeDms: event.currentTarget.checked,
+									})
+								}
+							/>
+							DMs
+						</label>
+					)}
 				</div>
 			</header>
 
@@ -522,7 +652,7 @@ export function TodayRouteView({
 					<span>{error}</span>
 					<button
 						className="shrink-0 font-semibold underline underline-offset-2"
-						onClick={() => run(true)}
+						onClick={retry}
 						type="button"
 					>
 						Retry
@@ -559,8 +689,14 @@ export function TodayRouteView({
 					{loading
 						? status
 						: error
-							? "No digest was generated. Retry to start a new run."
-							: "Waiting for the first tokens..."}
+							? isArchivedPeriod
+								? "No digest was generated. Retry to load the archive again."
+								: "No digest was generated. Retry to start a new run."
+							: isArchivedPeriod
+								? archived.neverArchived
+									? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
+									: `No archived ${effectiveContentSource === "all" ? "" : `${effectiveContentSource} `}digest for this date. Try a different content-source tab.`
+								: "Waiting for the first tokens..."}
 				</div>
 			)}
 		</div>
