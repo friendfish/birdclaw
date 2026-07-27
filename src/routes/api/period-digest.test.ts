@@ -31,6 +31,8 @@ vi.mock("#/lib/period-digest", () => ({
 		if (normalized === "week" || normalized === "7d") return "week";
 		return "today";
 	},
+	latestDigestCacheKey: (options: Record<string, unknown>) =>
+		`period-digest-latest:test:${JSON.stringify(options)}`,
 	streamPeriodDigest: (...args: unknown[]) => streamPeriodDigestMock(...args),
 	streamPeriodDigestEffect: (...args: unknown[]) =>
 		Effect.promise(() => streamPeriodDigestMock(...args)),
@@ -45,6 +47,7 @@ vi.mock("#/lib/scheduled-job", () => ({
 		Effect.promise(() => peekScheduledJobLockMock(...args)),
 }));
 
+import { activePeriodDigestsRegistry } from "#/lib/period-digest-active-registry";
 import { Route } from "./period-digest";
 
 const GET = getRouteHandler(Route, "GET");
@@ -116,7 +119,10 @@ describe("api period digest route", () => {
 				liveSyncMode: "xurl",
 				liveTimelineLimit: undefined,
 				liveTimelineMaxPages: undefined,
-				signal: expect.any(AbortSignal),
+				// Deliberately not the request's AbortSignal — see the "Option A"
+				// comment in period-digest.tsx: the summarization keeps running
+				// server-side even if the client navigates away mid-stream.
+				signal: undefined,
 			},
 			expect.objectContaining({ onEvent: expect.any(Function) }),
 		);
@@ -175,6 +181,46 @@ describe("api period digest route", () => {
 			45 * 60 * 1000,
 		);
 		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
+	});
+
+	it("registers the run in the active-digest registry while streaming and clears it once done", async () => {
+		let registeredMidRun: unknown;
+		let registryKeyMidRun: string | undefined;
+		streamPeriodDigestMock.mockImplementation(
+			async (
+				options: Record<string, unknown>,
+				handlers?: { onEvent?: (event: unknown) => void },
+			) => {
+				const registry = activePeriodDigestsRegistry();
+				registryKeyMidRun = `period-digest-latest:test:${JSON.stringify(options)}`;
+				registeredMidRun = registry.get(registryKeyMidRun);
+				handlers?.onEvent?.({
+					type: "done",
+					result: {
+						markdown: "# Today",
+						model: "gpt-5.5",
+						cached: false,
+						serviceTier: "priority",
+						context: {
+							window: { label: "Today" },
+							counts: { home: 0, mentions: 0, links: 0, dms: 0 },
+							includeDms: false,
+							tweets: [],
+						},
+						digest: { actionItems: [] },
+					},
+				});
+			},
+		);
+
+		const response = await GET({
+			request: new Request("http://localhost/api/period-digest?period=today"),
+		});
+		await response.text();
+
+		expect(registeredMidRun).toEqual({ label: "Preparing local archive" });
+		expect(registryKeyMidRun).toBeDefined();
+		expect(activePeriodDigestsRegistry().has(registryKeyMidRun!)).toBe(false);
 	});
 
 	it("emits an error event when the digest runner rejects", async () => {

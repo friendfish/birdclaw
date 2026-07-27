@@ -14,6 +14,7 @@ import { MarkdownViewer } from "#/components/MarkdownViewer";
 import { useBirdAvailable } from "#/components/useBirdAvailable";
 import { useDigestArchiveRunningPeriods } from "#/components/useDigestArchiveStatus";
 import { useNdjsonRun } from "#/components/useNdjsonRun";
+import { usePeriodDigestMetadata } from "#/components/usePeriodDigestMetadata";
 import { useReadOnlyDigest } from "#/components/useReadOnlyDigest";
 import {
 	isTerminalStreamEvent,
@@ -228,7 +229,15 @@ function useDigestStream(
 	const [context, setContext] = useState<PeriodDigestContext | null>(null);
 	const [result, setResult] = useState<PeriodDigestRunResult | null>(null);
 	const [status, setStatus] = useState("Starting digest");
+	const [isWatching, setIsWatching] = useState(false);
 	const latestStatusRef = useRef("Starting digest");
+	const startedRef = useRef(false);
+	const metadata = usePeriodDigestMetadata({
+		period,
+		includeDms,
+		contentSource,
+		enabled,
+	});
 
 	const onStart = useCallback(() => {
 		setMarkdown("");
@@ -292,12 +301,72 @@ function useDigestStream(
 	});
 
 	useEffect(() => {
+		startedRef.current = false;
+		setIsWatching(false);
+	}, [period, includeDms, contentSource, enabled]);
+
+	useEffect(() => {
 		// Yesterday/Week are scheduled-only (see the archived viewMode branch
 		// in TodayRouteView) — this hook must not fetch/generate anything
 		// while they're the active period.
 		if (!enabled) return;
-		run(false);
-	}, [run, enabled]);
+		// Wait for the first metadata check before deciding anything — this is
+		// what lets a generation started before the user navigated away keep
+		// being watched instead of restarted from scratch (the server keeps it
+		// running regardless; see /api/period-digest's decoupled signal).
+		if (metadata.isLoading) return;
+
+		const adoptCachedResult = (cachedResult: PeriodDigestRunResult) => {
+			setResult(cachedResult);
+			setContext(cachedResult.context);
+			setMarkdown(cachedResult.markdown);
+			setStatus(cachedResult.cached ? "Loaded cached report" : "Ready");
+		};
+		const showActiveStatus = () => {
+			const label = metadata.activeStatus?.detail
+				? `${metadata.activeStatus.label} · ${metadata.activeStatus.detail}`
+				: (metadata.activeStatus?.label ?? "Generating in background");
+			latestStatusRef.current = label;
+			setStatus(label);
+		};
+
+		if (!startedRef.current) {
+			startedRef.current = true;
+			if (metadata.isGenerating) {
+				setIsWatching(true);
+				showActiveStatus();
+				return;
+			}
+			if (metadata.result) {
+				adoptCachedResult(metadata.result);
+				return;
+			}
+			run(false);
+			return;
+		}
+
+		if (!isWatching) return;
+		if (metadata.isGenerating) {
+			showActiveStatus();
+			return;
+		}
+		setIsWatching(false);
+		if (metadata.result) {
+			adoptCachedResult(metadata.result);
+		} else {
+			// The background run we were watching finished without leaving a
+			// usable result (e.g. it failed) — fall back to a normal run.
+			run(false);
+		}
+	}, [
+		enabled,
+		isWatching,
+		metadata.isLoading,
+		metadata.isGenerating,
+		metadata.result,
+		metadata.activeStatus,
+		run,
+	]);
 
 	useEffect(() => {
 		if (!result) return;
@@ -353,7 +422,15 @@ function useDigestStream(
 		};
 	}, [queryClient, result]);
 
-	return { context, error, loading, markdown, result, run, status };
+	return {
+		context,
+		error,
+		loading: loading || isWatching,
+		markdown,
+		result,
+		run,
+		status,
+	};
 }
 
 function TodayRoute() {

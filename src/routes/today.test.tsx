@@ -107,6 +107,22 @@ function digestResult(label: string, markdown: string, includeDms = false) {
 	};
 }
 
+function periodDigestMetadataResponse(
+	overrides: Partial<{
+		isGenerating: boolean;
+		activeStatus: { label: string; detail?: string } | null;
+		result: unknown;
+	}> = {},
+) {
+	return Response.json({
+		ok: true,
+		isGenerating: false,
+		activeStatus: null,
+		result: null,
+		...overrides,
+	});
+}
+
 describe("today route", () => {
 	beforeEach(() => {
 		vi.restoreAllMocks();
@@ -137,6 +153,9 @@ describe("today route", () => {
 					}),
 					{ headers: { "content-type": "application/json" } },
 				);
+			}
+			if (url.pathname === "/api/period-digest-metadata") {
+				return periodDigestMetadataResponse();
 			}
 			const period = url.searchParams.get("period") ?? "today";
 			const includeDms = url.searchParams.get("includeDms") === "true";
@@ -251,6 +270,9 @@ describe("today route", () => {
 					headers: { "content-type": "application/json" },
 				});
 			}
+			if (url.pathname === "/api/period-digest-metadata") {
+				return periodDigestMetadataResponse();
+			}
 			const contentSource = url.searchParams.get("contentSource") ?? "all";
 			const markdown = `# ${contentSource}\n\n## What people are talking about\n\n- signal`;
 			return ndjsonResponse([
@@ -314,6 +336,9 @@ describe("today route", () => {
 					headers: { "content-type": "application/json" },
 				});
 			}
+			if (url.pathname === "/api/period-digest-metadata") {
+				return periodDigestMetadataResponse();
+			}
 			const contentSource = url.searchParams.get("contentSource") ?? "all";
 			const markdown = `# ${contentSource}\n\n## What people are talking about\n\n- signal`;
 			return ndjsonResponse([
@@ -358,6 +383,9 @@ describe("today route", () => {
 						headers: { "content-type": "application/json" },
 					});
 				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse();
+				}
 				const markdown = "# Today\n\nDone.";
 				return ndjsonResponse([
 					{ type: "delta", delta: markdown },
@@ -382,12 +410,16 @@ describe("today route", () => {
 		const printMock = vi.spyOn(window, "print").mockImplementation(() => {});
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () =>
-				ndjsonResponse([
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse();
+				}
+				return ndjsonResponse([
 					{ type: "delta", delta: "# Partial digest" },
 					{ type: "error", error: "Digest generation failed" },
-				]),
-			),
+				]);
+			}),
 		);
 
 		render(<TodayRoute />);
@@ -440,6 +472,9 @@ describe("today route", () => {
 			if (url.includes("/api/digest-archive-status")) {
 				return Response.json({ ok: true, runningPeriods: [] });
 			}
+			if (url.includes("/api/period-digest-metadata")) {
+				return periodDigestMetadataResponse();
+			}
 			digestCalls += 1;
 			throw new TypeError("network error");
 		});
@@ -475,6 +510,9 @@ describe("today route", () => {
 					return new Response(JSON.stringify({ ok: true, results: [] }), {
 						headers: { "content-type": "application/json" },
 					});
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse();
 				}
 				return new Response(
 					new ReadableStream<Uint8Array>({
@@ -526,14 +564,108 @@ describe("today route", () => {
 	it("shows streamed error events", async () => {
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () =>
-				ndjsonResponse([{ type: "error", error: "model failed" }]),
-			),
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse();
+				}
+				return ndjsonResponse([{ type: "error", error: "model failed" }]);
+			}),
 		);
 
 		render(<TodayRoute />);
 
 		expect(await screen.findByText("model failed")).toBeInTheDocument();
+	});
+
+	describe("background-detached generation (resume instead of restart)", () => {
+		it("adopts a fresh cached result from metadata without starting a new generation request", async () => {
+			let generationCalls = 0;
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return Response.json({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse({
+						isGenerating: false,
+						result: digestResult(
+							"Today",
+							"# Today\n\nAlready generated in the background.",
+						),
+					});
+				}
+				if (url.pathname === "/api/profile-hydrate") {
+					return Response.json({ ok: true, results: [] });
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return Response.json({ ok: true, runningPeriods: [] });
+				}
+				generationCalls += 1;
+				return ndjsonResponse([
+					{ type: "done", result: digestResult("Today", "# Should not run") },
+				]);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(<TodayRoute />);
+
+			expect(
+				await screen.findByRole("heading", { name: "Today", level: 1 }),
+			).toBeInTheDocument();
+			expect(
+				screen.getByText("Already generated in the background."),
+			).toBeInTheDocument();
+			expect(generationCalls).toBe(0);
+		});
+
+		it("watches an in-progress background generation instead of starting a duplicate request", async () => {
+			let generationCalls = 0;
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return Response.json({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse({
+						isGenerating: true,
+						activeStatus: {
+							label: "Streaming AI summary",
+							detail: "background run from another tab",
+						},
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return Response.json({ ok: true, runningPeriods: [] });
+				}
+				generationCalls += 1;
+				return ndjsonResponse([
+					{ type: "done", result: digestResult("Today", "# Should not run") },
+				]);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(<TodayRoute />);
+
+			expect(
+				await screen.findAllByText(
+					"Streaming AI summary · background run from another tab",
+				),
+			).not.toHaveLength(0);
+			const refreshButton = await screen.findByRole("button", {
+				name: /refresh/i,
+			});
+			expect(refreshButton).toBeDisabled();
+			expect(generationCalls).toBe(0);
+		});
 	});
 
 	describe("archived periods (Yesterday/Week)", () => {
@@ -701,6 +833,9 @@ describe("today route", () => {
 				}
 				if (url.pathname === "/api/profile-hydrate") {
 					return jsonResponse({ ok: true, results: [] });
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse();
 				}
 				return ndjsonResponse([
 					{ type: "delta", delta: "# Today\n" },

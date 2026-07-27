@@ -2,68 +2,28 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 import { periodDigestStreamEventSchema } from "#/lib/client-stream-contracts";
 import { maybeAutoUpdateBackupEffect } from "#/lib/backup";
-import { getBirdclawConfig } from "#/lib/config";
 import {
 	DEFAULT_LOCK_STALE_MS,
 	digestArchiveLockPath,
 } from "#/lib/digest-archive-job";
 import {
 	jsonResponse,
-	parseBoundedInteger,
 	runRouteEffect,
 	sensitiveRequestErrorResponse,
 } from "#/lib/http-effect";
 import { createEffectNdjsonResponse } from "#/lib/ndjson-stream";
 import {
-	normalizeDigestLanguage,
+	activePeriodDigestsRegistry,
+	periodDigestRegistryKey,
+} from "#/lib/period-digest-active-registry";
+import { parsePeriodDigestRequestOptions } from "#/lib/period-digest-request";
+import {
 	normalizePeriod,
 	streamPeriodDigestEffect,
-	type PeriodDigestContentSource,
 	type PeriodDigestOptions,
 	type PeriodDigestStreamEvent,
 } from "#/lib/period-digest";
 import { peekScheduledJobLockEffect } from "#/lib/scheduled-job";
-
-function parseBoolean(value: string | null) {
-	return value === "true" || value === "1" || value === "yes";
-}
-
-function parseContentSource(value: string | null): PeriodDigestContentSource {
-	return value === "for_you" || value === "following" ? value : "all";
-}
-
-function parseOptions(url: URL): PeriodDigestOptions {
-	return {
-		period: url.searchParams.get("period") ?? undefined,
-		since: url.searchParams.get("since") ?? undefined,
-		until: url.searchParams.get("until") ?? undefined,
-		account: url.searchParams.get("account") ?? undefined,
-		includeDms: parseBoolean(url.searchParams.get("includeDms")),
-		contentSource: parseContentSource(url.searchParams.get("contentSource")),
-		refresh: parseBoolean(url.searchParams.get("refresh")),
-		model: url.searchParams.get("model") === "gpt-5.5" ? "gpt-5.5" : undefined,
-		language: normalizeDigestLanguage(
-			url.searchParams.get("language") ?? undefined,
-		),
-		maxTweets: parseBoundedInteger(url.searchParams.get("maxTweets"), {
-			max: 5_000,
-		}),
-		maxLinks: parseBoundedInteger(url.searchParams.get("maxLinks"), {
-			max: 25,
-		}),
-		liveSync: url.searchParams.get("liveSync") !== "false",
-		liveSyncMode:
-			getBirdclawConfig().mentions?.dataSource === "bird" ? "bird" : "xurl",
-		liveTimelineLimit: parseBoundedInteger(
-			url.searchParams.get("liveTimelineLimit"),
-			{ max: 100_000 },
-		),
-		liveTimelineMaxPages: parseBoundedInteger(
-			url.searchParams.get("liveTimelineMaxPages"),
-			{ max: 1_000 },
-		),
-	};
-}
 
 export const Route = createFileRoute("/api/period-digest")({
 	server: {
@@ -77,7 +37,7 @@ export const Route = createFileRoute("/api/period-digest")({
 						const url = new URL(request.url);
 						let options: PeriodDigestOptions;
 						try {
-							options = parseOptions(url);
+							options = parsePeriodDigestRequestOptions(url);
 						} catch (error) {
 							return jsonResponse(
 								{
@@ -97,7 +57,7 @@ export const Route = createFileRoute("/api/period-digest")({
 									detail: "Checking for backup updates.",
 								},
 							],
-							run: ({ signal, emit }) =>
+							run: ({ emit }) =>
 								Effect.gen(function* () {
 									// A scheduled digest-archive job holds this lock for the
 									// whole run — defer to it rather than racing a second
@@ -116,10 +76,46 @@ export const Route = createFileRoute("/api/period-digest")({
 										});
 										return;
 									}
+
+									const registry = activePeriodDigestsRegistry();
+									const registryKey = periodDigestRegistryKey(options);
+									registry.set(registryKey, {
+										label: "Preparing local archive",
+									});
+									const wrappedEmit = (event: PeriodDigestStreamEvent) => {
+										if (event.type === "status") {
+											registry.set(registryKey, {
+												label: event.label,
+												detail: event.detail,
+											});
+										} else if (event.type === "start") {
+											registry.set(registryKey, {
+												label: "Streaming AI summary",
+											});
+										}
+										emit(event);
+									};
+
 									yield* maybeAutoUpdateBackupEffect();
-									return yield* streamPeriodDigestEffect(
-										{ ...options, signal },
-										{ onEvent: emit },
+									const runDigest = Effect.gen(function* () {
+										// Deliberately not the request's own AbortSignal: if the
+										// client navigates away mid-generation, we want the
+										// summarization (and its OpenAI call) to keep running
+										// server-side and land in sync_cache rather than dying —
+										// same "Option A" decoupling used by /api/profile-analysis.
+										// A later poll of /api/period-digest-metadata picks up the
+										// result instead of the client having to restart from
+										// scratch. See issue discussion for the background.
+										return yield* streamPeriodDigestEffect(
+											{ ...options, signal: undefined },
+											{ onEvent: wrappedEmit },
+										);
+									});
+									return yield* Effect.ensuring(
+										runDigest,
+										Effect.sync(() => {
+											registry.delete(registryKey);
+										}),
 									);
 								}),
 							errorEvent: (error) => ({

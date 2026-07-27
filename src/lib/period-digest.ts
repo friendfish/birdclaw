@@ -929,7 +929,7 @@ function digestCacheKey(
 	return parts.join(":");
 }
 
-function latestDigestCacheKey(options: PeriodDigestOptions) {
+export function latestDigestCacheKey(options: PeriodDigestOptions) {
 	const period = normalizePeriod(options.period);
 	const window = resolvePeriodDigestWindow(options);
 	const identity = {
@@ -989,7 +989,7 @@ function enrichContextWithCitedTweets(
 		: context;
 }
 
-interface CachedPeriodDigestValue {
+export interface CachedPeriodDigestValue {
 	context?: PeriodDigestContext;
 	digest: PeriodDigest;
 	markdown: string;
@@ -1033,7 +1033,7 @@ function getDigestFreshnessMs(): number {
 	return DEFAULT_DIGEST_FRESHNESS_MS;
 }
 
-function isFreshDigestCache(updatedAt: string, period?: string) {
+export function isFreshDigestCache(updatedAt: string, period?: string) {
 	const normalized = period?.trim().toLowerCase();
 	// Historical periods (yesterday, week) never expire automatically on tab switch
 	if (
