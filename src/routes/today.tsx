@@ -26,6 +26,7 @@ import type {
 	PeriodDigestRunResult,
 	PeriodDigestStreamEvent,
 } from "#/lib/period-digest";
+import { applyPeriodDigestIdentityParams } from "#/lib/period-digest-url";
 import type { ProfileRecord } from "#/lib/types";
 import {
 	hydrateProfileHandles,
@@ -110,13 +111,7 @@ function digestUrl(
 	refresh: boolean,
 ) {
 	const url = new URL("/api/period-digest", window.location.origin);
-	url.searchParams.set("period", period);
-	url.searchParams.set("includeDms", String(includeDms));
-	url.searchParams.set("contentSource", contentSource);
-	url.searchParams.set("maxTweets", "5000");
-	url.searchParams.set("maxLinks", "20");
-	// Cloudflare caps proxied requests; live timeline sync remains a separate job/UI action.
-	url.searchParams.set("liveSync", "false");
+	applyPeriodDigestIdentityParams(url, period, includeDms, contentSource);
 	if (refresh) {
 		url.searchParams.set("refresh", "true");
 	}

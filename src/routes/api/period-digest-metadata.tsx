@@ -11,6 +11,7 @@ import {
 } from "#/lib/period-digest-active-registry";
 import {
 	isFreshDigestCache,
+	latestDigestCacheKey,
 	type CachedPeriodDigestValue,
 	type PeriodDigestRunResult,
 } from "#/lib/period-digest";
@@ -34,7 +35,13 @@ export const Route = createFileRoute("/api/period-digest-metadata")({
 						const isGenerating = registry.has(registryKey);
 						const activeStatus = registry.get(registryKey) ?? null;
 
-						const cached = readSyncCache<CachedPeriodDigestValue>(registryKey);
+						// A different key from the registry's on purpose — this one
+						// embeds the *current* model/language/reasoningEffort/
+						// serviceTier config, matching how streamPeriodDigestEffect
+						// itself keys the "latest" sync_cache row it writes.
+						const resultCacheKey = latestDigestCacheKey(options);
+						const cached =
+							readSyncCache<CachedPeriodDigestValue>(resultCacheKey);
 						const cachedUpdatedAt =
 							cached?.value.updatedAt ?? cached?.updatedAt;
 						const isFresh = Boolean(

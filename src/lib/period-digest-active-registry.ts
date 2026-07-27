@@ -1,5 +1,5 @@
 import {
-	latestDigestCacheKey,
+	periodDigestGenerationKey,
 	type PeriodDigestOptions,
 } from "./period-digest";
 
@@ -26,10 +26,12 @@ export function activePeriodDigestsRegistry(): Registry {
 }
 
 /**
- * The same options (period/contentSource/account/includeDms/etc.) always
- * hash to the same key via latestDigestCacheKey, so the registry and the
- * sync_cache row it stores the finished result under share one identity.
+ * Deliberately independent of AI model/language/reasoningEffort/serviceTier
+ * (see periodDigestGenerationKey) — this key identifies "a generation for
+ * this content", not "a result produced with this exact config", so
+ * changing the AI model mid-generation doesn't make an in-progress run
+ * invisible to a later poll.
  */
 export function periodDigestRegistryKey(options: PeriodDigestOptions): string {
-	return latestDigestCacheKey(options);
+	return periodDigestGenerationKey(options);
 }

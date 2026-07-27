@@ -958,6 +958,36 @@ export function latestDigestCacheKey(options: PeriodDigestOptions) {
 		.digest("hex")}`;
 }
 
+/**
+ * Identity for "is a generation for this content already running/cached",
+ * independent of *how* it'll be summarized. Deliberately narrower than
+ * latestDigestCacheKey — that one embeds the current model/reasoningEffort/
+ * serviceTier config, which is right for "does a fresh cached result exist
+ * under the config I'd use right now" but wrong for "is the request I fired
+ * a minute ago (with whatever config was active then) still in flight" —
+ * changing the AI model mid-generation would otherwise make the in-progress
+ * run invisible to a poll that recomputes the key with the new config.
+ */
+export function periodDigestGenerationKey(options: PeriodDigestOptions) {
+	const period = normalizePeriod(options.period);
+	const window = resolvePeriodDigestWindow(options);
+	const identity = {
+		period,
+		day:
+			period === "today" || period === "yesterday"
+				? window.since
+				: localDateStart(new Date()).toISOString(),
+		since: options.since?.trim() || null,
+		until: options.until?.trim() || null,
+		account: options.account?.trim() || null,
+		includeDms: Boolean(options.includeDms),
+		contentSource: options.contentSource ?? "all",
+	};
+	return `period-digest-generation:v1:${createHash("sha1")
+		.update(JSON.stringify(identity))
+		.digest("hex")}`;
+}
+
 function collectDigestTweetIds(digest: PeriodDigest) {
 	const tweetIds = new Set(digest.sourceTweetIds);
 	for (const topic of digest.keyTopics) {

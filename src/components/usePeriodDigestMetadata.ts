@@ -6,6 +6,7 @@ import type {
 	PeriodDigestContentSource,
 	PeriodDigestRunResult,
 } from "#/lib/period-digest";
+import { applyPeriodDigestIdentityParams } from "#/lib/period-digest-url";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -35,15 +36,7 @@ function metadataUrl(
 	contentSource: PeriodDigestContentSource,
 ) {
 	const url = new URL("/api/period-digest-metadata", window.location.origin);
-	url.searchParams.set("period", period);
-	url.searchParams.set("includeDms", String(includeDms));
-	url.searchParams.set("contentSource", contentSource);
-	// Must match digestUrl()'s fixed values exactly — the server derives its
-	// registry/cache key from these params, so any drift here would make a
-	// real in-flight generation invisible to this poll.
-	url.searchParams.set("maxTweets", "5000");
-	url.searchParams.set("maxLinks", "20");
-	url.searchParams.set("liveSync", "false");
+	applyPeriodDigestIdentityParams(url, period, includeDms, contentSource);
 	return url.toString();
 }
 

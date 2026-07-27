@@ -16,6 +16,8 @@ vi.mock("#/lib/period-digest", () => ({
 	normalizeDigestLanguage: (value: string | undefined) => value,
 	latestDigestCacheKey: (options: Record<string, unknown>) =>
 		`period-digest-latest:test:${JSON.stringify(options)}`,
+	periodDigestGenerationKey: (options: Record<string, unknown>) =>
+		`period-digest-generation:test:${JSON.stringify(options)}`,
 	isFreshDigestCache: (...args: unknown[]) => isFreshDigestCacheMock(...args),
 }));
 
@@ -50,7 +52,7 @@ describe("api period-digest-metadata route", () => {
 
 	it("reports isGenerating and the active status label while a matching run is in progress", async () => {
 		const registry = activePeriodDigestsRegistry();
-		const key = `period-digest-latest:test:${JSON.stringify({
+		const key = `period-digest-generation:test:${JSON.stringify({
 			period: "today",
 			since: undefined,
 			until: undefined,

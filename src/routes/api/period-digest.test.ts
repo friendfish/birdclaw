@@ -33,6 +33,8 @@ vi.mock("#/lib/period-digest", () => ({
 	},
 	latestDigestCacheKey: (options: Record<string, unknown>) =>
 		`period-digest-latest:test:${JSON.stringify(options)}`,
+	periodDigestGenerationKey: (options: Record<string, unknown>) =>
+		`period-digest-generation:test:${JSON.stringify(options)}`,
 	streamPeriodDigest: (...args: unknown[]) => streamPeriodDigestMock(...args),
 	streamPeriodDigestEffect: (...args: unknown[]) =>
 		Effect.promise(() => streamPeriodDigestMock(...args)),
@@ -192,7 +194,7 @@ describe("api period digest route", () => {
 				handlers?: { onEvent?: (event: unknown) => void },
 			) => {
 				const registry = activePeriodDigestsRegistry();
-				registryKeyMidRun = `period-digest-latest:test:${JSON.stringify(options)}`;
+				registryKeyMidRun = `period-digest-generation:test:${JSON.stringify(options)}`;
 				registeredMidRun = registry.get(registryKeyMidRun);
 				handlers?.onEvent?.({
 					type: "done",
