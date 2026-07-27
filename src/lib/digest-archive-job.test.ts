@@ -266,6 +266,85 @@ describe("digest-archive-job", () => {
 		expect(missing).toBeNull();
 	});
 
+	it("forwards an explicit since/until window and liveSync:false for backfilling historical periods", async () => {
+		const calls: Array<{
+			since?: string;
+			until?: string;
+			liveSync?: boolean;
+		}> = [];
+		streamPeriodDigestMock.mockImplementation(
+			async (options: {
+				since?: string;
+				until?: string;
+				liveSync?: boolean;
+			}) => {
+				calls.push({
+					since: options.since,
+					until: options.until,
+					liveSync: options.liveSync,
+				});
+				return digestResult();
+			},
+		);
+		const archiveDir = tempArchiveDir();
+
+		await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "yesterday",
+				archiveDir,
+				contentSources: ["all"],
+				since: "2026-07-10T00:00:00.000Z",
+				until: "2026-07-11T00:00:00.000Z",
+				liveSync: false,
+				now: () => new Date(2026, 6, 11),
+			}),
+		);
+
+		expect(calls).toEqual([
+			{
+				since: "2026-07-10T00:00:00.000Z",
+				until: "2026-07-11T00:00:00.000Z",
+				liveSync: false,
+			},
+		]);
+	});
+
+	it("defaults liveSync to true and leaves since/until undefined when not backfilling", async () => {
+		const calls: Array<{
+			since?: string;
+			until?: string;
+			liveSync?: boolean;
+		}> = [];
+		streamPeriodDigestMock.mockImplementation(
+			async (options: {
+				since?: string;
+				until?: string;
+				liveSync?: boolean;
+			}) => {
+				calls.push({
+					since: options.since,
+					until: options.until,
+					liveSync: options.liveSync,
+				});
+				return digestResult();
+			},
+		);
+		const archiveDir = tempArchiveDir();
+
+		await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir,
+				contentSources: ["all"],
+				now: () => new Date(2026, 6, 27),
+			}),
+		);
+
+		expect(calls).toEqual([
+			{ since: undefined, until: undefined, liveSync: true },
+		]);
+	});
+
 	it("defaults week's launchd schedule to Monday and 24h to 08:45", () => {
 		const weekAgent = buildDigestArchiveLaunchAgentPlist({ period: "week" });
 		expect(weekAgent.schedule).toEqual({

@@ -68,6 +68,16 @@ export interface DigestArchiveJobOptions {
 	logPath?: string;
 	lockPath?: string;
 	now?: () => Date;
+	// Backfill support: an explicit window overrides the period's normal
+	// "relative to now" window (see resolvePeriodDigestWindow), so a
+	// historical day/week can be regenerated and archived under a runDate
+	// (still controlled by `now`) that differs from today's actual date.
+	since?: string;
+	until?: string;
+	// Defaults to true (matches the scheduled job's normal behavior of
+	// pulling fresh data). Backfilling from already-synced local data only
+	// should pass false.
+	liveSync?: boolean;
 }
 
 export interface DigestArchiveStepResult {
@@ -205,6 +215,9 @@ function runOneContentSourceEffect({
 	runDate,
 	retries,
 	retryDelayMs,
+	since,
+	until,
+	liveSync,
 }: {
 	period: PeriodDigestPreset;
 	contentSource: PeriodDigestContentSource;
@@ -214,6 +227,9 @@ function runOneContentSourceEffect({
 	runDate: string;
 	retries: number;
 	retryDelayMs: number;
+	since?: string;
+	until?: string;
+	liveSync: boolean;
 }): Effect.Effect<DigestArchiveStepResult, never> {
 	let attempts = 0;
 	const attempt = () =>
@@ -226,7 +242,9 @@ function runOneContentSourceEffect({
 					account,
 					includeDms,
 					refresh: true,
-					liveSync: true,
+					liveSync,
+					since,
+					until,
 				}),
 			);
 			const { markdownPath, jsonPath } = resolveDigestArchivePaths({
@@ -346,6 +364,9 @@ export function runDigestArchiveJobEffect(
 					runDate,
 					retries,
 					retryDelayMs,
+					since: options.since,
+					until: options.until,
+					liveSync: options.liveSync ?? true,
 				});
 				steps.push(step);
 			}

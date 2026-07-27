@@ -201,7 +201,23 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.option("--retries <n>", "Retries per content source", "2")
 		.option("--retry-delay-seconds <seconds>", "Delay between retries", "120")
 		.option("--log <path>", "Audit JSONL path")
+		.option(
+			"--since <iso>",
+			"Backfill: explicit window start (overrides the period's normal now-relative window)",
+		)
+		.option("--until <iso>", "Backfill: explicit window end")
+		.option(
+			"--run-date <yyyy-mm-dd>",
+			"Backfill: archive folder date (defaults to today)",
+		)
+		.option(
+			"--no-live-sync",
+			"Skip live X sync; summarize only what's already stored locally (for backfilling historical windows)",
+		)
 		.action(async (options) => {
+			const runDate = options.runDate
+				? new Date(`${options.runDate}T00:00:00`)
+				: undefined;
 			const result = await runDigestArchiveJob({
 				period: parsePeriod(options.period),
 				account: options.account,
@@ -211,6 +227,10 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				retries: Number(options.retries),
 				retryDelayMs: Number(options.retryDelaySeconds) * 1000,
 				logPath: options.log,
+				since: options.since,
+				until: options.until,
+				liveSync: Boolean(options.liveSync),
+				...(runDate ? { now: () => runDate } : {}),
 			});
 			print(result, true);
 			if (!result.ok) process.exitCode = 1;
