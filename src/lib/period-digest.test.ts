@@ -255,6 +255,36 @@ describe("period digest", () => {
 			});
 			expect(new Set([allKey, followingKey, forYouKey]).size).toBe(3);
 		});
+
+		it("gives the richest content source the biggest output token budget", () => {
+			// "all" merges every source (home + mentions + authored + likes +
+			// bookmarks + dms + links), so it has the most to cite in the
+			// trailing JSON and is the most likely to hit a fixed output-token
+			// ceiling mid-report; "for_you" only ever covers one narrow slice.
+			const all = collectPeriodDigestContext(window);
+			const following = collectPeriodDigestContext({
+				...window,
+				contentSource: "following",
+			});
+			const forYou = collectPeriodDigestContext({
+				...window,
+				contentSource: "for_you",
+			});
+
+			const allBudget = __test__.createOpenAIRequestBody(
+				all,
+				{},
+			).max_output_tokens;
+			const followingBudget = __test__.createOpenAIRequestBody(following, {
+				contentSource: "following",
+			}).max_output_tokens;
+			const forYouBudget = __test__.createOpenAIRequestBody(forYou, {
+				contentSource: "for_you",
+			}).max_output_tokens;
+
+			expect(allBudget).toBeGreaterThan(followingBudget);
+			expect(followingBudget).toBeGreaterThan(forYouBudget);
+		});
 	});
 
 	it("keeps fitting tweets in the prompt dataset", () => {
