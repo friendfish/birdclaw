@@ -7,6 +7,7 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { autoSyncStorageKey } from "#/lib/auto-sync-keys";
 import { setStoredAccountId } from "./account-selection";
 import { SyncNowButton } from "./SyncNowButton";
 
@@ -927,6 +928,75 @@ describe("SyncNowButton", () => {
 
 		expect(onSynced).not.toHaveBeenCalled();
 		expect(screen.queryByText(/Last auto sync/)).toBeNull();
+	});
+
+	it("writes dms auto sync settings under the account-agnostic key GlobalBackgroundSync reads, regardless of selected account", () => {
+		// dms is not account-aware (there's only ever one inbox), so
+		// GlobalBackgroundSync always checks the "default"-suffixed key. If
+		// SyncNowButton derived its storage key from whichever account happens
+		// to be selected, toggling auto sync here would write to a key the
+		// driver never reads, and auto sync would silently never fire.
+		setStoredAccountId("acct_studio");
+		const accounts = [
+			{
+				id: "acct_primary",
+				name: "Primary",
+				handle: "@primary",
+				transport: "xurl" as const,
+				isDefault: 1,
+				createdAt: "2026-05-15T12:00:00.000Z",
+			},
+			{
+				id: "acct_studio",
+				name: "Studio",
+				handle: "@studio",
+				transport: "xurl" as const,
+				isDefault: 0,
+				createdAt: "2026-05-15T12:00:00.000Z",
+			},
+		];
+
+		render(
+			<SyncNowButton
+				accounts={accounts}
+				allowAutoSync
+				kind="dms"
+				label="Sync DMs"
+				onSynced={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("checkbox", { name: "Auto sync dms" }));
+		fireEvent.change(
+			screen.getByRole("combobox", { name: "Sync DMs auto-sync interval" }),
+			{ target: { value: String(5 * 60_000) } },
+		);
+
+		const driverKey = autoSyncStorageKey("dms", undefined, undefined);
+		const stored = JSON.parse(window.localStorage.getItem(driverKey) ?? "null");
+		expect(stored).toEqual({ enabled: true, intervalMs: 5 * 60_000 });
+
+		// And the button must listen for the driver's events under that same
+		// account-agnostic identity, not under the currently-selected account.
+		act(() => {
+			window.dispatchEvent(
+				new CustomEvent("birdclaw:auto-sync-completed", {
+					detail: {
+						kind: "dms",
+						accountId: "default",
+						scope: undefined,
+						timestamp: Date.now(),
+						summary: "Synced 3 messages",
+						result: {
+							ok: true,
+							kind: "dms",
+							summary: "Synced 3 messages",
+							steps: [],
+						},
+					},
+				}),
+			);
+		});
+		expect(screen.getByText(/Last auto sync/)).toBeInTheDocument();
 	});
 
 	it("restores per-kind auto sync settings after remount", () => {

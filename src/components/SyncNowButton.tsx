@@ -10,6 +10,7 @@ import {
 	AUTO_SYNC_INTERVALS,
 	autoSyncStorageKey,
 	DEFAULT_AUTO_SYNC_INTERVAL_MS,
+	isAccountAwareSyncKind,
 	lastSyncStorageKey,
 	readAutoSyncSettings,
 	type StoredAutoSyncSettings,
@@ -78,29 +79,39 @@ export function SyncNowButton({
 		[accounts],
 	);
 	const accountId = globalAccountId ?? defaultAccountId;
+	const accountAwareSync = isAccountAwareSyncKind(kind);
+	// Storage keys must agree with GlobalBackgroundSync's key derivation for
+	// non-account-aware kinds (currently just dms), which always checks the
+	// "default" suffix regardless of which account happens to be selected —
+	// otherwise settings toggled here would be written under a key the
+	// driver never reads.
+	const syncAccountId = accountAwareSync ? accountId : undefined;
 	const [lastAutoSyncedAt, setLastAutoSyncedAtState] = useState<number | null>(
 		null,
 	);
 	const setLastAutoSyncedAt = useCallback(
 		(timestamp: number | null) => {
 			setLastAutoSyncedAtState(timestamp);
-			const lastSyncKey = lastSyncStorageKey(kind, accountId, autoSyncScope);
+			const lastSyncKey = lastSyncStorageKey(
+				kind,
+				syncAccountId,
+				autoSyncScope,
+			);
 			if (timestamp === null) {
 				window.localStorage.removeItem(lastSyncKey);
 			} else {
 				window.localStorage.setItem(lastSyncKey, String(timestamp));
 			}
 		},
-		[kind, accountId, autoSyncScope],
+		[kind, syncAccountId, autoSyncScope],
 	);
-	const autoSyncKey = autoSyncStorageKey(kind, accountId, autoSyncScope);
+	const autoSyncKey = autoSyncStorageKey(kind, syncAccountId, autoSyncScope);
 	const [autoSettings, setAutoSettings] = useState<AutoSyncSettings>({
 		key: "",
 		enabled: false,
 		intervalMs: DEFAULT_AUTO_SYNC_INTERVAL_MS,
 	});
 	const autoSettingsReady = autoSettings.key === autoSyncKey;
-	const accountAwareSync = kind !== "dms";
 	const waitingForAccount =
 		accountAwareSync &&
 		accounts === undefined &&
@@ -136,13 +147,13 @@ export function SyncNowButton({
 		setAutoSyncError(null);
 		setAutoSyncing(false);
 
-		const lastSyncKey = lastSyncStorageKey(kind, accountId, autoSyncScope);
+		const lastSyncKey = lastSyncStorageKey(kind, syncAccountId, autoSyncScope);
 		const storedLastSync = window.localStorage.getItem(lastSyncKey);
 		const lastSynced = storedLastSync ? Number(storedLastSync) : null;
 		setLastAutoSyncedAtState(
 			lastSynced && !isNaN(lastSynced) ? lastSynced : null,
 		);
-	}, [autoSyncKey, kind, accountId, autoSyncScope]);
+	}, [autoSyncKey, kind, syncAccountId, autoSyncScope]);
 
 	function selectAccount(accountId: string) {
 		setStoredAccountId(accountId);
@@ -157,11 +168,7 @@ export function SyncNowButton({
 		setError(null);
 		setMessage(null);
 		try {
-			const data = await postSync(
-				kind,
-				accountAwareSync ? accountId : undefined,
-				syncOptions,
-			);
+			const data = await postSync(kind, syncAccountId, syncOptions);
 			if (!data.ok) throw new Error(data.summary);
 			setLastAutoSyncedAt(Date.now());
 			setMessage(data.summary);
@@ -177,10 +184,9 @@ export function SyncNowButton({
 			setSyncing(false);
 		}
 	}, [
-		accountAwareSync,
-		accountId,
 		birdOnlyWrongAccount,
 		kind,
+		syncAccountId,
 		syncOptions,
 		waitingForAccount,
 	]);
@@ -189,7 +195,7 @@ export function SyncNowButton({
 	// only reflects its progress by listening for the events it dispatches.
 	useEffect(() => {
 		if (!allowAutoSync) return;
-		const expectedAccountId = accountId ?? "default";
+		const expectedAccountId = syncAccountId ?? "default";
 		const matches = (detail: AutoSyncEventDetail) =>
 			detail.kind === kind &&
 			detail.accountId === expectedAccountId &&
@@ -224,7 +230,7 @@ export function SyncNowButton({
 			window.removeEventListener("birdclaw:auto-sync-completed", onCompleted);
 			window.removeEventListener("birdclaw:auto-sync-failed", onFailed);
 		};
-	}, [allowAutoSync, kind, accountId, autoSyncScope, setLastAutoSyncedAt]);
+	}, [allowAutoSync, kind, syncAccountId, autoSyncScope, setLastAutoSyncedAt]);
 
 	function updateAutoSettings(next: StoredAutoSyncSettings) {
 		const settings = { key: autoSyncKey, ...next };

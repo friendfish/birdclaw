@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	autoSyncStorageKey,
+	isAccountAwareSyncKind,
 	lastSyncStorageKey,
 	MAX_AUTO_SYNC_BACKOFF_MS,
 	readAutoSyncSettings,
@@ -49,6 +50,19 @@ export function GlobalBackgroundSync() {
 		queryFn: ({ signal }) => fetchQueryEnvelope({ signal }),
 	});
 	const accounts = statusQuery.data?.accounts ?? [];
+	// A successful sync invalidates queryKeys.status to keep account state
+	// fresh, which gives `accounts` a new array reference on every refetch
+	// even when its content is unchanged. The polling effect below only
+	// needs to re-arm when the actual account composition changes, so it
+	// depends on this stable derived key instead of the array reference —
+	// otherwise every successful sync would tear down and restart the
+	// interval/initial-check timers, cascading into far more than one check
+	// per 10s whenever multiple kinds/scopes are enabled.
+	const accountsKey = useMemo(
+		() =>
+			accounts.map((account) => `${account.id}:${account.isDefault}`).join(","),
+		[accounts],
+	);
 	const syncingRef = useRef<Record<string, boolean>>({});
 	const failureCountRef = useRef<Record<string, number>>({});
 	// Backoff is measured from the last *attempt* (success or failure), not
@@ -67,8 +81,14 @@ export function GlobalBackgroundSync() {
 			const suffixes = ["default", ...accounts.map((a) => a.id)];
 
 			for (const kind of SYNC_KINDS) {
-				// dms is not account-aware: only ever synced once, under "default".
-				const kindSuffixes = kind === "dms" ? ["default"] : suffixes;
+				// Non-account-aware kinds (currently just dms) only ever have one,
+				// global auto-sync setting — check "default" once instead of once
+				// per real account. Must stay derived from the same predicate
+				// SyncNowButton uses so the two sides can't read/write different
+				// storage keys for the same logical setting.
+				const kindSuffixes = isAccountAwareSyncKind(kind)
+					? suffixes
+					: ["default"];
 				for (const scope of KIND_SCOPES[kind] ?? [undefined]) {
 					for (const suffix of kindSuffixes) {
 						const actualAccountId = suffix === "default" ? undefined : suffix;
@@ -193,7 +213,9 @@ export function GlobalBackgroundSync() {
 			window.clearInterval(timer);
 			window.clearTimeout(initialTimer);
 		};
-	}, [accounts, queryClient]);
+		// Intentionally keyed off accountsKey (stable content), not accounts
+		// (identity) — see the comment above accountsKey.
+	}, [accountsKey, queryClient]);
 
 	return null;
 }

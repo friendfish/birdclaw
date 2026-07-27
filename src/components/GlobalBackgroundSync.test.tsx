@@ -1,3 +1,4 @@
+import { QueryClient } from "@tanstack/react-query";
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -175,6 +176,39 @@ describe("GlobalBackgroundSync", () => {
 		expect(invalidateSpy).toHaveBeenCalledWith(
 			expect.objectContaining({ queryKey: queryKeys.timelines }),
 		);
+	});
+
+	it("does not re-arm the polling interval when the accounts query result is content-equal but a new reference", async () => {
+		// In production, TanStack Query's default structural sharing already
+		// keeps `accounts` referentially stable across a refetch that returns
+		// the same content (e.g. the /api/status refetch a successful sync's
+		// own queryKeys.status invalidation triggers) — so this scenario
+		// doesn't arise via the normal fetch/invalidate path today. This test
+		// disables structural sharing to construct the adversarial case
+		// directly (a genuinely new array reference, same content) and
+		// confirms the effect still doesn't tear down and recreate the
+		// interval/initial-check timers, since it depends on the derived
+		// accountsKey rather than the accounts array's identity.
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { gcTime: Infinity, retry: false, structuralSharing: false },
+			},
+		});
+		queryClient.setQueryData(queryKeys.status, statusEnvelope());
+		const setIntervalSpy = vi.spyOn(window, "setInterval");
+
+		render(<GlobalBackgroundSync />, { queryClient });
+		expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+
+		await act(async () => {
+			// Same content as the initial data, but setQueryData with
+			// structuralSharing disabled guarantees a brand-new array/object
+			// reference for `accounts`.
+			queryClient.setQueryData(queryKeys.status, statusEnvelope());
+			await vi.advanceTimersByTimeAsync(0);
+		});
+
+		expect(setIntervalSpy).toHaveBeenCalledTimes(1);
 	});
 
 	it("invalidates the dms cache (not timelines) for dms syncs", async () => {
