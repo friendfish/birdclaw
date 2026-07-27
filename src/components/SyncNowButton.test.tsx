@@ -749,30 +749,8 @@ describe("SyncNowButton", () => {
 		expect(await screen.findByText("Sync already running")).toBeInTheDocument();
 	});
 
-	it("runs opt-in auto sync on the selected interval and reschedules", async () => {
-		vi.useFakeTimers();
+	it("reflects auto sync progress dispatched by GlobalBackgroundSync", async () => {
 		const onSynced = vi.fn();
-		const fetchMock = vi.fn(
-			async () =>
-				new Response(
-					JSON.stringify({
-						id: "sync_timeline_auto",
-						kind: "timeline",
-						status: "succeeded",
-						startedAt: "2026-05-15T12:00:00.000Z",
-						summary: "Auto synced 6 items",
-						inProgress: false,
-						result: {
-							ok: true,
-							kind: "timeline",
-							summary: "Auto synced 6 items",
-							steps: [],
-						},
-					}),
-				),
-		);
-		vi.stubGlobal("fetch", fetchMock);
-
 		render(
 			<SyncNowButton
 				allowAutoSync
@@ -781,38 +759,44 @@ describe("SyncNowButton", () => {
 				onSynced={onSynced}
 			/>,
 		);
-
 		fireEvent.click(
 			screen.getByRole("checkbox", { name: "Auto sync timeline" }),
 		);
-		fireEvent.change(
-			screen.getByRole("combobox", {
-				name: "Sync timeline auto-sync interval",
-			}),
-			{ target: { value: String(5 * 60_000) } },
-		);
 
-		await act(async () => vi.advanceTimersByTimeAsync(5 * 60_000));
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-		expect(onSynced).toHaveBeenCalledTimes(1);
+		act(() => {
+			window.dispatchEvent(
+				new CustomEvent("birdclaw:auto-sync-started", {
+					detail: { kind: "timeline", accountId: "default", scope: undefined },
+				}),
+			);
+		});
+		expect(screen.getByText("Auto syncing...")).toBeInTheDocument();
+
+		const result = {
+			ok: true,
+			kind: "timeline" as const,
+			summary: "Auto synced 6 items",
+			steps: [],
+		};
+		act(() => {
+			window.dispatchEvent(
+				new CustomEvent("birdclaw:auto-sync-completed", {
+					detail: {
+						kind: "timeline",
+						accountId: "default",
+						scope: undefined,
+						timestamp: Date.now(),
+						summary: "Auto synced 6 items",
+						result,
+					},
+				}),
+			);
+		});
+		expect(onSynced).toHaveBeenCalledWith(result);
 		expect(screen.getByText(/Last auto sync/)).toBeInTheDocument();
-
-		await act(async () => vi.advanceTimersByTimeAsync(5 * 60_000));
-		expect(fetchMock).toHaveBeenCalledTimes(2);
-		expect(onSynced).toHaveBeenCalledTimes(2);
 	});
 
-	it("does not overlap auto sync runs", async () => {
-		vi.useFakeTimers();
-		let finishRequest: ((response: Response) => void) | undefined;
-		const fetchMock = vi.fn(
-			async () =>
-				await new Promise<Response>((resolve) => {
-					finishRequest = resolve;
-				}),
-		);
-		vi.stubGlobal("fetch", fetchMock);
-
+	it("reflects auto sync failures dispatched by GlobalBackgroundSync", () => {
 		render(
 			<SyncNowButton
 				allowAutoSync
@@ -824,52 +808,66 @@ describe("SyncNowButton", () => {
 		fireEvent.click(
 			screen.getByRole("checkbox", { name: "Auto sync timeline" }),
 		);
-		fireEvent.change(
-			screen.getByRole("combobox", {
-				name: "Sync timeline auto-sync interval",
-			}),
-			{ target: { value: String(5 * 60_000) } },
+
+		act(() => {
+			window.dispatchEvent(
+				new CustomEvent("birdclaw:auto-sync-failed", {
+					detail: {
+						kind: "timeline",
+						accountId: "default",
+						scope: undefined,
+						error: "Rate limited",
+					},
+				}),
+			);
+		});
+
+		expect(
+			screen.getByText("Auto sync failed: Rate limited"),
+		).toBeInTheDocument();
+	});
+
+	it("ignores auto sync events for a different feed scope", () => {
+		const onSynced = vi.fn();
+		render(
+			<SyncNowButton
+				allowAutoSync
+				autoSyncScope="following"
+				kind="timeline"
+				label="Sync Following"
+				onSynced={onSynced}
+			/>,
+		);
+		fireEvent.click(
+			screen.getByRole("checkbox", { name: "Auto sync timeline" }),
 		);
 
-		await act(async () => vi.advanceTimersByTimeAsync(5 * 60_000));
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-		await act(async () => vi.advanceTimersByTimeAsync(15 * 60_000));
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-
-		await act(async () => {
-			finishRequest?.(
-				new Response(
-					JSON.stringify({
-						id: "sync_timeline_auto_slow",
+		act(() => {
+			window.dispatchEvent(
+				new CustomEvent("birdclaw:auto-sync-completed", {
+					detail: {
 						kind: "timeline",
-						status: "succeeded",
-						startedAt: "2026-05-15T12:00:00.000Z",
-						summary: "Auto sync complete",
-						inProgress: false,
+						accountId: "default",
+						scope: "for_you",
+						timestamp: Date.now(),
+						summary: "For You synced",
 						result: {
 							ok: true,
 							kind: "timeline",
-							summary: "Auto sync complete",
+							summary: "For You synced",
 							steps: [],
 						},
-					}),
-				),
+					},
+				}),
 			);
-			await Promise.resolve();
 		});
+
+		expect(onSynced).not.toHaveBeenCalled();
+		expect(screen.queryByText(/Last auto sync/)).toBeNull();
 	});
 
-	it("ignores an auto sync completion after the selected account changes", async () => {
-		vi.useFakeTimers();
+	it("ignores auto sync events for a stale selected account", () => {
 		setStoredAccountId("acct_primary");
-		let finishRequest: ((response: Response) => void) | undefined;
-		const fetchMock = vi.fn(
-			async () =>
-				await new Promise<Response>((resolve) => {
-					finishRequest = resolve;
-				}),
-		);
-		vi.stubGlobal("fetch", fetchMock);
 		const onSynced = vi.fn();
 		const accounts = [
 			{
@@ -903,31 +901,18 @@ describe("SyncNowButton", () => {
 		fireEvent.click(
 			screen.getByRole("checkbox", { name: "Auto sync timeline" }),
 		);
-		fireEvent.change(
-			screen.getByRole("combobox", {
-				name: "Sync timeline auto-sync interval",
-			}),
-			{ target: { value: String(5 * 60_000) } },
-		);
-		await act(async () => vi.advanceTimersByTimeAsync(5 * 60_000));
-		expect(fetchMock).toHaveBeenCalledTimes(1);
 
 		act(() => setStoredAccountId("acct_studio"));
-		expect(
-			screen.getByRole("checkbox", { name: "Auto sync timeline" }),
-		).not.toBeChecked();
 
-		await act(async () => {
-			finishRequest?.(
-				new Response(
-					JSON.stringify({
-						id: "sync_timeline_stale_account",
+		act(() => {
+			window.dispatchEvent(
+				new CustomEvent("birdclaw:auto-sync-completed", {
+					detail: {
 						kind: "timeline",
 						accountId: "acct_primary",
-						status: "succeeded",
-						startedAt: "2026-05-15T12:00:00.000Z",
+						scope: undefined,
+						timestamp: Date.now(),
 						summary: "Primary account synced",
-						inProgress: false,
 						result: {
 							ok: true,
 							kind: "timeline",
@@ -935,87 +920,13 @@ describe("SyncNowButton", () => {
 							summary: "Primary account synced",
 							steps: [],
 						},
-					}),
-				),
+					},
+				}),
 			);
-			await Promise.resolve();
 		});
 
 		expect(onSynced).not.toHaveBeenCalled();
-		expect(screen.getByText("Auto sync off")).toBeInTheDocument();
 		expect(screen.queryByText(/Last auto sync/)).toBeNull();
-	});
-
-	it("backs off after auto sync failures", async () => {
-		vi.useFakeTimers();
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						id: "sync_timeline_auto_failed",
-						kind: "timeline",
-						status: "failed",
-						startedAt: "2026-05-15T12:00:00.000Z",
-						summary: "Rate limited",
-						inProgress: false,
-						result: {
-							ok: false,
-							kind: "timeline",
-							summary: "Rate limited",
-							error: "Rate limited",
-							steps: [],
-						},
-					}),
-				),
-			)
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						id: "sync_timeline_auto_recovered",
-						kind: "timeline",
-						status: "succeeded",
-						startedAt: "2026-05-15T12:10:00.000Z",
-						summary: "Recovered",
-						inProgress: false,
-						result: {
-							ok: true,
-							kind: "timeline",
-							summary: "Recovered",
-							steps: [],
-						},
-					}),
-				),
-			);
-		vi.stubGlobal("fetch", fetchMock);
-
-		render(
-			<SyncNowButton
-				allowAutoSync
-				kind="timeline"
-				label="Sync timeline"
-				onSynced={vi.fn()}
-			/>,
-		);
-		fireEvent.click(
-			screen.getByRole("checkbox", { name: "Auto sync timeline" }),
-		);
-		fireEvent.change(
-			screen.getByRole("combobox", {
-				name: "Sync timeline auto-sync interval",
-			}),
-			{ target: { value: String(5 * 60_000) } },
-		);
-
-		await act(async () => vi.advanceTimersByTimeAsync(5 * 60_000));
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-		expect(
-			screen.getByText("Auto sync failed: Rate limited"),
-		).toBeInTheDocument();
-		await act(async () => vi.advanceTimersByTimeAsync(10 * 60_000 - 1));
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-		await act(async () => vi.advanceTimersByTimeAsync(1));
-		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
 	it("restores per-kind auto sync settings after remount", () => {

@@ -105,7 +105,6 @@ export function TimelineRouteFrame({
 						<SyncNowButton
 							accounts={meta?.accounts}
 							allowAutoSync
-							autoSyncBlocked={loading}
 							autoSyncScope={autoSyncScope}
 							kind={syncKind}
 							label={syncLabel}

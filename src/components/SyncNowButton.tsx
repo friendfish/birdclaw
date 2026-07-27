@@ -1,6 +1,19 @@
 import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+	AutoSyncCompletedDetail,
+	AutoSyncEventDetail,
+	AutoSyncFailedDetail,
+} from "#/components/GlobalBackgroundSync";
 import { postSync } from "#/lib/api-client";
+import {
+	AUTO_SYNC_INTERVALS,
+	autoSyncStorageKey,
+	DEFAULT_AUTO_SYNC_INTERVAL_MS,
+	lastSyncStorageKey,
+	readAutoSyncSettings,
+	type StoredAutoSyncSettings,
+} from "#/lib/auto-sync-keys";
 import type { AccountRecord } from "#/lib/types";
 import { cx, selectFieldClass } from "#/lib/ui";
 import type {
@@ -20,7 +33,6 @@ interface SyncNowButtonProps {
 	accounts?: AccountRecord[];
 	onSynced: (result: WebSyncResponse) => void;
 	allowAutoSync?: boolean;
-	autoSyncBlocked?: boolean;
 	showAccountPicker?: boolean;
 	syncOptions?: WebSyncOptions;
 	// Distinguishes independent auto-sync state (enabled flag, interval,
@@ -37,62 +49,8 @@ interface SyncNowButtonProps {
 	requiresDefaultAccount?: boolean;
 }
 
-const AUTO_SYNC_INTERVALS = [
-	{ label: "5m", value: 5 * 60_000 },
-	{ label: "10m", value: 10 * 60_000 },
-	{ label: "15m", value: 15 * 60_000 },
-	{ label: "30m", value: 30 * 60_000 },
-	{ label: "1h", value: 60 * 60_000 },
-] as const;
-const DEFAULT_AUTO_SYNC_INTERVAL_MS = 10 * 60_000;
-const MAX_AUTO_SYNC_BACKOFF_MS = 60 * 60_000;
-
-interface StoredAutoSyncSettings {
-	enabled: boolean;
-	intervalMs: number;
-}
-
 interface AutoSyncSettings extends StoredAutoSyncSettings {
 	key: string;
-}
-
-function autoSyncStorageKey(
-	kind: WebSyncKind,
-	accountId: string | undefined,
-	scope: string | undefined,
-) {
-	const suffix = scope ? `:${scope}` : "";
-	return `birdclaw:auto-sync:${kind}:${accountId ?? "default"}${suffix}`;
-}
-
-function lastSyncStorageKey(
-	kind: WebSyncKind,
-	accountId: string | undefined,
-	scope: string | undefined,
-) {
-	const suffix = scope ? `:${scope}` : "";
-	return `birdclaw:last-sync-at:${kind}:${accountId ?? "default"}${suffix}`;
-}
-
-function validAutoSyncInterval(value: unknown): value is number {
-	return AUTO_SYNC_INTERVALS.some((option) => option.value === value);
-}
-
-function readAutoSyncSettings(key: string): StoredAutoSyncSettings {
-	try {
-		const value = JSON.parse(window.localStorage.getItem(key) ?? "null") as {
-			enabled?: unknown;
-			intervalMs?: unknown;
-		} | null;
-		return {
-			enabled: value?.enabled === true,
-			intervalMs: validAutoSyncInterval(value?.intervalMs)
-				? value.intervalMs
-				: DEFAULT_AUTO_SYNC_INTERVAL_MS,
-		};
-	} catch {
-		return { enabled: false, intervalMs: DEFAULT_AUTO_SYNC_INTERVAL_MS };
-	}
 }
 
 export function SyncNowButton({
@@ -101,7 +59,6 @@ export function SyncNowButton({
 	accounts,
 	onSynced,
 	allowAutoSync = false,
-	autoSyncBlocked = false,
 	showAccountPicker = false,
 	syncOptions,
 	autoSyncScope,
@@ -114,8 +71,6 @@ export function SyncNowButton({
 	const onSyncedRef = useRef(onSynced);
 	const [autoSyncing, setAutoSyncing] = useState(false);
 	const [autoSyncError, setAutoSyncError] = useState<string | null>(null);
-	const [autoFailureCount, setAutoFailureCount] = useState(0);
-	const [autoCycle, setAutoCycle] = useState(0);
 	const accountList = accounts ?? [];
 	const globalAccountId = useSelectedAccountId(accounts);
 	const defaultAccountId = useMemo(
@@ -138,10 +93,7 @@ export function SyncNowButton({
 		},
 		[kind, accountId, autoSyncScope],
 	);
-	const [nextAutoSyncAt, setNextAutoSyncAt] = useState<number | null>(null);
 	const autoSyncKey = autoSyncStorageKey(kind, accountId, autoSyncScope);
-	const autoSyncKeyRef = useRef(autoSyncKey);
-	autoSyncKeyRef.current = autoSyncKey;
 	const [autoSettings, setAutoSettings] = useState<AutoSyncSettings>({
 		key: "",
 		enabled: false,
@@ -170,11 +122,9 @@ export function SyncNowButton({
 			? "Auto syncing..."
 			: lastAutoSyncedAt
 				? `Last auto sync ${new Date(lastAutoSyncedAt).toLocaleTimeString()}`
-				: nextAutoSyncAt
-					? `Next sync ${new Date(nextAutoSyncAt).toLocaleTimeString()}`
-					: autoSettings.enabled
-						? "Auto sync waiting"
-						: "Auto sync off";
+				: autoSettings.enabled
+					? "Auto sync waiting"
+					: "Auto sync off";
 
 	useEffect(() => {
 		onSyncedRef.current = onSynced;
@@ -185,7 +135,6 @@ export function SyncNowButton({
 		setAutoSettings({ key: autoSyncKey, ...stored });
 		setAutoSyncError(null);
 		setAutoSyncing(false);
-		setAutoFailureCount(0);
 
 		const lastSyncKey = lastSyncStorageKey(kind, accountId, autoSyncScope);
 		const storedLastSync = window.localStorage.getItem(lastSyncKey);
@@ -193,189 +142,89 @@ export function SyncNowButton({
 		setLastAutoSyncedAtState(
 			lastSynced && !isNaN(lastSynced) ? lastSynced : null,
 		);
-
-		setNextAutoSyncAt(null);
-		setAutoCycle((current) => current + 1);
 	}, [autoSyncKey, kind, accountId, autoSyncScope]);
 
 	function selectAccount(accountId: string) {
 		setStoredAccountId(accountId);
 	}
 
-	const syncNow = useCallback(
-		async (source: "manual" | "auto"): Promise<boolean> => {
-			if (
-				syncingRef.current ||
-				waitingForAccount ||
-				birdOnlyWrongAccount ||
-				(source === "auto" && autoSyncBlocked)
-			) {
-				return false;
-			}
-			const launchedAutoSyncKey =
-				source === "auto" ? autoSyncKeyRef.current : null;
-			syncingRef.current = true;
-			setSyncing(true);
-			if (source === "auto") {
-				setAutoSyncing(true);
-				setAutoSyncError(null);
-			} else {
-				setError(null);
-				setMessage(null);
-			}
-			try {
-				const data = await postSync(
-					kind,
-					accountAwareSync ? accountId : undefined,
-					syncOptions,
-				);
-				if (!data.ok) throw new Error(data.summary);
-				if (
-					launchedAutoSyncKey !== null &&
-					autoSyncKeyRef.current !== launchedAutoSyncKey
-				) {
-					return false;
-				}
-				setLastAutoSyncedAt(Date.now());
-				if (source === "auto") {
-					setAutoFailureCount(0);
-				} else {
-					setMessage(data.summary);
-				}
-				onSyncedRef.current(data);
-				return true;
-			} catch (syncError) {
-				if (
-					launchedAutoSyncKey !== null &&
-					autoSyncKeyRef.current !== launchedAutoSyncKey
-				) {
-					return false;
-				}
-				const syncMessage =
-					syncError instanceof Error ? syncError.message : "Sync failed";
-				if (source === "auto") {
-					setAutoSyncError(syncMessage);
-					setAutoFailureCount((current) => current + 1);
-				} else {
-					setError(syncMessage);
-				}
-				return false;
-			} finally {
-				syncingRef.current = false;
-				setSyncing(false);
-				if (source === "auto") setAutoSyncing(false);
-			}
-		},
-		[
-			accountAwareSync,
-			accountId,
-			autoSyncBlocked,
-			birdOnlyWrongAccount,
-			kind,
-			syncOptions,
-			waitingForAccount,
-		],
-	);
+	const syncNow = useCallback(async (): Promise<boolean> => {
+		if (syncingRef.current || waitingForAccount || birdOnlyWrongAccount) {
+			return false;
+		}
+		syncingRef.current = true;
+		setSyncing(true);
+		setError(null);
+		setMessage(null);
+		try {
+			const data = await postSync(
+				kind,
+				accountAwareSync ? accountId : undefined,
+				syncOptions,
+			);
+			if (!data.ok) throw new Error(data.summary);
+			setLastAutoSyncedAt(Date.now());
+			setMessage(data.summary);
+			onSyncedRef.current(data);
+			return true;
+		} catch (syncError) {
+			const syncMessage =
+				syncError instanceof Error ? syncError.message : "Sync failed";
+			setError(syncMessage);
+			return false;
+		} finally {
+			syncingRef.current = false;
+			setSyncing(false);
+		}
+	}, [
+		accountAwareSync,
+		accountId,
+		birdOnlyWrongAccount,
+		kind,
+		syncOptions,
+		waitingForAccount,
+	]);
 
-	// Listen to visibility changes to trigger immediate checks when returning to the tab
+	// GlobalBackgroundSync is the sole executor of auto-sync; this component
+	// only reflects its progress by listening for the events it dispatches.
 	useEffect(() => {
-		const handleVisibilityChange = () => {
-			if (document.visibilityState === "visible") {
-				setAutoCycle((current) => current + 1);
-			}
+		if (!allowAutoSync) return;
+		const expectedAccountId = accountId ?? "default";
+		const matches = (detail: AutoSyncEventDetail) =>
+			detail.kind === kind &&
+			detail.accountId === expectedAccountId &&
+			detail.scope === autoSyncScope;
+
+		const onStarted = (event: Event) => {
+			const detail = (event as CustomEvent<AutoSyncEventDetail>).detail;
+			if (!matches(detail)) return;
+			setAutoSyncing(true);
+			setAutoSyncError(null);
 		};
-		document.addEventListener("visibilitychange", handleVisibilityChange);
+		const onCompleted = (event: Event) => {
+			const detail = (event as CustomEvent<AutoSyncCompletedDetail>).detail;
+			if (!matches(detail)) return;
+			setAutoSyncing(false);
+			setAutoSyncError(null);
+			setLastAutoSyncedAt(detail.timestamp);
+			onSyncedRef.current(detail.result);
+		};
+		const onFailed = (event: Event) => {
+			const detail = (event as CustomEvent<AutoSyncFailedDetail>).detail;
+			if (!matches(detail)) return;
+			setAutoSyncing(false);
+			setAutoSyncError(detail.error);
+		};
+
+		window.addEventListener("birdclaw:auto-sync-started", onStarted);
+		window.addEventListener("birdclaw:auto-sync-completed", onCompleted);
+		window.addEventListener("birdclaw:auto-sync-failed", onFailed);
 		return () => {
-			document.removeEventListener("visibilitychange", handleVisibilityChange);
+			window.removeEventListener("birdclaw:auto-sync-started", onStarted);
+			window.removeEventListener("birdclaw:auto-sync-completed", onCompleted);
+			window.removeEventListener("birdclaw:auto-sync-failed", onFailed);
 		};
-	}, []);
-
-	// Effect 1: Determine and persist the next scheduled auto-sync timestamp
-	useEffect(() => {
-		if (
-			!allowAutoSync ||
-			!autoSettingsReady ||
-			!autoSettings.enabled ||
-			waitingForAccount ||
-			birdOnlyWrongAccount
-		) {
-			setNextAutoSyncAt(null);
-			return;
-		}
-
-		const delayMs = Math.min(
-			autoSettings.intervalMs * 2 ** autoFailureCount,
-			MAX_AUTO_SYNC_BACKOFF_MS,
-		);
-
-		const baseTime = lastAutoSyncedAt ?? Date.now();
-		setNextAutoSyncAt(baseTime + delayMs);
-	}, [
-		allowAutoSync,
-		autoSettingsReady,
-		autoSettings.enabled,
-		autoSettings.intervalMs,
-		autoFailureCount,
-		lastAutoSyncedAt,
-		waitingForAccount,
-		birdOnlyWrongAccount,
-	]);
-
-	// Effect 2: Manage the execution timer based on the persistent nextAutoSyncAt
-	useEffect(() => {
-		if (
-			!allowAutoSync ||
-			!autoSettingsReady ||
-			!autoSettings.enabled ||
-			nextAutoSyncAt === null ||
-			autoSyncBlocked ||
-			waitingForAccount ||
-			birdOnlyWrongAccount
-		) {
-			return;
-		}
-
-		const delayMs = nextAutoSyncAt - Date.now();
-
-		// If scheduled sync is already in the past, trigger it immediately or wait if hidden
-		if (delayMs <= 0) {
-			if (document.visibilityState === "visible" && !syncingRef.current) {
-				void syncNow("auto").finally(() => {
-					setAutoCycle((current) => current + 1);
-				});
-			} else {
-				// If hidden, retry periodically in 5 seconds to catch visibility transition
-				const timer = window.setTimeout(() => {
-					setAutoCycle((current) => current + 1);
-				}, 5000);
-				return () => window.clearTimeout(timer);
-			}
-			return;
-		}
-
-		// Schedule the timer for the remaining duration
-		const timer = window.setTimeout(() => {
-			if (document.visibilityState === "hidden" || syncingRef.current) {
-				setAutoCycle((current) => current + 1);
-				return;
-			}
-			void syncNow("auto").finally(() => {
-				setAutoCycle((current) => current + 1);
-			});
-		}, delayMs);
-
-		return () => window.clearTimeout(timer);
-	}, [
-		allowAutoSync,
-		autoCycle,
-		autoSettings.enabled,
-		autoSettingsReady,
-		autoSyncBlocked,
-		birdOnlyWrongAccount,
-		nextAutoSyncAt,
-		syncNow,
-		waitingForAccount,
-	]);
+	}, [allowAutoSync, kind, accountId, autoSyncScope, setLastAutoSyncedAt]);
 
 	function updateAutoSettings(next: StoredAutoSyncSettings) {
 		const settings = { key: autoSyncKey, ...next };
@@ -385,9 +234,7 @@ export function SyncNowButton({
 			JSON.stringify({ enabled: next.enabled, intervalMs: next.intervalMs }),
 		);
 		setAutoSyncError(null);
-		setAutoFailureCount(0);
 		setLastAutoSyncedAt(null);
-		setAutoCycle((current) => current + 1);
 	}
 
 	return (
@@ -429,7 +276,7 @@ export function SyncNowButton({
 							: label
 				}
 				disabled={disabled}
-				onClick={() => void syncNow("manual")}
+				onClick={() => void syncNow()}
 			>
 				<RefreshCw
 					className={cx("size-4", syncing && "animate-spin")}
