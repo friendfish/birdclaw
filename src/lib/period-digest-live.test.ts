@@ -42,7 +42,7 @@ vi.mock("./timeline-live", () => ({
 		}),
 }));
 
-import { resetBirdclawPathsForTests } from "./config";
+import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import { resetDatabaseForTests } from "./db";
 import { streamPeriodDigest } from "./period-digest";
 
@@ -260,5 +260,98 @@ describe("period digest live refresh", () => {
 				},
 			]),
 		);
+	});
+
+	describe("content-source-aware timeline live sync", () => {
+		const streamed = [
+			sseFrame({
+				type: "response.output_text.delta",
+				delta:
+					'# Live\n\nFresh pass.\n\n---\n{"title":"Live","summary":"Fresh pass","keyTopics":[],"notableLinks":[],"people":[],"actionItems":[],"sourceTweetIds":[]}',
+			}),
+			"data: [DONE]\n\n",
+		].join("");
+
+		it("keeps syncing the following feed via xurl for all/following content sources", async () => {
+			vi.stubGlobal(
+				"fetch",
+				vi.fn().mockResolvedValue(streamResponse(streamed)),
+			);
+
+			await streamPeriodDigest({
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
+				refresh: true,
+				liveSync: true,
+				contentSource: "following",
+			});
+
+			expect(syncHomeTimelineMock.mock.calls[0]?.[0]).toMatchObject({
+				following: true,
+				mode: "xurl",
+			});
+		});
+
+		it("syncs the for_you feed (not following) via bird/auto, never xurl", async () => {
+			vi.stubGlobal(
+				"fetch",
+				vi.fn().mockResolvedValue(streamResponse(streamed)),
+			);
+
+			await streamPeriodDigest({
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
+				refresh: true,
+				liveSync: true,
+				contentSource: "for_you",
+			});
+
+			expect(syncHomeTimelineMock.mock.calls[0]?.[0]).toMatchObject({
+				following: false,
+				mode: "auto",
+			});
+		});
+
+		it("prefers bird explicitly for for_you when mentions.dataSource is configured as bird", async () => {
+			writeBirdclawConfig({ mentions: { dataSource: "bird" } });
+			vi.stubGlobal(
+				"fetch",
+				vi.fn().mockResolvedValue(streamResponse(streamed)),
+			);
+
+			await streamPeriodDigest({
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
+				refresh: true,
+				liveSync: true,
+				contentSource: "for_you",
+			});
+
+			expect(syncHomeTimelineMock.mock.calls[0]?.[0]).toMatchObject({
+				following: false,
+				mode: "bird",
+			});
+		});
+
+		it("respects an explicit liveSyncMode override for non-for_you content sources", async () => {
+			vi.stubGlobal(
+				"fetch",
+				vi.fn().mockResolvedValue(streamResponse(streamed)),
+			);
+
+			await streamPeriodDigest({
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
+				refresh: true,
+				liveSync: true,
+				liveSyncMode: "bird",
+				contentSource: "all",
+			});
+
+			expect(syncHomeTimelineMock.mock.calls[0]?.[0]).toMatchObject({
+				following: true,
+				mode: "bird",
+			});
+		});
 	});
 });
