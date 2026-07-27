@@ -1,0 +1,285 @@
+// @vitest-environment node
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const streamPeriodDigestMock = vi.hoisted(() => vi.fn());
+
+vi.mock("./period-digest", () => ({
+	streamPeriodDigest: (...args: unknown[]) => streamPeriodDigestMock(...args),
+}));
+
+import {
+	buildDigestArchiveLaunchAgentPlist,
+	digestArchiveLockPath,
+	listDigestArchiveDates,
+	readDigestArchiveEntry,
+	resolveDigestArchivePaths,
+	runDigestArchiveJobEffect,
+} from "./digest-archive-job";
+import { resetBirdclawPathsForTests } from "./config";
+import { runEffectPromise } from "./effect-runtime";
+
+const tempRoots: string[] = [];
+const tempArchiveDirs: string[] = [];
+
+function setupTempHome() {
+	const tempRoot = mkdtempSync(
+		path.join(os.tmpdir(), "birdclaw-digest-archive-"),
+	);
+	tempRoots.push(tempRoot);
+	process.env.BIRDCLAW_HOME = tempRoot;
+	resetBirdclawPathsForTests();
+}
+
+function tempArchiveDir() {
+	const dir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-archive-dir-"));
+	tempArchiveDirs.push(dir);
+	return dir;
+}
+
+function digestResult(overrides: Partial<Record<string, unknown>> = {}) {
+	return {
+		context: {
+			window: { label: "Today", since: "", until: "" },
+			includeDms: false,
+			counts: {},
+			tweets: [],
+			dms: [],
+			links: [],
+			hash: "h",
+		},
+		digest: {
+			title: "T",
+			summary: "S",
+			keyTopics: [],
+			notableLinks: [],
+			people: [],
+			actionItems: [],
+			sourceTweetIds: [],
+		},
+		markdown: "# Hello",
+		model: "gpt-5.5",
+		reasoningEffort: "medium",
+		serviceTier: "priority",
+		cached: false,
+		updatedAt: "2026-07-27T08:00:00.000Z",
+		...overrides,
+	};
+}
+
+describe("digest-archive-job", () => {
+	beforeEach(() => {
+		setupTempHome();
+		streamPeriodDigestMock.mockReset();
+	});
+
+	afterEach(() => {
+		resetBirdclawPathsForTests();
+		delete process.env.BIRDCLAW_HOME;
+		for (const tempRoot of tempRoots.splice(0)) {
+			rmSync(tempRoot, { recursive: true, force: true });
+		}
+		for (const dir of tempArchiveDirs.splice(0)) {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("runs the three content sources sequentially and archives each to md+json", async () => {
+		const order: string[] = [];
+		streamPeriodDigestMock.mockImplementation(
+			async (options: { contentSource: string }) => {
+				order.push(options.contentSource);
+				return digestResult({ markdown: `# ${options.contentSource}` });
+			},
+		);
+		const archiveDir = tempArchiveDir();
+
+		const entry = await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir,
+				now: () => new Date(2026, 6, 27),
+			}),
+		);
+
+		expect(order).toEqual(["all", "following", "for_you"]);
+		expect(entry.ok).toBe(true);
+		expect(entry.steps).toHaveLength(3);
+		expect(entry.runDate).toBe("2026-07-27");
+
+		for (const contentSource of ["all", "following", "for_you"]) {
+			const { markdownPath, jsonPath } = resolveDigestArchivePaths({
+				archiveDir,
+				runDate: "2026-07-27",
+				period: "today",
+				contentSource: contentSource as "all",
+			});
+			expect(existsSync(markdownPath)).toBe(true);
+			expect(readFileSync(markdownPath, "utf8")).toBe(`# ${contentSource}`);
+			const json = JSON.parse(readFileSync(jsonPath, "utf8"));
+			expect(json.contentSource).toBe(contentSource);
+			expect(json.period).toBe("today");
+			expect(json.runDate).toBe("2026-07-27");
+		}
+	});
+
+	it("retries a failing content source and eventually succeeds, without blocking the others", async () => {
+		let allAttempts = 0;
+		streamPeriodDigestMock.mockImplementation(
+			async (options: { contentSource: string }) => {
+				if (options.contentSource === "all") {
+					allAttempts += 1;
+					if (allAttempts < 2) throw new Error("transient failure");
+				}
+				return digestResult();
+			},
+		);
+		const archiveDir = tempArchiveDir();
+
+		// Real (small) delay rather than faked timers — Effect's own Clock
+		// doesn't reliably follow vitest's faked global timers, so a tiny
+		// real retryDelayMs keeps the test fast without fighting that.
+		const entry = await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir,
+				retries: 2,
+				retryDelayMs: 5,
+				now: () => new Date(2026, 6, 27),
+			}),
+		);
+
+		expect(allAttempts).toBe(2);
+		const allStep = entry.steps.find((step) => step.contentSource === "all");
+		expect(allStep?.ok).toBe(true);
+		expect(allStep?.attempts).toBe(2);
+		expect(entry.steps.every((step) => step.ok)).toBe(true);
+	});
+
+	it("exhausts retries for one content source without blocking the other two", async () => {
+		streamPeriodDigestMock.mockImplementation(
+			async (options: { contentSource: string }) => {
+				if (options.contentSource === "following") {
+					throw new Error("permanent failure");
+				}
+				return digestResult();
+			},
+		);
+		const archiveDir = tempArchiveDir();
+
+		const entry = await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir,
+				retries: 2,
+				retryDelayMs: 5,
+				now: () => new Date(2026, 6, 27),
+			}),
+		);
+
+		expect(entry.ok).toBe(false);
+		expect(entry.steps).toHaveLength(3);
+		const followingStep = entry.steps.find(
+			(step) => step.contentSource === "following",
+		);
+		expect(followingStep?.ok).toBe(false);
+		expect(followingStep?.attempts).toBe(3);
+		expect(followingStep?.error).toBe("permanent failure");
+		const allStep = entry.steps.find((step) => step.contentSource === "all");
+		const forYouStep = entry.steps.find(
+			(step) => step.contentSource === "for_you",
+		);
+		expect(allStep?.ok).toBe(true);
+		expect(forYouStep?.ok).toBe(true);
+	});
+
+	it("skips the run when the period's lock is already held", async () => {
+		streamPeriodDigestMock.mockResolvedValue(digestResult());
+		const archiveDir = tempArchiveDir();
+		const lockPath = digestArchiveLockPath("today");
+
+		const { acquireScheduledJobLock } = await import("./scheduled-job");
+		const release = await acquireScheduledJobLock(lockPath, 60_000);
+		expect(release).toBeDefined();
+
+		const entry = await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir,
+				now: () => new Date(2026, 6, 27),
+			}),
+		);
+
+		expect(entry.skipped).toBe("already-running");
+		expect(entry.steps).toHaveLength(0);
+		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
+
+		await release?.();
+	});
+
+	it("lists and reads back archived entries", async () => {
+		streamPeriodDigestMock.mockResolvedValue(digestResult());
+		const archiveDir = tempArchiveDir();
+
+		await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "yesterday",
+				archiveDir,
+				contentSources: ["all"],
+				now: () => new Date(2026, 6, 20),
+			}),
+		);
+		await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "yesterday",
+				archiveDir,
+				contentSources: ["all"],
+				now: () => new Date(2026, 6, 21),
+			}),
+		);
+
+		const dates = await listDigestArchiveDates({
+			archiveDir,
+			period: "yesterday",
+		});
+		expect(dates).toEqual([
+			{ date: "2026-07-21", contentSources: ["all"] },
+			{ date: "2026-07-20", contentSources: ["all"] },
+		]);
+
+		const entry = await readDigestArchiveEntry({
+			archiveDir,
+			period: "yesterday",
+			contentSource: "all",
+			date: "2026-07-21",
+		});
+		expect(entry?.markdown).toBe("# Hello");
+
+		const missing = await readDigestArchiveEntry({
+			archiveDir,
+			period: "yesterday",
+			contentSource: "following",
+			date: "2026-07-21",
+		});
+		expect(missing).toBeNull();
+	});
+
+	it("defaults week's launchd schedule to Monday and 24h to 08:45", () => {
+		const weekAgent = buildDigestArchiveLaunchAgentPlist({ period: "week" });
+		expect(weekAgent.schedule).toEqual({
+			kind: "calendar",
+			hour: 2,
+			minute: 0,
+			weekday: 1,
+		});
+
+		const dayAgent = buildDigestArchiveLaunchAgentPlist({ period: "24h" });
+		expect(dayAgent.schedule).toEqual({
+			kind: "calendar",
+			hour: 8,
+			minute: 45,
+		});
+	});
+});

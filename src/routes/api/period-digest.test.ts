@@ -9,6 +9,7 @@ vi.mock("#/lib/config", () => ({
 
 const maybeAutoUpdateBackupMock = vi.fn();
 const streamPeriodDigestMock = vi.fn();
+const peekScheduledJobLockMock = vi.fn();
 
 vi.mock("#/lib/backup", () => ({
 	maybeAutoUpdateBackup: () => maybeAutoUpdateBackupMock(),
@@ -23,9 +24,25 @@ vi.mock("#/lib/period-digest", () => ({
 			"Digest language must be a valid Unicode locale identifier",
 		);
 	},
+	normalizePeriod: (value: string | undefined) => {
+		const normalized = value?.trim().toLowerCase();
+		if (normalized === "yesterday") return "yesterday";
+		if (normalized === "24h" || normalized === "day") return "24h";
+		if (normalized === "week" || normalized === "7d") return "week";
+		return "today";
+	},
 	streamPeriodDigest: (...args: unknown[]) => streamPeriodDigestMock(...args),
 	streamPeriodDigestEffect: (...args: unknown[]) =>
 		Effect.promise(() => streamPeriodDigestMock(...args)),
+}));
+vi.mock("#/lib/digest-archive-job", () => ({
+	digestArchiveLockPath: (period: string) =>
+		`/tmp/digest-archive-${period}.lock`,
+	DEFAULT_LOCK_STALE_MS: 45 * 60 * 1000,
+}));
+vi.mock("#/lib/scheduled-job", () => ({
+	peekScheduledJobLockEffect: (...args: unknown[]) =>
+		Effect.promise(() => peekScheduledJobLockMock(...args)),
 }));
 
 import { Route } from "./period-digest";
@@ -36,7 +53,9 @@ describe("api period digest route", () => {
 	beforeEach(() => {
 		maybeAutoUpdateBackupMock.mockReset();
 		streamPeriodDigestMock.mockReset();
+		peekScheduledJobLockMock.mockReset();
 		maybeAutoUpdateBackupMock.mockResolvedValue({ skipped: true });
+		peekScheduledJobLockMock.mockResolvedValue(false);
 		streamPeriodDigestMock.mockImplementation(
 			async (
 				_options: unknown,
@@ -141,6 +160,21 @@ describe("api period digest route", () => {
 
 		resolveBackup?.({ skipped: true });
 		await reader!.cancel();
+	});
+
+	it("emits an error event and skips generation when a scheduled archive job holds the period's lock", async () => {
+		peekScheduledJobLockMock.mockResolvedValue(true);
+
+		const response = await GET({
+			request: new Request("http://localhost/api/period-digest?period=today"),
+		});
+
+		expect(await response.text()).toContain('"type":"error"');
+		expect(peekScheduledJobLockMock).toHaveBeenCalledWith(
+			"/tmp/digest-archive-today.lock",
+			45 * 60 * 1000,
+		);
+		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
 	});
 
 	it("emits an error event when the digest runner rejects", async () => {

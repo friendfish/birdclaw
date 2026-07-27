@@ -101,3 +101,23 @@ export function acquireScheduledJobLockEffect(
 		),
 	);
 }
+
+// Read-only check for whether a lock is currently held, without acquiring or
+// releasing it — for callers that just need to know "is a job running right
+// now" (e.g. a status API, or a second entry point that should defer to
+// whichever job already holds the lock) rather than compete for it.
+export async function peekScheduledJobLock(
+	lockPath: string,
+	staleMs: number,
+): Promise<boolean> {
+	const stats = await fs.stat(lockPath).catch(() => undefined);
+	if (!stats) return false;
+	return Date.now() - stats.mtimeMs <= staleMs;
+}
+
+export function peekScheduledJobLockEffect(
+	lockPath: string,
+	staleMs: number,
+): Effect.Effect<boolean, unknown> {
+	return tryPromise(() => peekScheduledJobLock(lockPath, staleMs));
+}

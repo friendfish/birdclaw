@@ -15,6 +15,9 @@ export const queryKeys = {
 	inbox: ["inbox"] as const,
 	dataSources: ["data-sources"] as const,
 	rateLimits: ["rate-limits"] as const,
+	digestArchiveDates: ["digest-archive-dates"] as const,
+	digestArchiveEntry: ["digest-archive-entry"] as const,
+	digestArchiveStatus: ["digest-archive-status"] as const,
 };
 
 export function createBirdclawQueryClient() {

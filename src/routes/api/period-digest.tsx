@@ -4,6 +4,10 @@ import { periodDigestStreamEventSchema } from "#/lib/client-stream-contracts";
 import { maybeAutoUpdateBackupEffect } from "#/lib/backup";
 import { getBirdclawConfig } from "#/lib/config";
 import {
+	DEFAULT_LOCK_STALE_MS,
+	digestArchiveLockPath,
+} from "#/lib/digest-archive-job";
+import {
 	jsonResponse,
 	parseBoundedInteger,
 	runRouteEffect,
@@ -12,11 +16,13 @@ import {
 import { createEffectNdjsonResponse } from "#/lib/ndjson-stream";
 import {
 	normalizeDigestLanguage,
+	normalizePeriod,
 	streamPeriodDigestEffect,
 	type PeriodDigestContentSource,
 	type PeriodDigestOptions,
 	type PeriodDigestStreamEvent,
 } from "#/lib/period-digest";
+import { peekScheduledJobLockEffect } from "#/lib/scheduled-job";
 
 function parseBoolean(value: string | null) {
 	return value === "true" || value === "1" || value === "yes";
@@ -93,6 +99,23 @@ export const Route = createFileRoute("/api/period-digest")({
 							],
 							run: ({ signal, emit }) =>
 								Effect.gen(function* () {
+									// A scheduled digest-archive job holds this lock for the
+									// whole run — defer to it rather than racing a second
+									// generation for the same period (background job wins;
+									// see the design discussion in PR #31 / issue #30).
+									const period = normalizePeriod(options.period);
+									const isArchiving = yield* peekScheduledJobLockEffect(
+										digestArchiveLockPath(period),
+										DEFAULT_LOCK_STALE_MS,
+									);
+									if (isArchiving) {
+										emit({
+											type: "error",
+											error:
+												"This period is currently being generated in the background. Try again shortly.",
+										});
+										return;
+									}
 									yield* maybeAutoUpdateBackupEffect();
 									return yield* streamPeriodDigestEffect(
 										{ ...options, signal },

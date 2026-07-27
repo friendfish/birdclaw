@@ -272,7 +272,7 @@ function floorIsoToHour(value: string) {
 	return date.toISOString();
 }
 
-function normalizePeriod(value: string | undefined): PeriodDigestPreset {
+export function normalizePeriod(value: string | undefined): PeriodDigestPreset {
 	const normalized = value?.trim().toLowerCase();
 	if (normalized === "yesterday") return "yesterday";
 	if (normalized === "24h" || normalized === "day") return "24h";

@@ -43,7 +43,7 @@ describe("launchd runtime", () => {
 	it("renders one escaped launch agent plist shape", () => {
 		const agent = buildLaunchAgent({
 			label: "com.example.sync&test",
-			intervalSeconds: 60,
+			schedule: { kind: "interval", intervalSeconds: 60 },
 			logPath: "~/birdclaw/audit.jsonl",
 			stdoutPath: "~/birdclaw/out.log",
 			stderrPath: "~/birdclaw/err.log",
@@ -56,6 +56,46 @@ describe("launchd runtime", () => {
 		expect(agent.logPath).toBe(path.join(os.homedir(), "birdclaw/audit.jsonl"));
 	});
 
+	it("renders a calendar schedule with a weekday", () => {
+		const agent = buildLaunchAgent({
+			label: "com.example.weekly",
+			schedule: { kind: "calendar", hour: 2, minute: 0, weekday: 1 },
+			logPath: "~/birdclaw/audit.jsonl",
+			stdoutPath: "~/birdclaw/out.log",
+			stderrPath: "~/birdclaw/err.log",
+			programArguments: ["/usr/bin/env", "birdclaw"],
+		});
+
+		expect(agent.plist).toContain("<key>StartCalendarInterval</key>");
+		expect(agent.plist).toContain("<key>Hour</key>\n    <integer>2</integer>");
+		expect(agent.plist).toContain(
+			"<key>Minute</key>\n    <integer>0</integer>",
+		);
+		expect(agent.plist).toContain(
+			"<key>Weekday</key>\n    <integer>1</integer>",
+		);
+		expect(agent.plist).not.toContain("<key>StartInterval</key>");
+	});
+
+	it("renders a calendar schedule without a weekday", () => {
+		const agent = buildLaunchAgent({
+			label: "com.example.daily",
+			schedule: { kind: "calendar", hour: 8, minute: 45 },
+			logPath: "~/birdclaw/audit.jsonl",
+			stdoutPath: "~/birdclaw/out.log",
+			stderrPath: "~/birdclaw/err.log",
+			programArguments: ["/usr/bin/env", "birdclaw"],
+		});
+
+		expect(agent.plist).toContain("<key>StartCalendarInterval</key>");
+		expect(agent.plist).toContain("<key>Hour</key>\n    <integer>8</integer>");
+		expect(agent.plist).toContain(
+			"<key>Minute</key>\n    <integer>45</integer>",
+		);
+		expect(agent.plist).not.toContain("<key>Weekday</key>");
+		expect(agent.plist).not.toContain("<key>StartInterval</key>");
+	});
+
 	it("writes and reloads launch agents through launchctl", async () => {
 		const launchAgentsDir = mkdtempSync(
 			path.join(os.tmpdir(), "birdclaw-launchd-runtime-"),
@@ -63,7 +103,7 @@ describe("launchd runtime", () => {
 		tempDirs.push(launchAgentsDir);
 		const agent = buildLaunchAgent({
 			label: "com.example.sync",
-			intervalSeconds: 60,
+			schedule: { kind: "interval", intervalSeconds: 60 },
 			logPath: path.join(launchAgentsDir, "logs", "audit.jsonl"),
 			stdoutPath: path.join(launchAgentsDir, "logs", "out.log"),
 			stderrPath: path.join(launchAgentsDir, "logs", "err.log"),

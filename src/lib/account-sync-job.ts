@@ -477,7 +477,7 @@ export function buildAccountSyncLaunchAgentPlist(
 	const programArguments = buildProgramArguments({ ...options, logPath });
 	return buildLaunchAgent({
 		label,
-		intervalSeconds,
+		schedule: { kind: "interval", intervalSeconds },
 		logPath,
 		stdoutPath,
 		stderrPath,

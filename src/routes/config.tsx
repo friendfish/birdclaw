@@ -42,8 +42,39 @@ const modelsResponseSchema = z.object({
 	error: z.string().optional(),
 });
 
+const digestScheduleTimeSchema = z.object({
+	hour: z.number(),
+	minute: z.number(),
+	weekday: z.number().optional(),
+});
+
+const digestScheduleResponseSchema = z.object({
+	ok: z.boolean(),
+	archiveDir: z.string(),
+	schedule: z.object({
+		today: digestScheduleTimeSchema,
+		"24h": digestScheduleTimeSchema,
+		yesterday: digestScheduleTimeSchema,
+		week: digestScheduleTimeSchema,
+	}),
+});
+
+function formatTime(hour: number, minute: number) {
+	return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function parseTime(value: string): { hour: number; minute: number } {
+	const [hourText, minuteText] = value.split(":");
+	return {
+		hour: Number(hourText) || 0,
+		minute: Number(minuteText) || 0,
+	};
+}
+
 function ConfigRoute() {
-	const [activeTab, setActiveTab] = useState<"ai" | "language">("ai");
+	const [activeTab, setActiveTab] = useState<"ai" | "language" | "schedule">(
+		"ai",
+	);
 
 	// AI config state
 	const [provider, setProvider] = useState("openai");
@@ -54,6 +85,16 @@ function ConfigRoute() {
 	// Language config state
 	const [aiLanguage, setAiLanguage] = useState("zh-CN");
 	const [uiLanguage, setUiLanguage] = useState("zh-CN");
+
+	// Digest archive schedule state
+	const [todayTime, setTodayTime] = useState("08:00");
+	const [hour24Time, setHour24Time] = useState("08:45");
+	const [yesterdayTime, setYesterdayTime] = useState("01:00");
+	const [weekTime, setWeekTime] = useState("02:00");
+	const [archiveDir, setArchiveDir] = useState("");
+	const [scheduleSaving, setScheduleSaving] = useState(false);
+	const [scheduleError, setScheduleError] = useState<string | null>(null);
+	const [scheduleSuccess, setScheduleSuccess] = useState(false);
 
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
@@ -88,6 +129,49 @@ function ConfigRoute() {
 			}
 		}
 		loadConfig();
+	}, []);
+
+	useEffect(() => {
+		async function loadSchedule() {
+			try {
+				const response = await fetchJson(
+					"/api/digest-schedule",
+					undefined,
+					digestScheduleResponseSchema,
+					"Failed to load digest schedule",
+				);
+				if (response.ok) {
+					setTodayTime(
+						formatTime(
+							response.schedule.today.hour,
+							response.schedule.today.minute,
+						),
+					);
+					setHour24Time(
+						formatTime(
+							response.schedule["24h"].hour,
+							response.schedule["24h"].minute,
+						),
+					);
+					setYesterdayTime(
+						formatTime(
+							response.schedule.yesterday.hour,
+							response.schedule.yesterday.minute,
+						),
+					);
+					setWeekTime(
+						formatTime(
+							response.schedule.week.hour,
+							response.schedule.week.minute,
+						),
+					);
+					setArchiveDir(response.archiveDir);
+				}
+			} catch (err) {
+				setScheduleError(err instanceof Error ? err.message : "Load failed");
+			}
+		}
+		loadSchedule();
 	}, []);
 
 	// Auto-fill defaults when provider changes
@@ -188,6 +272,44 @@ function ConfigRoute() {
 		}
 	};
 
+	const handleScheduleSave = async (e: React.FormEvent) => {
+		e.preventDefault();
+		setScheduleSaving(true);
+		setScheduleError(null);
+		setScheduleSuccess(false);
+
+		try {
+			const response = await fetchJson(
+				"/api/digest-schedule",
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({
+						archiveDir,
+						schedule: {
+							today: parseTime(todayTime),
+							"24h": parseTime(hour24Time),
+							yesterday: parseTime(yesterdayTime),
+							week: parseTime(weekTime),
+						},
+					}),
+				},
+				digestScheduleResponseSchema,
+				"Failed to save digest schedule",
+			);
+			if (response.ok) {
+				setScheduleSuccess(true);
+				setTimeout(() => setScheduleSuccess(false), 3000);
+			}
+		} catch (err) {
+			setScheduleError(err instanceof Error ? err.message : "Save failed");
+		} finally {
+			setScheduleSaving(false);
+		}
+	};
+
 	return (
 		<section className={mainColumnClass}>
 			<header className={pageHeaderClass}>
@@ -243,203 +365,339 @@ function ConfigRoute() {
 							>
 								语言配置
 							</button>
+							<button
+								type="button"
+								onClick={() => {
+									setScheduleError(null);
+									setScheduleSuccess(false);
+									setActiveTab("schedule");
+								}}
+								className={cx(
+									"px-4 py-2.5 font-bold text-[14px] border-b-2 transition-all cursor-pointer",
+									activeTab === "schedule"
+										? "border-[var(--brand)] text-[var(--brand)]"
+										: "border-transparent text-[var(--ink-soft)] hover:text-[var(--ink)]",
+								)}
+							>
+								摘要归档调度
+							</button>
 						</div>
 
-						<form onSubmit={handleSave} className="flex flex-col gap-6">
-							{activeTab === "ai" ? (
-								<div className="flex flex-col gap-6">
-									<div className="flex flex-col gap-1.5">
-										<label className="text-[14px] font-bold text-[var(--ink)]">
-											Model Provider
-										</label>
-										<select
-											value={provider}
-											onChange={(e) => handleProviderChange(e.target.value)}
-											className={selectFieldClass}
-										>
-											<option value="openai">OpenAI</option>
-											<option value="deepseek">DeepSeek</option>
-											<option value="google">
-												Google Gemini (OpenAI Compat)
-											</option>
-											<option value="openrouter">OpenRouter</option>
-											<option value="custom">Custom / Other</option>
-										</select>
-										<p className="text-[12px] text-[var(--ink-soft)]">
-											Select the LLM provider you want system digests and
-											analysis to use.
-										</p>
-									</div>
+						{activeTab === "schedule" ? (
+							<form
+								onSubmit={handleScheduleSave}
+								className="flex flex-col gap-6"
+							>
+								<div className="flex flex-col gap-1.5">
+									<label className="text-[14px] font-bold text-[var(--ink)]">
+										Today
+									</label>
+									<input
+										type="time"
+										value={todayTime}
+										onChange={(e) => setTodayTime(e.target.value)}
+										className={textFieldClass}
+										required
+									/>
+									<p className="text-[12px] text-[var(--ink-soft)]">
+										每天定时生成 Today 摘要（All/Following/For
+										You）并归档；手动刷新仍然可用。
+									</p>
+								</div>
 
-									<div className="flex flex-col gap-1.5">
-										<label className="text-[14px] font-bold text-[var(--ink)]">
-											API Base URL
-										</label>
-										<input
-											type="url"
-											value={baseUrl}
-											onChange={(e) => setBaseUrl(e.target.value)}
-											placeholder="https://api.openai.com/v1"
-											className={textFieldClass}
-											required
-										/>
-										<p className="text-[12px] text-[var(--ink-soft)]">
-											The API endpoint URL for standard chat completion
-											requests.
-										</p>
-									</div>
+								<div className="flex flex-col gap-1.5">
+									<label className="text-[14px] font-bold text-[var(--ink)]">
+										24h
+									</label>
+									<input
+										type="time"
+										value={hour24Time}
+										onChange={(e) => setHour24Time(e.target.value)}
+										className={textFieldClass}
+										required
+									/>
+									<p className="text-[12px] text-[var(--ink-soft)]">
+										每天定时生成 24h 摘要并归档；手动刷新仍然可用。
+									</p>
+								</div>
 
-									<div className="flex flex-col gap-1.5">
-										<label className="text-[14px] font-bold text-[var(--ink)]">
-											API Key
-										</label>
-										<input
-											type="password"
-											value={apiKey}
-											onChange={(e) => setApiKey(e.target.value)}
-											placeholder="sk-..."
-											className={textFieldClass}
-											required
-										/>
-										<p className="text-[12px] text-[var(--ink-soft)]">
-											Your secret API key. Stored securely inside config.json on
-											your machine.
-										</p>
-									</div>
+								<div className="flex flex-col gap-1.5">
+									<label className="text-[14px] font-bold text-[var(--ink)]">
+										Yesterday
+									</label>
+									<input
+										type="time"
+										value={yesterdayTime}
+										onChange={(e) => setYesterdayTime(e.target.value)}
+										className={textFieldClass}
+										required
+									/>
+									<p className="text-[12px] text-[var(--ink-soft)]">
+										每天定时生成 Yesterday
+										摘要并归档；该周期已改为纯定时，不再提供手动刷新。
+									</p>
+								</div>
 
-									<div className="flex flex-col gap-1.5">
-										<div className="flex items-center justify-between">
+								<div className="flex flex-col gap-1.5">
+									<label className="text-[14px] font-bold text-[var(--ink)]">
+										Week（每周一）
+									</label>
+									<input
+										type="time"
+										value={weekTime}
+										onChange={(e) => setWeekTime(e.target.value)}
+										className={textFieldClass}
+										required
+									/>
+									<p className="text-[12px] text-[var(--ink-soft)]">
+										每周一定时生成 Week
+										摘要并归档；星期固定为周一，不可配置。该周期已改为纯定时，不再提供手动刷新。
+									</p>
+								</div>
+
+								<div className="flex flex-col gap-1.5">
+									<label className="text-[14px] font-bold text-[var(--ink)]">
+										归档目录
+									</label>
+									<input
+										type="text"
+										value={archiveDir}
+										onChange={(e) => setArchiveDir(e.target.value)}
+										placeholder="~/.birdclaw/digest-archive"
+										className={textFieldClass}
+									/>
+									<p className="text-[12px] text-[var(--ink-soft)]">
+										定时生成的摘要（Markdown +
+										JSON）落盘归档的根目录。留空使用默认路径。
+									</p>
+								</div>
+
+								{scheduleError ? (
+									<div className="flex items-center gap-2 rounded-md border border-[var(--alert)] bg-[var(--alert-soft)] p-3 text-[14px] text-[var(--alert)]">
+										<AlertCircle className="size-4 shrink-0" />
+										<span>{scheduleError}</span>
+									</div>
+								) : null}
+
+								{scheduleSuccess ? (
+									<div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-[14px] text-emerald-600">
+										<CheckCircle className="size-4 shrink-0" />
+										<span>调度已保存并生效。</span>
+									</div>
+								) : null}
+
+								<div className="mt-2 flex">
+									<button
+										type="submit"
+										disabled={scheduleSaving}
+										className={cx(
+											primaryButtonClass,
+											"w-full min-[480px]:w-auto",
+										)}
+									>
+										<Save className="size-4" />
+										{scheduleSaving ? "Saving..." : "Save Config"}
+									</button>
+								</div>
+							</form>
+						) : (
+							<form onSubmit={handleSave} className="flex flex-col gap-6">
+								{activeTab === "ai" ? (
+									<div className="flex flex-col gap-6">
+										<div className="flex flex-col gap-1.5">
 											<label className="text-[14px] font-bold text-[var(--ink)]">
-												Model Name
+												Model Provider
 											</label>
-											<button
-												type="button"
-												onClick={handleFetchModels}
-												disabled={fetchingModels || !baseUrl || !apiKey}
-												className={cx(
-													secondaryButtonClass,
-													"py-1 px-3 text-[11px] h-7 min-h-0",
-												)}
+											<select
+												value={provider}
+												onChange={(e) => handleProviderChange(e.target.value)}
+												className={selectFieldClass}
 											>
-												<RefreshCw
-													className={cx(
-														"size-3",
-														fetchingModels && "animate-spin",
-													)}
-												/>
-												{fetchingModels ? "Fetching..." : "Fetch Models"}
-											</button>
+												<option value="openai">OpenAI</option>
+												<option value="deepseek">DeepSeek</option>
+												<option value="google">
+													Google Gemini (OpenAI Compat)
+												</option>
+												<option value="openrouter">OpenRouter</option>
+												<option value="custom">Custom / Other</option>
+											</select>
+											<p className="text-[12px] text-[var(--ink-soft)]">
+												Select the LLM provider you want system digests and
+												analysis to use.
+											</p>
 										</div>
-										<input
-											type="text"
-											value={model}
-											onChange={(e) => setModel(e.target.value)}
-											placeholder="gpt-4o"
-											className={textFieldClass}
-											required
-										/>
-										<p className="text-[12px] text-[var(--ink-soft)]">
-											The specific model identifier to target (e.g.
-											deepseek-chat, deepseek-reasoner, gpt-4o).
-										</p>
 
-										{availableModels.length > 0 ? (
-											<div className="mt-2 flex flex-col gap-1.5 rounded-md border border-[var(--line)] bg-[var(--bg-active)] p-3">
-												<label className="text-[12px] font-semibold text-[var(--ink-soft)]">
-													Select Fetched Model ({availableModels.length} models)
+										<div className="flex flex-col gap-1.5">
+											<label className="text-[14px] font-bold text-[var(--ink)]">
+												API Base URL
+											</label>
+											<input
+												type="url"
+												value={baseUrl}
+												onChange={(e) => setBaseUrl(e.target.value)}
+												placeholder="https://api.openai.com/v1"
+												className={textFieldClass}
+												required
+											/>
+											<p className="text-[12px] text-[var(--ink-soft)]">
+												The API endpoint URL for standard chat completion
+												requests.
+											</p>
+										</div>
+
+										<div className="flex flex-col gap-1.5">
+											<label className="text-[14px] font-bold text-[var(--ink)]">
+												API Key
+											</label>
+											<input
+												type="password"
+												value={apiKey}
+												onChange={(e) => setApiKey(e.target.value)}
+												placeholder="sk-..."
+												className={textFieldClass}
+												required
+											/>
+											<p className="text-[12px] text-[var(--ink-soft)]">
+												Your secret API key. Stored securely inside config.json
+												on your machine.
+											</p>
+										</div>
+
+										<div className="flex flex-col gap-1.5">
+											<div className="flex items-center justify-between">
+												<label className="text-[14px] font-bold text-[var(--ink)]">
+													Model Name
 												</label>
-												<select
-													onChange={(e) => {
-														if (e.target.value) setModel(e.target.value);
-													}}
-													className={selectFieldClass}
-													defaultValue=""
+												<button
+													type="button"
+													onClick={handleFetchModels}
+													disabled={fetchingModels || !baseUrl || !apiKey}
+													className={cx(
+														secondaryButtonClass,
+														"py-1 px-3 text-[11px] h-7 min-h-0",
+													)}
 												>
-													<option value="" disabled>
-														-- Select a model from provider --
-													</option>
-													{availableModels.map((m) => (
-														<option key={m} value={m}>
-															{m}
-														</option>
-													))}
-												</select>
+													<RefreshCw
+														className={cx(
+															"size-3",
+															fetchingModels && "animate-spin",
+														)}
+													/>
+													{fetchingModels ? "Fetching..." : "Fetch Models"}
+												</button>
 											</div>
-										) : null}
+											<input
+												type="text"
+												value={model}
+												onChange={(e) => setModel(e.target.value)}
+												placeholder="gpt-4o"
+												className={textFieldClass}
+												required
+											/>
+											<p className="text-[12px] text-[var(--ink-soft)]">
+												The specific model identifier to target (e.g.
+												deepseek-chat, deepseek-reasoner, gpt-4o).
+											</p>
+
+											{availableModels.length > 0 ? (
+												<div className="mt-2 flex flex-col gap-1.5 rounded-md border border-[var(--line)] bg-[var(--bg-active)] p-3">
+													<label className="text-[12px] font-semibold text-[var(--ink-soft)]">
+														Select Fetched Model ({availableModels.length}{" "}
+														models)
+													</label>
+													<select
+														onChange={(e) => {
+															if (e.target.value) setModel(e.target.value);
+														}}
+														className={selectFieldClass}
+														defaultValue=""
+													>
+														<option value="" disabled>
+															-- Select a model from provider --
+														</option>
+														{availableModels.map((m) => (
+															<option key={m} value={m}>
+																{m}
+															</option>
+														))}
+													</select>
+												</div>
+											) : null}
+										</div>
 									</div>
-								</div>
-							) : (
-								<div className="flex flex-col gap-6">
-									<div className="flex flex-col gap-1.5">
-										<label className="text-[14px] font-bold text-[var(--ink)]">
-											AI 摘要生成语言
-										</label>
-										<select
-											value={aiLanguage}
-											onChange={(e) => setAiLanguage(e.target.value)}
-											className={selectFieldClass}
-										>
-											<option value="zh-CN">
-												简体中文 (Simplified Chinese)
-											</option>
-											<option value="en">English</option>
-										</select>
-										<p className="text-[12px] text-[var(--ink-soft)]">
-											用于指定 Today 今日简报、用户画像分析等 LLM
-											生成内容的语言。
-										</p>
+								) : (
+									<div className="flex flex-col gap-6">
+										<div className="flex flex-col gap-1.5">
+											<label className="text-[14px] font-bold text-[var(--ink)]">
+												AI 摘要生成语言
+											</label>
+											<select
+												value={aiLanguage}
+												onChange={(e) => setAiLanguage(e.target.value)}
+												className={selectFieldClass}
+											>
+												<option value="zh-CN">
+													简体中文 (Simplified Chinese)
+												</option>
+												<option value="en">English</option>
+											</select>
+											<p className="text-[12px] text-[var(--ink-soft)]">
+												用于指定 Today 今日简报、用户画像分析等 LLM
+												生成内容的语言。
+											</p>
+										</div>
+
+										<div className="flex flex-col gap-1.5">
+											<label className="text-[14px] font-bold text-[var(--ink)]">
+												界面显示语言
+											</label>
+											<select
+												value={uiLanguage}
+												onChange={(e) => setUiLanguage(e.target.value)}
+												className={selectFieldClass}
+											>
+												<option value="zh-CN">
+													简体中文 (Simplified Chinese)
+												</option>
+												<option value="en">English (Partial Support)</option>
+											</select>
+											<p className="text-[12px] text-[var(--ink-soft)]">
+												用于指定 Birdclaw
+												本地管理界面的显示语言（部分控制面板支持）。
+											</p>
+										</div>
 									</div>
+								)}
 
-									<div className="flex flex-col gap-1.5">
-										<label className="text-[14px] font-bold text-[var(--ink)]">
-											界面显示语言
-										</label>
-										<select
-											value={uiLanguage}
-											onChange={(e) => setUiLanguage(e.target.value)}
-											className={selectFieldClass}
-										>
-											<option value="zh-CN">
-												简体中文 (Simplified Chinese)
-											</option>
-											<option value="en">English (Partial Support)</option>
-										</select>
-										<p className="text-[12px] text-[var(--ink-soft)]">
-											用于指定 Birdclaw
-											本地管理界面的显示语言（部分控制面板支持）。
-										</p>
+								{error ? (
+									<div className="flex items-center gap-2 rounded-md border border-[var(--alert)] bg-[var(--alert-soft)] p-3 text-[14px] text-[var(--alert)]">
+										<AlertCircle className="size-4 shrink-0" />
+										<span>{error}</span>
 									</div>
-								</div>
-							)}
+								) : null}
 
-							{error ? (
-								<div className="flex items-center gap-2 rounded-md border border-[var(--alert)] bg-[var(--alert-soft)] p-3 text-[14px] text-[var(--alert)]">
-									<AlertCircle className="size-4 shrink-0" />
-									<span>{error}</span>
-								</div>
-							) : null}
+								{success ? (
+									<div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-[14px] text-emerald-600">
+										<CheckCircle className="size-4 shrink-0" />
+										<span>Configuration saved successfully!</span>
+									</div>
+								) : null}
 
-							{success ? (
-								<div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-[14px] text-emerald-600">
-									<CheckCircle className="size-4 shrink-0" />
-									<span>Configuration saved successfully!</span>
+								<div className="mt-2 flex">
+									<button
+										type="submit"
+										disabled={saving}
+										className={cx(
+											primaryButtonClass,
+											"w-full min-[480px]:w-auto",
+										)}
+									>
+										<Save className="size-4" />
+										{saving ? "Saving..." : "Save Config"}
+									</button>
 								</div>
-							) : null}
-
-							<div className="mt-2 flex">
-								<button
-									type="submit"
-									disabled={saving}
-									className={cx(
-										primaryButtonClass,
-										"w-full min-[480px]:w-auto",
-									)}
-								>
-									<Save className="size-4" />
-									{saving ? "Saving..." : "Save Config"}
-								</button>
-							</div>
-						</form>
+							</form>
+						)}
 					</div>
 				)}
 			</div>

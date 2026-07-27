@@ -7,8 +7,27 @@ import {
 	installBookmarkSyncLaunchAgent,
 	runBookmarkSyncJob,
 } from "#/lib/bookmark-sync-job";
+import {
+	installAllDigestArchiveLaunchAgents,
+	installDigestArchiveLaunchAgent,
+	parseDigestContentSources,
+	runDigestArchiveJob,
+} from "#/lib/digest-archive-job";
+import type { PeriodDigestPreset } from "#/lib/period-digest";
 import type { TimelineCollectionMode } from "#/lib/timeline-collections-live";
 import type { CliCommandContext } from "./command-context";
+
+function parsePeriod(value: string): PeriodDigestPreset {
+	if (
+		value === "today" ||
+		value === "yesterday" ||
+		value === "24h" ||
+		value === "week"
+	) {
+		return value;
+	}
+	throw new Error("--period must be today, yesterday, 24h, or week");
+}
 
 export function registerJobCommands({ program, print }: CliCommandContext) {
 	const jobsCommand = program
@@ -165,6 +184,105 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				stderrPath: options.stderr,
 				launchAgentsDir: options.launchAgentsDir,
 				load: options.load,
+			});
+			print(result, true);
+		});
+
+	jobsCommand
+		.command("run-digest-archive")
+		.description(
+			"Generate and archive period digests (md+json) for all content sources",
+		)
+		.requiredOption("--period <period>", "today, yesterday, 24h, or week")
+		.option("--account <username>", "Account username or id")
+		.option("--include-dms", "Include DMs in the digest context")
+		.option("--content-sources <sources>", "Comma list: all,following,for_you")
+		.option("--archive-dir <path>", "Archive root directory")
+		.option("--retries <n>", "Retries per content source", "2")
+		.option("--retry-delay-seconds <seconds>", "Delay between retries", "120")
+		.option("--log <path>", "Audit JSONL path")
+		.action(async (options) => {
+			const result = await runDigestArchiveJob({
+				period: parsePeriod(options.period),
+				account: options.account,
+				includeDms: Boolean(options.includeDms),
+				contentSources: parseDigestContentSources(options.contentSources),
+				archiveDir: options.archiveDir,
+				retries: Number(options.retries),
+				retryDelayMs: Number(options.retryDelaySeconds) * 1000,
+				logPath: options.log,
+			});
+			print(result, true);
+			if (!result.ok) process.exitCode = 1;
+		});
+
+	jobsCommand
+		.command("install-digest-archive-launchd")
+		.description("Install LaunchAgent(s) that archive scheduled period digests")
+		.option("--period <period>", "today, yesterday, 24h, week, or all", "all")
+		.option("--hour <n>", "Hour (0-23); ignored when --period all")
+		.option("--minute <n>", "Minute (0-59); ignored when --period all")
+		.option("--weekday <n>", "0-7, Monday=1 (week only)")
+		.option("--label <label>", "LaunchAgent label")
+		.option("--program <path>", "birdclaw executable or command", "birdclaw")
+		.option("--account <username>", "Account username or id")
+		.option("--include-dms", "Include DMs in the digest context")
+		.option("--content-sources <sources>", "Comma list: all,following,for_you")
+		.option("--archive-dir <path>", "Archive root directory")
+		.option("--retries <n>", "Retries per content source", "2")
+		.option("--retry-delay-seconds <seconds>", "Delay between retries", "120")
+		.option("--log <path>", "Audit JSONL path")
+		.option("--env-path <path>", "Shell env file to source before running")
+		.option("--env-file <path>", "Deprecated alias for --env-path")
+		.option("--stdout <path>", "launchd stdout path")
+		.option("--stderr <path>", "launchd stderr path")
+		.option("--launch-agents-dir <path>", "LaunchAgents directory")
+		.option("--no-load", "Write plist without loading it")
+		.action(async (options) => {
+			// Fields that make sense applied identically to all 4 periods when
+			// --period all is used. label/program/env/stdout/stderr are
+			// per-period-only concerns (each agent needs its own label and log
+			// files) and are only meaningful for a single-period install.
+			const perPeriodOverrides = {
+				account: options.account,
+				includeDms: Boolean(options.includeDms),
+				contentSources: parseDigestContentSources(options.contentSources),
+				archiveDir: options.archiveDir,
+				retries: Number(options.retries),
+				retryDelaySeconds: Number(options.retryDelaySeconds),
+				logPath: options.log,
+			};
+			const installOptions = {
+				launchAgentsDir: options.launchAgentsDir,
+				load: options.load,
+			};
+			if (options.period === "all") {
+				const result = await installAllDigestArchiveLaunchAgents(
+					{
+						today: perPeriodOverrides,
+						"24h": perPeriodOverrides,
+						yesterday: perPeriodOverrides,
+						week: perPeriodOverrides,
+					},
+					installOptions,
+				);
+				print(result, true);
+				return;
+			}
+			const result = await installDigestArchiveLaunchAgent({
+				period: parsePeriod(options.period),
+				hour: options.hour === undefined ? undefined : Number(options.hour),
+				minute:
+					options.minute === undefined ? undefined : Number(options.minute),
+				weekday:
+					options.weekday === undefined ? undefined : Number(options.weekday),
+				label: options.label,
+				program: options.program,
+				envFile: options.envPath ?? options.envFile,
+				stdoutPath: options.stdout,
+				stderrPath: options.stderr,
+				...installOptions,
+				...perPeriodOverrides,
 			});
 			print(result, true);
 		});

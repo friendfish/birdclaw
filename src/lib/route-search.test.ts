@@ -35,6 +35,20 @@ describe("route search schemas", () => {
 		expect(validateNetworkMapSearch({ type: "bad" }).type).toBe("all");
 	});
 
+	it("only accepts well-formed archiveDate values, otherwise falling back to empty", () => {
+		expect(validateTodaySearch({}).archiveDate).toBe("");
+		expect(validateTodaySearch({ archiveDate: "2026-07-21" }).archiveDate).toBe(
+			"2026-07-21",
+		);
+		expect(validateTodaySearch({ archiveDate: "not-a-date" }).archiveDate).toBe(
+			"",
+		);
+		expect(validateTodaySearch({ archiveDate: "2026-7-1" }).archiveDate).toBe(
+			"",
+		);
+		expect(validateTodaySearch({ archiveDate: 123 }).archiveDate).toBe("");
+	});
+
 	it("normalizes booleans and string filters", () => {
 		expect(validateInboxSearch({ hideLowSignal: "0", minScore: "70" })).toEqual(
 			{
