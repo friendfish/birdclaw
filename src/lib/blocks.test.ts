@@ -1,11 +1,11 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Command } from "commander";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetBirdclawPathsForTests } from "./config";
+import { getBirdclawPaths, resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 
 const mocks = vi.hoisted(() => ({
@@ -494,6 +494,67 @@ describe("blocklist", () => {
 		expect(mocks.getTransportStatus).toHaveBeenCalledWith();
 		expect(mocks.lookupAuthenticatedUser).toHaveBeenCalledWith();
 		expect(mocks.listBlockedUsers).toHaveBeenCalledWith("25401953", undefined);
+	});
+
+	it("uses an explicit Bird mode instead of a configured xurl source", async () => {
+		setupTempHome();
+		vi.stubEnv("BIRDCLAW_LIVE_DATA_SOURCE", "xurl");
+		const { syncBlocks } = await import("./blocks");
+
+		const result = await syncBlocks("acct_primary", { mode: "bird" });
+
+		expect(result).toMatchObject({ ok: true, synced: false, syncedCount: 0 });
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
+	});
+
+	it("rejects invalid explicit block sync modes before xurl work or database mutation", async () => {
+		setupTempHome();
+		const db = getNativeDb();
+		const counts = () => ({
+			profiles: (
+				db.prepare("select count(*) as count from profiles").get() as {
+					count: number;
+				}
+			).count,
+			blocks: (
+				db.prepare("select count(*) as count from blocks").get() as {
+					count: number;
+				}
+			).count,
+		});
+		const before = counts();
+		const { syncBlocks } = await import("./blocks");
+
+		for (const mode of ["invalid", ""]) {
+			await expect(syncBlocks("acct_primary", { mode })).rejects.toThrow(
+				"Invalid live-read mode; expected auto, bird, or xurl",
+			);
+		}
+
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
+		expect(counts()).toEqual(before);
+	});
+
+	it("constructs block sync Effects without database or xurl side effects", async () => {
+		setupTempHome();
+		const dbPath = getBirdclawPaths().dbPath;
+		const { syncBlocksEffect } = await import("./blocks");
+
+		const effect = syncBlocksEffect("acct_primary", { mode: "xurl" });
+
+		expect(existsSync(dbPath)).toBe(false);
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
+
+		await Effect.runPromise(effect);
+
+		expect(existsSync(dbPath)).toBe(true);
+		expect(mocks.getTransportStatus).toHaveBeenCalledWith();
 	});
 
 	it("exposes remote block sync as an Effect program", async () => {
