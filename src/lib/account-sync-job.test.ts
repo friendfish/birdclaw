@@ -9,6 +9,11 @@ const syncMentionThreadsMock = vi.hoisted(() => vi.fn());
 const syncMentionsMock = vi.hoisted(() => vi.fn());
 const syncTimelineCollectionMock = vi.hoisted(() => vi.fn());
 const syncHomeTimelineMock = vi.hoisted(() => vi.fn());
+const resolveLiveReadModeMock = vi.hoisted(() =>
+	vi.fn(
+		(requested?: string, legacyDefault = "xurl") => requested ?? legacyDefault,
+	),
+);
 
 vi.mock("./backup", () => ({
 	maybeAutoSyncBackup: (...args: unknown[]) => maybeAutoSyncBackupMock(...args),
@@ -25,6 +30,11 @@ vi.mock("./mention-threads-live", () => ({
 
 vi.mock("./mentions-live", () => ({
 	syncMentions: (...args: unknown[]) => syncMentionsMock(...args),
+}));
+
+vi.mock("./live-transport-policy", () => ({
+	resolveLiveReadMode: (...args: [string | undefined, "auto" | "xurl"]) =>
+		resolveLiveReadModeMock(...args),
 }));
 
 vi.mock("./timeline-collections-live", () => ({
@@ -53,6 +63,11 @@ describe("account sync job", () => {
 		syncMentionsMock.mockReset();
 		syncTimelineCollectionMock.mockReset();
 		syncHomeTimelineMock.mockReset();
+		resolveLiveReadModeMock.mockReset();
+		resolveLiveReadModeMock.mockImplementation(
+			(requested?: string, legacyDefault = "xurl") =>
+				requested ?? legacyDefault,
+		);
 		maybeAutoSyncBackupMock.mockResolvedValue({
 			ok: true,
 			enabled: false,
@@ -410,7 +425,55 @@ describe("account sync job", () => {
 		);
 	});
 
-	it("records mention-thread sync errors as failed step results", async () => {
+	it("keeps explicit Bird mention-thread syncs on Bird", async () => {
+		tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-account-job-"));
+		const logPath = path.join(tempDir, "audit.jsonl");
+		const lockPath = path.join(tempDir, "sync.lock");
+		syncMentionThreadsMock.mockResolvedValue({
+			source: "bird",
+			mergedTweets: 4,
+		});
+
+		const result = await runAccountSyncJob({
+			steps: ["mention-threads"],
+			mode: "bird",
+			logPath,
+			lockPath,
+			db: {} as never,
+		});
+
+		expect(syncMentionThreadsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird", limit: 30 }),
+		);
+		expect(result).toMatchObject({
+			steps: [{ kind: "mention-threads", ok: true, count: 4, source: "bird" }],
+		});
+	});
+
+	it("uses configured Bird mode for mention-thread syncs when mode is omitted", async () => {
+		tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-account-job-"));
+		const logPath = path.join(tempDir, "audit.jsonl");
+		const lockPath = path.join(tempDir, "sync.lock");
+		resolveLiveReadModeMock.mockReturnValue("bird");
+		syncMentionThreadsMock.mockResolvedValue({
+			source: "bird",
+			mergedTweets: 4,
+		});
+
+		await runAccountSyncJob({
+			steps: ["mention-threads"],
+			logPath,
+			lockPath,
+			db: {} as never,
+		});
+
+		expect(resolveLiveReadModeMock).toHaveBeenCalledWith(undefined, "auto");
+		expect(syncMentionThreadsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird", limit: 30 }),
+		);
+	});
+
+	it("records auto mention-thread sync errors through xurl", async () => {
 		tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-account-job-"));
 		const logPath = path.join(tempDir, "audit.jsonl");
 		const lockPath = path.join(tempDir, "sync.lock");

@@ -10,6 +10,7 @@ import {
 	resolveUserPath,
 	type LaunchAgentInstallResult,
 } from "./launchd";
+import { resolveLiveReadMode } from "./live-transport-policy";
 import { syncMentionThreads } from "./mention-threads-live";
 import { syncMentions } from "./mentions-live";
 import {
@@ -243,9 +244,10 @@ async function runStep({
 			};
 		}
 		if (kind === "mention-threads") {
+			const threadMode = mode === "bird" ? "bird" : "xurl";
 			const result = await syncMentionThreads({
 				account,
-				mode: "xurl",
+				mode: threadMode,
 				limit: Math.min(30, limit),
 				delayMs: 1500,
 				timeoutMs: 15000,
@@ -320,7 +322,7 @@ async function runStep({
 export async function runAccountSyncJob({
 	account,
 	steps = DEFAULT_STEPS,
-	mode = "auto",
+	mode,
 	limit = DEFAULT_ACCOUNT_SYNC_LIMIT,
 	maxPages = DEFAULT_ACCOUNT_SYNC_MAX_PAGES,
 	refresh = true,
@@ -339,10 +341,11 @@ export async function runAccountSyncJob({
 		lockPath ?? getDefaultAccountSyncLockPath(),
 	);
 	const run = startScheduledJobRun();
+	const resolvedMode = resolveLiveReadMode(mode, "auto");
 	const options = {
 		...(account ? { account } : {}),
 		steps,
-		mode,
+		mode: resolvedMode,
 		limit,
 		maxPages,
 		refresh,
@@ -377,7 +380,7 @@ export async function runAccountSyncJob({
 				await runStep({
 					kind,
 					account,
-					mode,
+					mode: resolvedMode,
 					limit,
 					maxPages,
 					refresh,
