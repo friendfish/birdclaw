@@ -8,7 +8,7 @@ import {
 import { ensureBirdclawDirs, getBirdclawPaths } from "./config";
 import { getNativeDb } from "./db";
 import { runEffectPromise } from "./effect-runtime";
-import { resolveLiveReadMode } from "./live-transport-policy";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import {
 	buildLaunchAgent,
 	buildLaunchProgramArguments,
@@ -146,9 +146,7 @@ export function runBookmarkSyncJobEffect({
 	unknown
 > {
 	return Effect.gen(function* () {
-		const resolvedMode = yield* trySync(() =>
-			resolveLiveReadMode(mode, "auto"),
-		);
+		const resolvedMode = yield* trySync(() => resolveLiveSyncMode(mode));
 		yield* trySync(() => ensureBirdclawDirs());
 		const database =
 			db ?? (yield* trySync(() => getNativeDb({ seedDemoData: false })));
@@ -267,7 +265,7 @@ function buildProgramArguments({
 	envFile,
 }: BookmarkSyncLaunchAgentOptions) {
 	const resolvedMode =
-		mode === undefined ? undefined : resolveLiveReadMode(mode, "auto");
+		mode === undefined ? undefined : resolveLiveSyncMode(mode);
 	const args = ["--json", "jobs", "sync-bookmarks"];
 	if (resolvedMode) {
 		args.push("--mode", resolvedMode);

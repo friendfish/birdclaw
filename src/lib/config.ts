@@ -17,7 +17,8 @@ export interface BirdclawPaths {
 	configPath: string;
 }
 
-export type MentionsDataSource = "birdclaw" | "auto" | "xurl" | "bird";
+export type LiveDataSource = "auto" | "bird" | "xurl";
+export type MentionsDataSource = "birdclaw" | LiveDataSource;
 export type ActionsTransport = "auto" | "bird" | "xurl";
 // Deliberately not imported from period-digest.ts's PeriodDigestPreset to
 // avoid a circular import (period-digest.ts already imports getBirdclawConfig
@@ -37,6 +38,9 @@ export interface BirdclawConfig {
 	mentions?: {
 		dataSource?: MentionsDataSource;
 		birdCommand?: string;
+	};
+	live?: {
+		dataSource?: LiveDataSource;
 	};
 	actions?: {
 		transport?: ActionsTransport;
@@ -144,36 +148,39 @@ export function setActionsTransport(transport: ActionsTransport) {
 export function resolveMentionsDataSource(
 	requestedMode?: string,
 ): MentionsDataSource {
-	if (
-		requestedMode === "birdclaw" ||
-		requestedMode === "auto" ||
-		requestedMode === "xurl" ||
-		requestedMode === "bird"
-	) {
+	if (isMentionsDataSource(requestedMode)) {
 		return requestedMode;
 	}
 
-	const envMode = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE?.trim();
-	if (
-		envMode === "birdclaw" ||
-		envMode === "auto" ||
-		envMode === "xurl" ||
-		envMode === "bird"
-	) {
-		return envMode;
+	const liveEnvMode = process.env.BIRDCLAW_LIVE_DATA_SOURCE?.trim();
+	if (isLiveDataSource(liveEnvMode)) {
+		return liveEnvMode;
 	}
 
-	const configMode = getBirdclawConfig().mentions?.dataSource;
-	if (
-		configMode === "birdclaw" ||
-		configMode === "auto" ||
-		configMode === "xurl" ||
-		configMode === "bird"
-	) {
-		return configMode;
+	const liveConfigMode = getBirdclawConfig().live?.dataSource;
+	if (isLiveDataSource(liveConfigMode)) {
+		return liveConfigMode;
+	}
+
+	const legacyEnvMode = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE?.trim();
+	if (isMentionsDataSource(legacyEnvMode)) {
+		return legacyEnvMode;
+	}
+
+	const legacyConfigMode = getBirdclawConfig().mentions?.dataSource;
+	if (isMentionsDataSource(legacyConfigMode)) {
+		return legacyConfigMode;
 	}
 
 	return "birdclaw";
+}
+
+function isLiveDataSource(value: unknown): value is LiveDataSource {
+	return value === "auto" || value === "bird" || value === "xurl";
+}
+
+function isMentionsDataSource(value: unknown): value is MentionsDataSource {
+	return value === "birdclaw" || isLiveDataSource(value);
 }
 
 export function resolveDigestArchiveDir(requested?: string): string {
@@ -201,7 +208,7 @@ export function resolveActionsTransport(
 		) {
 			return explicitMode;
 		}
-		throw new Error("--transport must be auto, bird, or xurl");
+		throw new Error("Invalid action transport; expected auto, bird, or xurl");
 	}
 
 	const envMode = process.env.BIRDCLAW_ACTIONS_TRANSPORT?.trim();

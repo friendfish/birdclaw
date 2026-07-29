@@ -10,7 +10,7 @@ import {
 	resolveUserPath,
 	type LaunchAgentInstallResult,
 } from "./launchd";
-import { resolveLiveReadMode } from "./live-transport-policy";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import { syncMentionThreads } from "./mention-threads-live";
 import { syncMentions } from "./mentions-live";
 import {
@@ -335,7 +335,7 @@ export async function runAccountSyncJob({
 	lockPath,
 	db,
 }: AccountSyncJobOptions = {}): Promise<AccountSyncAuditEntry> {
-	const resolvedMode = resolveLiveReadMode(mode, "auto");
+	const resolvedMode = resolveLiveSyncMode(mode);
 	ensureBirdclawDirs();
 	const database = db ?? getNativeDb({ seedDemoData: false });
 	const resolvedLogPath = resolveUserPath(
@@ -433,7 +433,7 @@ function buildProgramArguments({
 	envFile,
 }: AccountSyncLaunchAgentOptions) {
 	const resolvedMode =
-		mode === undefined ? undefined : resolveLiveReadMode(mode, "auto");
+		mode === undefined ? undefined : resolveLiveSyncMode(mode);
 	const args = [
 		"--json",
 		"jobs",

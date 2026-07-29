@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import {
 	resolveLiveReadMode,
+	resolveLiveSyncMode,
+	resolveMentionThreadReadMode,
 	xurlDisabledDataSourceStatus,
 	xurlDisabledTransportStatus,
 } from "./live-transport-policy";
@@ -14,6 +16,7 @@ const originalEnvironment = {
 	home: process.env.BIRDCLAW_HOME,
 	config: process.env.BIRDCLAW_CONFIG,
 	mentionsDataSource: process.env.BIRDCLAW_MENTIONS_DATA_SOURCE,
+	liveDataSource: process.env.BIRDCLAW_LIVE_DATA_SOURCE,
 };
 
 let root = "";
@@ -22,6 +25,7 @@ function clearTestEnvironment() {
 	delete process.env.BIRDCLAW_HOME;
 	delete process.env.BIRDCLAW_CONFIG;
 	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 }
 
 function restoreEnvironmentVariable(name: string, value: string | undefined) {
@@ -47,6 +51,10 @@ afterEach(() => {
 		"BIRDCLAW_MENTIONS_DATA_SOURCE",
 		originalEnvironment.mentionsDataSource,
 	);
+	restoreEnvironmentVariable(
+		"BIRDCLAW_LIVE_DATA_SOURCE",
+		originalEnvironment.liveDataSource,
+	);
 	resetBirdclawPathsForTests();
 });
 
@@ -70,7 +78,7 @@ describe("live transport policy", () => {
 
 		for (const mode of ["", "birdclaw", "invalid"]) {
 			expect(() => resolveLiveReadMode(mode)).toThrow(
-				"--mode must be auto, bird, or xurl",
+				"Invalid live-read mode; expected auto, bird, or xurl",
 			);
 		}
 		expect(resolveLiveReadMode()).toBe("xurl");
@@ -84,12 +92,19 @@ describe("live transport policy", () => {
 		expect(resolveLiveReadMode()).toBe("auto");
 	});
 
-	it("keeps the legacy live default for local-only configuration", () => {
+	it("uses capability defaults for local-only configuration", () => {
 		root = mkdtempSync(path.join(os.tmpdir(), "birdclaw-policy-"));
 		process.env.BIRDCLAW_HOME = root;
 		resetBirdclawPathsForTests();
 		expect(resolveLiveReadMode()).toBe("xurl");
-		expect(resolveLiveReadMode(undefined, "auto")).toBe("auto");
+		expect(resolveLiveSyncMode()).toBe("auto");
+		expect(resolveMentionThreadReadMode()).toBe("bird");
+	});
+
+	it("rejects auto for mention-thread sync", () => {
+		expect(() => resolveMentionThreadReadMode("auto")).toThrow(
+			"Mention-thread sync supports only bird or xurl",
+		);
 	});
 
 	it("builds stable disabled xurl statuses", () => {

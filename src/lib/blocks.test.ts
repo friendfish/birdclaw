@@ -256,7 +256,9 @@ describe("blocklist", () => {
 				addBlock("acct_primary", "@amelia", {
 					transport: transport as "bird",
 				}),
-			).rejects.toThrow("--transport must be auto, bird, or xurl");
+			).rejects.toThrow(
+				"Invalid action transport; expected auto, bird, or xurl",
+			);
 		}
 
 		expect(mocks.lookupProfileViaBird).not.toHaveBeenCalled();
@@ -308,7 +310,7 @@ describe("blocklist", () => {
 				"--transport",
 				"   ",
 			]),
-		).rejects.toThrow("--transport must be auto, bird, or xurl");
+		).rejects.toThrow("Invalid action transport; expected auto, bird, or xurl");
 
 		expect(mocks.lookupProfileViaBird).not.toHaveBeenCalled();
 		expect(mocks.lookupUsersByHandles).not.toHaveBeenCalled();

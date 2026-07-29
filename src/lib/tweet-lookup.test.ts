@@ -143,7 +143,7 @@ describe("shared tweet lookup", () => {
 
 		expect(() =>
 			lookupTweetsByIdsEffect(["tweet_1"], "invalid" as "auto"),
-		).toThrow("--mode must be auto, bird, or xurl");
+		).toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 		expect(mocks.lookupTweetsByIdsViaXurl).not.toHaveBeenCalled();
 		expect(mocks.lookupTweetsByIdsViaBird).not.toHaveBeenCalled();
 	});

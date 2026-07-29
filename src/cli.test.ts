@@ -9,6 +9,8 @@ const resolveOperationAccountMock = vi.fn();
 const resolveMentionsDataSourceMock = vi.fn();
 const resolveActionsTransportMock = vi.hoisted(() => vi.fn());
 const resolveLiveReadModeMock = vi.hoisted(() => vi.fn());
+const resolveLiveSyncModeMock = vi.hoisted(() => vi.fn());
+const resolveMentionThreadReadModeMock = vi.hoisted(() => vi.fn());
 const setActionsTransportMock = vi.fn();
 const getQueryEnvelopeMock = vi.fn();
 const getNativeDbMock = vi.fn();
@@ -112,6 +114,9 @@ vi.mock("#/lib/config", () => ({
 
 vi.mock("#/lib/live-transport-policy", () => ({
 	resolveLiveReadMode: (...args: unknown[]) => resolveLiveReadModeMock(...args),
+	resolveLiveSyncMode: (...args: unknown[]) => resolveLiveSyncModeMock(...args),
+	resolveMentionThreadReadMode: (...args: unknown[]) =>
+		resolveMentionThreadReadModeMock(...args),
 }));
 
 vi.mock("#/lib/account-sync-job", () => ({
@@ -369,6 +374,8 @@ describe("cli", () => {
 		resolveMentionsDataSourceMock.mockReset();
 		resolveActionsTransportMock.mockReset();
 		resolveLiveReadModeMock.mockReset();
+		resolveLiveSyncModeMock.mockReset();
+		resolveMentionThreadReadModeMock.mockReset();
 		setActionsTransportMock.mockReset();
 		getQueryEnvelopeMock.mockReset();
 		getNativeDbMock.mockReset();
@@ -476,12 +483,25 @@ describe("cli", () => {
 		resolveActionsTransportMock.mockImplementation((mode?: string) => {
 			if (mode === undefined) return "auto";
 			if (mode === "auto" || mode === "bird" || mode === "xurl") return mode;
-			throw new Error("--transport must be auto, bird, or xurl");
+			throw new Error("Invalid action transport; expected auto, bird, or xurl");
 		});
 		resolveLiveReadModeMock.mockImplementation((mode?: string) => {
 			if (mode === undefined) return "bird";
 			if (mode === "auto" || mode === "bird" || mode === "xurl") return mode;
-			throw new Error("--mode must be auto, bird, or xurl");
+			throw new Error("Invalid live-read mode; expected auto, bird, or xurl");
+		});
+		resolveLiveSyncModeMock.mockImplementation((mode?: string) => {
+			if (mode === undefined) return "bird";
+			if (mode === "auto" || mode === "bird" || mode === "xurl") return mode;
+			throw new Error("Invalid live-read mode; expected auto, bird, or xurl");
+		});
+		resolveMentionThreadReadModeMock.mockImplementation((mode?: string) => {
+			if (mode === undefined) return "bird";
+			if (mode === "bird" || mode === "xurl") return mode;
+			if (mode === "auto") {
+				throw new Error("Mention-thread sync supports only bird or xurl");
+			}
+			throw new Error("Invalid live-read mode; expected auto, bird, or xurl");
 		});
 		streamProfileAnalysisMock.mockResolvedValue({
 			markdown: "# Profile\n",
@@ -851,13 +871,13 @@ describe("cli", () => {
 			target.mockClear();
 			await expect(
 				runCli(["node", "birdclaw", ...args, "--mode", "invalid"]),
-			).rejects.toThrow("--mode must be auto, bird, or xurl");
+			).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 			expect(target).not.toHaveBeenCalled();
 		}
 	});
 
 	it("resolves omitted sync command modes through the live-read policy", async () => {
-		resolveLiveReadModeMock.mockReturnValue("bird");
+		resolveLiveSyncModeMock.mockReturnValue("bird");
 		syncMentionsMock.mockResolvedValue({
 			ok: true,
 			source: "bird",
@@ -891,7 +911,7 @@ describe("cli", () => {
 	});
 
 	it("reports the resolved sync mode when an omitted mode fails", async () => {
-		resolveLiveReadModeMock.mockReturnValue("bird");
+		resolveLiveSyncModeMock.mockReturnValue("bird");
 		syncMentionsMock.mockRejectedValueOnce(new Error("bird unavailable"));
 		const { runCli } = await loadCli();
 
@@ -1466,7 +1486,7 @@ describe("cli", () => {
 
 		await runCli(["node", "birdclaw", "sync", "mentions", "--mode", "weird"]);
 
-		expect(resolveLiveReadModeMock).toHaveBeenCalledWith("weird", "auto");
+		expect(resolveLiveSyncModeMock).toHaveBeenCalledWith("weird");
 		expect(syncMentionsMock).not.toHaveBeenCalled();
 		expect(consoleLogMock).toHaveBeenCalledWith(
 			JSON.stringify(
@@ -1474,7 +1494,7 @@ describe("cli", () => {
 					ok: false,
 					kind: "mentions",
 					mode: "weird",
-					error: "--mode must be auto, bird, or xurl",
+					error: "Invalid live-read mode; expected auto, bird, or xurl",
 				},
 				null,
 				2,
@@ -1509,7 +1529,7 @@ describe("cli", () => {
 				JSON.parse(consoleLogMock.mock.lastCall?.[0] as string),
 			).toMatchObject({
 				ok: false,
-				error: "--mode must be auto, bird, or xurl",
+				error: "Invalid live-read mode; expected auto, bird, or xurl",
 			});
 		}
 	});
@@ -2519,14 +2539,14 @@ describe("cli", () => {
 
 		await runCli(["node", "birdclaw", "sync", "followers", "--mode", "weird"]);
 
-		expect(resolveLiveReadModeMock).toHaveBeenCalledWith("weird", "auto");
+		expect(resolveLiveSyncModeMock).toHaveBeenCalledWith("weird");
 		expect(syncFollowGraphMock).not.toHaveBeenCalled();
 		expect(consoleLogMock).toHaveBeenCalledWith(
 			JSON.stringify(
 				{
 					ok: false,
 					direction: "followers",
-					error: "--mode must be auto, bird, or xurl",
+					error: "Invalid live-read mode; expected auto, bird, or xurl",
 				},
 				null,
 				2,
@@ -2916,7 +2936,7 @@ describe("cli", () => {
 				"--transport",
 				"invalid",
 			]),
-		).rejects.toThrow("--transport must be auto, bird, or xurl");
+		).rejects.toThrow("Invalid action transport; expected auto, bird, or xurl");
 		expect(resolveActionsTransportMock).toHaveBeenCalledWith("invalid");
 		expect(addBlockMock).not.toHaveBeenCalled();
 	});

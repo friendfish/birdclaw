@@ -1,11 +1,19 @@
-import { resolveMentionsDataSource, type MentionsDataSource } from "./config";
+import { resolveMentionsDataSource, type LiveDataSource } from "./config";
 import type { LiveDataSourceStatus, TransportStatus } from "./types";
 
-export type LiveReadMode = Exclude<MentionsDataSource, "birdclaw">;
+export type LiveReadMode = LiveDataSource;
 
-export function resolveLiveReadMode(
-	requestedMode?: string,
-	legacyDefault: LiveReadMode = "xurl",
+type LiveReadCapability = "xurl-first" | "sync" | "mention-threads";
+
+const capabilityDefaults: Record<LiveReadCapability, LiveReadMode> = {
+	"xurl-first": "xurl",
+	sync: "auto",
+	"mention-threads": "bird",
+};
+
+function resolveModeForCapability(
+	requestedMode: string | undefined,
+	capability: LiveReadCapability,
 ): LiveReadMode {
 	if (requestedMode !== undefined) {
 		if (
@@ -15,11 +23,31 @@ export function resolveLiveReadMode(
 		) {
 			return requestedMode;
 		}
-		throw new Error("--mode must be auto, bird, or xurl");
+		throw new Error("Invalid live-read mode; expected auto, bird, or xurl");
 	}
 
 	const source = resolveMentionsDataSource();
-	return source === "birdclaw" ? legacyDefault : source;
+	// Legacy birdclaw is an omitted global preference outside mention export to
+	// preserve pre-policy behavior.
+	return source === "birdclaw" ? capabilityDefaults[capability] : source;
+}
+
+export function resolveLiveReadMode(requestedMode?: string): LiveReadMode {
+	return resolveModeForCapability(requestedMode, "xurl-first");
+}
+
+export function resolveLiveSyncMode(requestedMode?: string): LiveReadMode {
+	return resolveModeForCapability(requestedMode, "sync");
+}
+
+export function resolveMentionThreadReadMode(
+	requestedMode?: string,
+): Exclude<LiveReadMode, "auto"> {
+	const mode = resolveModeForCapability(requestedMode, "mention-threads");
+	if (mode === "auto") {
+		throw new Error("Mention-thread sync supports only bird or xurl");
+	}
+	return mode;
 }
 
 export function xurlDisabledTransportStatus(): TransportStatus {

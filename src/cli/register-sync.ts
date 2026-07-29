@@ -3,7 +3,11 @@ import {
 	syncAuthoredTweets,
 	type AuthoredSyncMode,
 } from "#/lib/authored-live";
-import { resolveLiveReadMode } from "#/lib/live-transport-policy";
+import {
+	resolveLiveReadMode,
+	resolveLiveSyncMode,
+	resolveMentionThreadReadMode,
+} from "#/lib/live-transport-policy";
 import {
 	syncFollowGraph,
 	type SyncFollowGraphOptions,
@@ -19,15 +23,11 @@ import { syncXLists, type XListSyncMode } from "#/lib/x-lists";
 import { errorMessage, type CliCommandContext } from "./command-context";
 
 function resolveSyncMode(mode: string | undefined) {
-	return resolveLiveReadMode(mode, "auto");
+	return resolveLiveSyncMode(mode);
 }
 
 function resolveMentionThreadSyncMode(mode: string | undefined) {
-	const resolvedMode = resolveLiveReadMode(mode, "bird");
-	if (resolvedMode === "auto") {
-		throw new Error("--mode must be bird or xurl");
-	}
-	return resolvedMode;
+	return resolveMentionThreadReadMode(mode);
 }
 
 export function registerSyncCommands({

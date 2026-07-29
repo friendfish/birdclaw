@@ -16,10 +16,8 @@ const syncMentionThreadsMock = vi.hoisted(() => vi.fn());
 const syncMentionsMock = vi.hoisted(() => vi.fn());
 const syncTimelineCollectionMock = vi.hoisted(() => vi.fn());
 const syncHomeTimelineMock = vi.hoisted(() => vi.fn());
-const resolveLiveReadModeMock = vi.hoisted(() =>
-	vi.fn(
-		(requested?: string, legacyDefault = "xurl") => requested ?? legacyDefault,
-	),
+const resolveLiveSyncModeMock = vi.hoisted(() =>
+	vi.fn((requested?: string) => requested ?? "auto"),
 );
 
 vi.mock("./backup", () => ({
@@ -40,8 +38,8 @@ vi.mock("./mentions-live", () => ({
 }));
 
 vi.mock("./live-transport-policy", () => ({
-	resolveLiveReadMode: (...args: [string | undefined, "auto" | "xurl"]) =>
-		resolveLiveReadModeMock(...args),
+	resolveLiveSyncMode: (...args: [string | undefined]) =>
+		resolveLiveSyncModeMock(...args),
 }));
 
 vi.mock("./timeline-collections-live", () => ({
@@ -70,20 +68,18 @@ describe("account sync job", () => {
 		syncMentionsMock.mockReset();
 		syncTimelineCollectionMock.mockReset();
 		syncHomeTimelineMock.mockReset();
-		resolveLiveReadModeMock.mockReset();
-		resolveLiveReadModeMock.mockImplementation(
-			(requested?: string, legacyDefault = "xurl") => {
-				if (requested === undefined) return legacyDefault;
-				if (
-					requested === "auto" ||
-					requested === "bird" ||
-					requested === "xurl"
-				) {
-					return requested;
-				}
-				throw new Error("--mode must be auto, bird, or xurl");
-			},
-		);
+		resolveLiveSyncModeMock.mockReset();
+		resolveLiveSyncModeMock.mockImplementation((requested?: string) => {
+			if (requested === undefined) return "auto";
+			if (
+				requested === "auto" ||
+				requested === "bird" ||
+				requested === "xurl"
+			) {
+				return requested;
+			}
+			throw new Error("Invalid live-read mode; expected auto, bird, or xurl");
+		});
 		maybeAutoSyncBackupMock.mockResolvedValue({
 			ok: true,
 			enabled: false,
@@ -182,7 +178,7 @@ describe("account sync job", () => {
 					mode: "invalid" as "auto",
 					db: {} as never,
 				}),
-			).rejects.toThrow("--mode must be auto, bird, or xurl");
+			).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 			expect(existsSync(homeDir)).toBe(false);
 			expect(syncHomeTimelineMock).not.toHaveBeenCalled();
 			expect(syncMentionsMock).not.toHaveBeenCalled();
@@ -192,7 +188,7 @@ describe("account sync job", () => {
 				buildAccountSyncLaunchAgentPlist({
 					mode: "invalid" as "auto",
 				}),
-			).toThrow("--mode must be auto, bird, or xurl");
+			).toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 
 			await expect(
 				installAccountSyncLaunchAgent({
@@ -200,7 +196,7 @@ describe("account sync job", () => {
 					launchAgentsDir,
 					load: false,
 				}),
-			).rejects.toThrow("--mode must be auto, bird, or xurl");
+			).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 			expect(existsSync(homeDir)).toBe(false);
 			expect(existsSync(launchAgentsDir)).toBe(false);
 		} finally {
@@ -589,7 +585,7 @@ describe("account sync job", () => {
 		tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-account-job-"));
 		const logPath = path.join(tempDir, "audit.jsonl");
 		const lockPath = path.join(tempDir, "sync.lock");
-		resolveLiveReadModeMock.mockReturnValue("bird");
+		resolveLiveSyncModeMock.mockReturnValue("bird");
 		syncMentionThreadsMock.mockResolvedValue({
 			source: "bird",
 			mergedTweets: 4,
@@ -602,7 +598,7 @@ describe("account sync job", () => {
 			db: {} as never,
 		});
 
-		expect(resolveLiveReadModeMock).toHaveBeenCalledWith(undefined, "auto");
+		expect(resolveLiveSyncModeMock).toHaveBeenCalledWith(undefined);
 		expect(syncMentionThreadsMock).toHaveBeenCalledWith(
 			expect.objectContaining({ mode: "bird", limit: 30 }),
 		);
