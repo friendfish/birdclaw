@@ -26,6 +26,7 @@ afterEach(() => {
 	delete process.env.BIRDCLAW_CONFIG;
 	delete process.env.BIRDCLAW_ACTIONS_TRANSPORT;
 	delete process.env.BIRDCLAW_BIRD_COMMAND;
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 	delete process.env.BIRDCLAW_DIGEST_ARCHIVE_DIR;
 
@@ -118,12 +119,51 @@ describe("config", () => {
 		expect(getBirdCommand()).toBe("/tmp/env-bird");
 	});
 
+	it("resolves live data source before legacy mentions source", () => {
+		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
+		tempRoots.push(tempRoot);
+		process.env.BIRDCLAW_HOME = tempRoot;
+		writeFileSync(
+			path.join(tempRoot, "config.json"),
+			JSON.stringify({
+				live: { dataSource: "xurl" },
+				mentions: { dataSource: "bird" },
+			}),
+		);
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "bird";
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "auto";
+
+		expect(resolveMentionsDataSource()).toBe("bird");
+		expect(resolveMentionsDataSource("xurl")).toBe("xurl");
+
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		expect(resolveMentionsDataSource()).toBe("xurl");
+
+		resetBirdclawPathsForTests();
+		process.env.BIRDCLAW_HOME = tempRoot;
+		writeFileSync(
+			path.join(tempRoot, "config.json"),
+			JSON.stringify({ mentions: { dataSource: "bird" } }),
+		);
+		expect(resolveMentionsDataSource()).toBe("auto");
+
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		resetBirdclawPathsForTests();
+		process.env.BIRDCLAW_HOME = tempRoot;
+		expect(resolveMentionsDataSource()).toBe("bird");
+
+		writeFileSync(path.join(tempRoot, "config.json"), "{}");
+		resetBirdclawPathsForTests();
+		process.env.BIRDCLAW_HOME = tempRoot;
+		expect(resolveMentionsDataSource()).toBe("birdclaw");
+	});
+
 	it("rejects invalid explicit action transports instead of falling back", () => {
 		process.env.BIRDCLAW_ACTIONS_TRANSPORT = "bird";
 
 		for (const transport of ["invalid", "", " \t "]) {
 			expect(() => resolveActionsTransport(transport)).toThrow(
-				"--transport must be auto, bird, or xurl",
+				"Invalid action transport; expected auto, bird, or xurl",
 			);
 		}
 		expect(resolveActionsTransport()).toBe("bird");

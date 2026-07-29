@@ -2,7 +2,7 @@ import { Effect } from "effect";
 
 import { resolveOperationAccount } from "./account-selection";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
-import { resolveLiveReadMode } from "./live-transport-policy";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import { resolveProfile } from "./moderation-target";
 import type { ProfileRepliesResponse, XurlReferencedTweet } from "./types";
 import { listUserTweets } from "./xurl";
@@ -29,7 +29,7 @@ export function inspectProfileRepliesEffect(
 	{ account, limit = 12 }: { account?: string; limit?: number } = {},
 ): Effect.Effect<ProfileRepliesResponse, unknown> {
 	return Effect.gen(function* () {
-		if (resolveLiveReadMode(undefined, "auto") === "bird") {
+		if (resolveLiveSyncMode() === "bird") {
 			return yield* Effect.fail(
 				new Error(
 					"Profile reply inspection is not supported with Bird live transport",

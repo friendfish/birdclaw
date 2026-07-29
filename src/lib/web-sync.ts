@@ -5,7 +5,7 @@ import { syncDirectMessagesViaCachedBirdEffect } from "./dms-live";
 import { runEffectBackground, runEffectPromise } from "./effect-runtime";
 import { syncMentionThreadsEffect } from "./mention-threads-live";
 import { syncMentionsEffect } from "./mentions-live";
-import { resolveLiveReadMode } from "./live-transport-policy";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import {
 	defaultServerRuntimeServices,
 	type ServerRuntimeServices,
@@ -137,7 +137,7 @@ function resolveAccountTargetedWebMode(
 	account: string | undefined,
 	runtime: ServerRuntimeServices,
 ) {
-	const configuredMode = resolveLiveReadMode(undefined, "auto");
+	const configuredMode = resolveLiveSyncMode();
 	if (configuredMode !== "auto") return configuredMode;
 	return targetsDefaultWebAccount(account, runtime) ? "auto" : "xurl";
 }
@@ -183,7 +183,7 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 		accountAware: true,
 		run: (account) =>
 			Effect.gen(function* () {
-				const mode = resolveLiveReadMode(undefined, "auto");
+				const mode = resolveLiveSyncMode();
 				const mentions = yield* syncMentionsEffect({
 					account,
 					mode,

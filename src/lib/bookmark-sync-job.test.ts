@@ -132,13 +132,13 @@ describe("bookmark sync job", () => {
 
 		await expect(
 			runBookmarkSyncJob({ mode: "invalid" as "auto", db: {} as never }),
-		).rejects.toThrow("--mode must be auto, bird, or xurl");
+		).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 		expect(existsSync(homeDir)).toBe(false);
 		expect(syncTimelineCollectionMock).not.toHaveBeenCalled();
 
 		expect(() =>
 			buildBookmarkSyncLaunchAgentPlist({ mode: "invalid" as "auto" }),
-		).toThrow("--mode must be auto, bird, or xurl");
+		).toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 
 		await expect(
 			installBookmarkSyncLaunchAgent({
@@ -146,7 +146,7 @@ describe("bookmark sync job", () => {
 				launchAgentsDir,
 				load: false,
 			}),
-		).rejects.toThrow("--mode must be auto, bird, or xurl");
+		).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 		expect(existsSync(homeDir)).toBe(false);
 		expect(existsSync(launchAgentsDir)).toBe(false);
 	});

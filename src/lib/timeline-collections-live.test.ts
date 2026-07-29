@@ -172,7 +172,7 @@ describe("live timeline collection sync", () => {
 				mode: "invalid" as "auto",
 				limit: 20,
 			}),
-		).rejects.toThrow("--mode must be auto, bird, or xurl");
+		).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 		expect(mocks.listLikedTweetsViaXurl).not.toHaveBeenCalled();
 		expect(mocks.listLikedTweetsViaBird).not.toHaveBeenCalled();
 	});

@@ -14,7 +14,7 @@ import {
 	runDigestArchiveJob,
 } from "#/lib/digest-archive-job";
 import type { PeriodDigestPreset } from "#/lib/period-digest";
-import { resolveLiveReadMode } from "#/lib/live-transport-policy";
+import { resolveLiveSyncMode } from "#/lib/live-transport-policy";
 import type { TimelineCollectionMode } from "#/lib/timeline-collections-live";
 import type { CliCommandContext } from "./command-context";
 
@@ -33,7 +33,7 @@ function parsePeriod(value: string): PeriodDigestPreset {
 function parseOptionalJobMode(
 	mode: string | undefined,
 ): TimelineCollectionMode | undefined {
-	return mode === undefined ? undefined : resolveLiveReadMode(mode, "auto");
+	return mode === undefined ? undefined : resolveLiveSyncMode(mode);
 }
 
 export function registerJobCommands({ program, print }: CliCommandContext) {

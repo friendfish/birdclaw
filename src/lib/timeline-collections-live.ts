@@ -2,7 +2,7 @@ import type { Database } from "./sqlite";
 import { Effect } from "effect";
 import { getNativeDb } from "./db";
 import { runEffectPromise, trySync } from "./effect-runtime";
-import { resolveLiveReadMode } from "./live-transport-policy";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import { liveTransportGateway } from "./live-transport-gateway";
 import {
 	createLiveTransportAdapter,
@@ -317,9 +317,7 @@ export function syncTimelineCollectionEffect({
 	earlyStop = false,
 }: SyncTimelineCollectionOptions) {
 	return Effect.gen(function* () {
-		const resolvedMode = yield* trySync(() =>
-			resolveLiveReadMode(mode, "auto"),
-		);
+		const resolvedMode = yield* trySync(() => resolveLiveSyncMode(mode));
 		yield* trySync(() => assertLimit(limit));
 		const parsedMaxPages = yield* trySync(() => parseMaxPages(maxPages));
 		const shouldApplyEarlyStopCap =

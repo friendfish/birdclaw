@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { lookupTweetsByIdsViaBirdEffect } from "./bird";
 import { runEffectPromise } from "./effect-runtime";
-import { resolveLiveReadMode } from "./live-transport-policy";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import type { XurlTweetsResponse } from "./types";
 import { lookupTweetsByIdsEffect as lookupTweetsByIdsViaXurlEffect } from "./xurl";
 
@@ -15,7 +15,7 @@ export function lookupTweetsByIdsEffect(
 	ids: string[],
 	mode?: TweetLookupMode,
 ): Effect.Effect<XurlTweetsResponse, unknown> {
-	const resolvedMode = resolveLiveReadMode(mode, "auto");
+	const resolvedMode = resolveLiveSyncMode(mode);
 	if (resolvedMode === "bird") {
 		return lookupTweetsByIdsViaBirdEffect(ids);
 	}
