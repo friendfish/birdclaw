@@ -5,7 +5,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getBirdclawPaths, resetBirdclawPathsForTests } from "./config";
+import { resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 
 const mocks = vi.hoisted(() => ({
@@ -64,6 +64,7 @@ function setupTempHome() {
 	process.env.BIRDCLAW_HOME = tempRoot;
 	resetBirdclawPathsForTests();
 	resetDatabaseForTests();
+	return tempRoot;
 }
 
 afterEach(() => {
@@ -510,22 +511,10 @@ describe("blocklist", () => {
 	});
 
 	it("rejects invalid explicit block sync modes before xurl work or database mutation", async () => {
-		setupTempHome();
-		const db = getNativeDb();
-		const counts = () => ({
-			profiles: (
-				db.prepare("select count(*) as count from profiles").get() as {
-					count: number;
-				}
-			).count,
-			blocks: (
-				db.prepare("select count(*) as count from blocks").get() as {
-					count: number;
-				}
-			).count,
-		});
-		const before = counts();
+		const tempRoot = setupTempHome();
+		const dbPath = path.join(tempRoot, "birdclaw.sqlite");
 		const { syncBlocks } = await import("./blocks");
+		expect(existsSync(dbPath)).toBe(false);
 
 		for (const mode of ["invalid", ""]) {
 			await expect(syncBlocks("acct_primary", { mode })).rejects.toThrow(
@@ -536,12 +525,12 @@ describe("blocklist", () => {
 		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
 		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
 		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
-		expect(counts()).toEqual(before);
+		expect(existsSync(dbPath)).toBe(false);
 	});
 
 	it("constructs block sync Effects without database or xurl side effects", async () => {
-		setupTempHome();
-		const dbPath = getBirdclawPaths().dbPath;
+		const tempRoot = setupTempHome();
+		const dbPath = path.join(tempRoot, "birdclaw.sqlite");
 		const { syncBlocksEffect } = await import("./blocks");
 
 		const effect = syncBlocksEffect("acct_primary", { mode: "xurl" });

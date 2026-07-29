@@ -91,6 +91,7 @@ describe("discuss route", () => {
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		cleanup();
 		vi.unstubAllGlobals();
 	});
@@ -168,6 +169,7 @@ describe("discuss route", () => {
 	});
 
 	it("round-trips configured and explicit modes through the real router", async () => {
+		vi.spyOn(window, "scrollTo").mockImplementation(() => {});
 		const discussionRequests: URL[] = [];
 		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 			const url = new URL(
