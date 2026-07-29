@@ -15,7 +15,7 @@ export function lookupTweetsByIdsEffect(
 	ids: string[],
 	mode?: TweetLookupMode,
 ): Effect.Effect<XurlTweetsResponse, unknown> {
-	const resolvedMode = mode ?? resolveLiveReadMode(undefined, "auto");
+	const resolvedMode = resolveLiveReadMode(mode, "auto");
 	if (resolvedMode === "bird") {
 		return lookupTweetsByIdsViaBirdEffect(ids);
 	}

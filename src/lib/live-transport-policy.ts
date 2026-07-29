@@ -7,7 +7,18 @@ export function resolveLiveReadMode(
 	requestedMode?: string,
 	legacyDefault: LiveReadMode = "xurl",
 ): LiveReadMode {
-	const source = resolveMentionsDataSource(requestedMode);
+	if (requestedMode !== undefined) {
+		if (
+			requestedMode === "auto" ||
+			requestedMode === "bird" ||
+			requestedMode === "xurl"
+		) {
+			return requestedMode;
+		}
+		throw new Error("--mode must be auto, bird, or xurl");
+	}
+
+	const source = resolveMentionsDataSource();
 	return source === "birdclaw" ? legacyDefault : source;
 }
 

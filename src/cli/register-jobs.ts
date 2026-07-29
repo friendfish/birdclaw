@@ -14,6 +14,7 @@ import {
 	runDigestArchiveJob,
 } from "#/lib/digest-archive-job";
 import type { PeriodDigestPreset } from "#/lib/period-digest";
+import { resolveLiveReadMode } from "#/lib/live-transport-policy";
 import type { TimelineCollectionMode } from "#/lib/timeline-collections-live";
 import type { CliCommandContext } from "./command-context";
 
@@ -27,6 +28,12 @@ function parsePeriod(value: string): PeriodDigestPreset {
 		return value;
 	}
 	throw new Error("--period must be today, yesterday, 24h, or week");
+}
+
+function parseOptionalJobMode(
+	mode: string | undefined,
+): TimelineCollectionMode | undefined {
+	return mode === undefined ? undefined : resolveLiveReadMode(mode, "auto");
 }
 
 export function registerJobCommands({ program, print }: CliCommandContext) {
@@ -58,7 +65,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			const result = await runAccountSyncJob({
 				account: options.account,
 				steps: parseAccountSyncSteps(options.steps),
-				mode: options.mode as TimelineCollectionMode,
+				mode: parseOptionalJobMode(options.mode),
 				limit: Number(options.limit),
 				maxPages: Number(options.maxPages),
 				refresh: Boolean(options.refresh),
@@ -104,7 +111,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				program: options.program,
 				account: options.account,
 				steps: parseAccountSyncSteps(options.steps),
-				mode: options.mode as TimelineCollectionMode,
+				mode: parseOptionalJobMode(options.mode),
 				limit: Number(options.limit),
 				maxPages: Number(options.maxPages),
 				refresh: options.refresh,
@@ -134,7 +141,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.action(async (options) => {
 			const result = await runBookmarkSyncJob({
 				account: options.account,
-				mode: options.mode as TimelineCollectionMode,
+				mode: parseOptionalJobMode(options.mode),
 				limit: Number(options.limit),
 				all: Boolean(options.all) || options.maxPages !== undefined,
 				maxPages: options.all ? undefined : Number(options.maxPages),
@@ -172,7 +179,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				label: options.label,
 				intervalSeconds: Number(options.intervalSeconds),
 				program: options.program,
-				mode: options.mode as TimelineCollectionMode,
+				mode: parseOptionalJobMode(options.mode),
 				limit: Number(options.limit),
 				all: Boolean(options.all) || options.maxPages !== undefined,
 				maxPages: options.all ? undefined : Number(options.maxPages),

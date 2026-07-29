@@ -7,6 +7,7 @@ const getBirdclawPathsMock = vi.fn();
 const getDefaultAccountSelectorMock = vi.fn();
 const resolveOperationAccountMock = vi.fn();
 const resolveMentionsDataSourceMock = vi.fn();
+const resolveActionsTransportMock = vi.hoisted(() => vi.fn());
 const resolveLiveReadModeMock = vi.hoisted(() => vi.fn());
 const setActionsTransportMock = vi.fn();
 const getQueryEnvelopeMock = vi.fn();
@@ -104,6 +105,8 @@ vi.mock("#/lib/config", () => ({
 	getBirdclawPaths: () => getBirdclawPathsMock(),
 	resolveMentionsDataSource: (...args: unknown[]) =>
 		resolveMentionsDataSourceMock(...args),
+	resolveActionsTransport: (...args: unknown[]) =>
+		resolveActionsTransportMock(...args),
 	setActionsTransport: (...args: unknown[]) => setActionsTransportMock(...args),
 }));
 
@@ -364,6 +367,7 @@ describe("cli", () => {
 		getDefaultAccountSelectorMock.mockReset();
 		resolveOperationAccountMock.mockReset();
 		resolveMentionsDataSourceMock.mockReset();
+		resolveActionsTransportMock.mockReset();
 		resolveLiveReadModeMock.mockReset();
 		setActionsTransportMock.mockReset();
 		getQueryEnvelopeMock.mockReset();
@@ -469,7 +473,16 @@ describe("cli", () => {
 		resolveMentionsDataSourceMock.mockImplementation(
 			(mode?: string) => mode ?? "birdclaw",
 		);
-		resolveLiveReadModeMock.mockReturnValue("bird");
+		resolveActionsTransportMock.mockImplementation((mode?: string) => {
+			if (mode === undefined) return "auto";
+			if (mode === "auto" || mode === "bird" || mode === "xurl") return mode;
+			throw new Error("--transport must be auto, bird, or xurl");
+		});
+		resolveLiveReadModeMock.mockImplementation((mode?: string) => {
+			if (mode === undefined) return "bird";
+			if (mode === "auto" || mode === "bird" || mode === "xurl") return mode;
+			throw new Error("--mode must be auto, bird, or xurl");
+		});
 		streamProfileAnalysisMock.mockResolvedValue({
 			markdown: "# Profile\n",
 		});
@@ -810,6 +823,36 @@ describe("cli", () => {
 			expect(installBookmarkSyncLaunchAgentMock).toHaveBeenLastCalledWith(
 				expect.objectContaining({ mode }),
 			);
+		}
+	});
+
+	it("rejects invalid account and bookmark job modes before dispatch", async () => {
+		const { runCli } = await loadCli();
+		const cases = [
+			{
+				args: ["jobs", "sync-account"],
+				target: runAccountSyncJobMock,
+			},
+			{
+				args: ["jobs", "install-account-launchd"],
+				target: installAccountSyncLaunchAgentMock,
+			},
+			{
+				args: ["jobs", "sync-bookmarks"],
+				target: runBookmarkSyncJobMock,
+			},
+			{
+				args: ["jobs", "install-bookmarks-launchd"],
+				target: installBookmarkSyncLaunchAgentMock,
+			},
+		];
+
+		for (const { args, target } of cases) {
+			target.mockClear();
+			await expect(
+				runCli(["node", "birdclaw", ...args, "--mode", "invalid"]),
+			).rejects.toThrow("--mode must be auto, bird, or xurl");
+			expect(target).not.toHaveBeenCalled();
 		}
 	});
 
@@ -1419,29 +1462,56 @@ describe("cli", () => {
 	});
 
 	it("rejects invalid sync mentions modes as json", async () => {
-		syncMentionsMock.mockRejectedValueOnce(
-			new Error("--mode must be bird or xurl"),
-		);
 		const { runCli } = await loadCli();
 
 		await runCli(["node", "birdclaw", "sync", "mentions", "--mode", "weird"]);
 
-		expect(syncMentionsMock).toHaveBeenCalledWith(
-			expect.objectContaining({ mode: "weird" }),
-		);
+		expect(resolveLiveReadModeMock).toHaveBeenCalledWith("weird", "auto");
+		expect(syncMentionsMock).not.toHaveBeenCalled();
 		expect(consoleLogMock).toHaveBeenCalledWith(
 			JSON.stringify(
 				{
 					ok: false,
 					kind: "mentions",
 					mode: "weird",
-					error: "--mode must be bird or xurl",
+					error: "--mode must be auto, bird, or xurl",
 				},
 				null,
 				2,
 			),
 		);
 		expect(process.exitCode).toBe(1);
+	});
+
+	it("rejects invalid modes across the remaining sync command families", async () => {
+		const { runCli } = await loadCli();
+		const cases = [
+			{ args: ["sync", "lists"], target: syncXListsMock },
+			{ args: ["sync", "timeline"], target: syncHomeTimelineMock },
+			{ args: ["sync", "authored"], target: syncAuthoredTweetsMock },
+			{
+				args: ["sync", "mention-threads"],
+				target: syncMentionThreadsMock,
+			},
+			{ args: ["sync", "likes"], target: syncTimelineCollectionMock },
+			{ args: ["sync", "bookmarks"], target: syncTimelineCollectionMock },
+			{ args: ["sync", "following"], target: syncFollowGraphMock },
+		];
+
+		for (const { args, target } of cases) {
+			process.exitCode = undefined;
+			consoleLogMock.mockClear();
+			target.mockClear();
+			await runCli(["node", "birdclaw", ...args, "--mode", "invalid"]);
+			expect(target).not.toHaveBeenCalled();
+			expect(process.exitCode).toBe(1);
+			expect(
+				JSON.parse(consoleLogMock.mock.lastCall?.[0] as string),
+			).toMatchObject({
+				ok: false,
+				error: "--mode must be auto, bird, or xurl",
+			});
+		}
 	});
 
 	it("marks truncated sync mention-threads as partial with exit code 5", async () => {
@@ -2445,16 +2515,12 @@ describe("cli", () => {
 	});
 
 	it("rejects invalid follow sync modes as json", async () => {
-		syncFollowGraphMock.mockRejectedValueOnce(
-			new Error("--mode must be auto, bird, or xurl"),
-		);
 		const { runCli } = await loadCli();
 
 		await runCli(["node", "birdclaw", "sync", "followers", "--mode", "weird"]);
 
-		expect(syncFollowGraphMock).toHaveBeenCalledWith(
-			expect.objectContaining({ mode: "weird" }),
-		);
+		expect(resolveLiveReadModeMock).toHaveBeenCalledWith("weird", "auto");
+		expect(syncFollowGraphMock).not.toHaveBeenCalled();
 		expect(consoleLogMock).toHaveBeenCalledWith(
 			JSON.stringify(
 				{
@@ -2835,6 +2901,24 @@ describe("cli", () => {
 		});
 		expect(syncBlocksMock).toHaveBeenCalledWith("acct_studio");
 		expect(recordBlockMock).toHaveBeenCalledWith("acct_studio", "@sam");
+	});
+
+	it("rejects invalid moderation transports before command dispatch", async () => {
+		const { runCli } = await loadCli();
+
+		await expect(
+			runCli([
+				"node",
+				"birdclaw",
+				"blocks",
+				"add",
+				"@sam",
+				"--transport",
+				"invalid",
+			]),
+		).rejects.toThrow("--transport must be auto, bird, or xurl");
+		expect(resolveActionsTransportMock).toHaveBeenCalledWith("invalid");
+		expect(addBlockMock).not.toHaveBeenCalled();
 	});
 
 	it("dispatches mute and ban commands", async () => {

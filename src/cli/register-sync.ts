@@ -19,7 +19,15 @@ import { syncXLists, type XListSyncMode } from "#/lib/x-lists";
 import { errorMessage, type CliCommandContext } from "./command-context";
 
 function resolveSyncMode(mode: string | undefined) {
-	return mode ?? resolveLiveReadMode(undefined, "auto");
+	return resolveLiveReadMode(mode, "auto");
+}
+
+function resolveMentionThreadSyncMode(mode: string | undefined) {
+	const resolvedMode = resolveLiveReadMode(mode, "bird");
+	if (resolvedMode === "auto") {
+		throw new Error("--mode must be bird or xurl");
+	}
+	return resolvedMode;
 }
 
 export function registerSyncCommands({
@@ -41,11 +49,12 @@ export function registerSyncCommands({
 		.option("--max-member-pages <n>", "Maximum membership pages per List", "1")
 		.option("--delay-ms <n>", "Delay between Lists", "1000")
 		.action(async (options) => {
-			const mode = resolveSyncMode(options.mode) as XListSyncMode;
+			let mode = options.mode ?? "auto";
 			try {
+				mode = resolveSyncMode(options.mode);
 				const result = await syncXLists({
 					account: options.account,
-					mode,
+					mode: mode as XListSyncMode,
 					maxLists: Number(options.maxLists),
 					memberLimit: Number(options.memberLimit),
 					maxMemberPages: Number(options.maxMemberPages),
@@ -79,18 +88,32 @@ export function registerSyncCommands({
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
 		.option("--refresh", "Bypass live-cache freshness window")
 		.action(async (options) => {
-			const mode = resolveSyncMode(options.mode);
-			const result = await syncHomeTimeline({
-				account: options.account,
-				mode: mode as HomeTimelineMode,
-				limit: Number(options.limit),
-				maxPages: Number(options.maxPages),
-				following: !options.forYou,
-				refresh: Boolean(options.refresh),
-				cacheTtlMs: Number(options.cacheTtl) * 1000,
-			});
-			await autoSyncAfterWrite();
-			print(result, true);
+			let mode = options.mode ?? "auto";
+			try {
+				mode = resolveSyncMode(options.mode);
+				const result = await syncHomeTimeline({
+					account: options.account,
+					mode: mode as HomeTimelineMode,
+					limit: Number(options.limit),
+					maxPages: Number(options.maxPages),
+					following: !options.forYou,
+					refresh: Boolean(options.refresh),
+					cacheTtlMs: Number(options.cacheTtl) * 1000,
+				});
+				await autoSyncAfterWrite();
+				print(result, true);
+			} catch (error) {
+				print(
+					{
+						ok: false,
+						kind: "timeline",
+						mode,
+						error: errorMessage(error),
+					},
+					true,
+				);
+				process.exitCode = 1;
+			}
 		});
 
 	syncCommand
@@ -108,8 +131,9 @@ export function registerSyncCommands({
 		.option("--refresh", "Bypass live-cache freshness window")
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
 		.action(async (options) => {
-			const mode = resolveSyncMode(options.mode);
+			let mode = options.mode ?? "auto";
 			try {
+				mode = resolveSyncMode(options.mode);
 				const result = await syncMentions({
 					account: options.account,
 					mode,
@@ -151,11 +175,13 @@ export function registerSyncCommands({
 		)
 		.action(async (options) => {
 			try {
+				const mode =
+					options.mode === undefined
+						? resolveLiveReadMode()
+						: resolveLiveReadMode(options.mode);
 				const result = await syncAuthoredTweets({
 					account: options.account,
-					mode: (options.mode === undefined
-						? resolveLiveReadMode()
-						: options.mode) as AuthoredSyncMode,
+					mode: mode as AuthoredSyncMode,
 					limit: Number(options.limit),
 					maxPages: options.maxPages ? Number(options.maxPages) : undefined,
 					sinceId: options.sinceId,
@@ -195,7 +221,7 @@ export function registerSyncCommands({
 			try {
 				const result = await syncMentionThreads({
 					account: options.account,
-					mode: options.mode,
+					mode: resolveMentionThreadSyncMode(options.mode),
 					limit: Number(options.limit),
 					delayMs: Number(options.delayMs),
 					timeoutMs: Number(options.timeoutMs),
@@ -235,20 +261,26 @@ export function registerSyncCommands({
 			.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
 			.option("--refresh", "Bypass live-cache freshness window")
 			.action(async (options) => {
-				const mode = resolveSyncMode(options.mode);
-				const result = await syncTimelineCollection({
-					kind,
-					account: options.account,
-					mode: mode as TimelineCollectionMode,
-					limit: Number(options.limit),
-					all: Boolean(options.all) || options.maxPages !== undefined,
-					maxPages: options.maxPages ? Number(options.maxPages) : undefined,
-					refresh: Boolean(options.refresh),
-					cacheTtlMs: Number(options.cacheTtl) * 1000,
-					earlyStop: Boolean(options.earlyStop),
-				});
-				await autoSyncAfterWrite();
-				print(result, true);
+				let mode = options.mode ?? "auto";
+				try {
+					mode = resolveSyncMode(options.mode);
+					const result = await syncTimelineCollection({
+						kind,
+						account: options.account,
+						mode: mode as TimelineCollectionMode,
+						limit: Number(options.limit),
+						all: Boolean(options.all) || options.maxPages !== undefined,
+						maxPages: options.maxPages ? Number(options.maxPages) : undefined,
+						refresh: Boolean(options.refresh),
+						cacheTtlMs: Number(options.cacheTtl) * 1000,
+						earlyStop: Boolean(options.earlyStop),
+					});
+					await autoSyncAfterWrite();
+					print(result, true);
+				} catch (error) {
+					print({ ok: false, kind, mode, error: errorMessage(error) }, true);
+					process.exitCode = 1;
+				}
 			});
 	}
 
@@ -268,8 +300,8 @@ export function registerSyncCommands({
 			.option("--allow-partial", "Acknowledge capped/incomplete snapshot")
 			.option("--yes", "Confirm live sync or fresh-cache merge")
 			.action(async (options) => {
-				const mode = resolveSyncMode(options.mode);
 				try {
+					const mode = resolveSyncMode(options.mode);
 					const result = await syncFollowGraph({
 						direction,
 						account: options.account,

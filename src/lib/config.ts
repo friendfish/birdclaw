@@ -192,12 +192,16 @@ export function resolveDigestArchiveDir(requested?: string): string {
 export function resolveActionsTransport(
 	requestedMode?: string,
 ): ActionsTransport {
-	if (
-		requestedMode === "auto" ||
-		requestedMode === "bird" ||
-		requestedMode === "xurl"
-	) {
-		return requestedMode;
+	const explicitMode = requestedMode?.trim();
+	if (explicitMode) {
+		if (
+			explicitMode === "auto" ||
+			explicitMode === "bird" ||
+			explicitMode === "xurl"
+		) {
+			return explicitMode;
+		}
+		throw new Error("--transport must be auto, bird, or xurl");
 	}
 
 	const envMode = process.env.BIRDCLAW_ACTIONS_TRANSPORT?.trim();

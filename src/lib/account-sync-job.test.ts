@@ -1,7 +1,14 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetBirdclawPathsForTests } from "./config";
 
 const maybeAutoSyncBackupMock = vi.hoisted(() => vi.fn());
 const syncDirectMessagesViaCachedBirdMock = vi.hoisted(() => vi.fn());
@@ -65,8 +72,17 @@ describe("account sync job", () => {
 		syncHomeTimelineMock.mockReset();
 		resolveLiveReadModeMock.mockReset();
 		resolveLiveReadModeMock.mockImplementation(
-			(requested?: string, legacyDefault = "xurl") =>
-				requested ?? legacyDefault,
+			(requested?: string, legacyDefault = "xurl") => {
+				if (requested === undefined) return legacyDefault;
+				if (
+					requested === "auto" ||
+					requested === "bird" ||
+					requested === "xurl"
+				) {
+					return requested;
+				}
+				throw new Error("--mode must be auto, bird, or xurl");
+			},
 		);
 		maybeAutoSyncBackupMock.mockResolvedValue({
 			ok: true,
@@ -149,6 +165,48 @@ describe("account sync job", () => {
 			const modeIndex = agent.programArguments.indexOf("--mode");
 			expect(modeIndex).toBeGreaterThanOrEqual(0);
 			expect(agent.programArguments[modeIndex + 1]).toBe(mode);
+		}
+	});
+
+	it("rejects invalid runtime and LaunchAgent modes before side effects", async () => {
+		tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-invalid-job-"));
+		const homeDir = path.join(tempDir, "home");
+		const launchAgentsDir = path.join(tempDir, "LaunchAgents");
+		const previousHome = process.env.BIRDCLAW_HOME;
+		process.env.BIRDCLAW_HOME = homeDir;
+		resetBirdclawPathsForTests();
+
+		try {
+			await expect(
+				runAccountSyncJob({
+					mode: "invalid" as "auto",
+					db: {} as never,
+				}),
+			).rejects.toThrow("--mode must be auto, bird, or xurl");
+			expect(existsSync(homeDir)).toBe(false);
+			expect(syncHomeTimelineMock).not.toHaveBeenCalled();
+			expect(syncMentionsMock).not.toHaveBeenCalled();
+			expect(syncTimelineCollectionMock).not.toHaveBeenCalled();
+
+			expect(() =>
+				buildAccountSyncLaunchAgentPlist({
+					mode: "invalid" as "auto",
+				}),
+			).toThrow("--mode must be auto, bird, or xurl");
+
+			await expect(
+				installAccountSyncLaunchAgent({
+					mode: "invalid" as "auto",
+					launchAgentsDir,
+					load: false,
+				}),
+			).rejects.toThrow("--mode must be auto, bird, or xurl");
+			expect(existsSync(homeDir)).toBe(false);
+			expect(existsSync(launchAgentsDir)).toBe(false);
+		} finally {
+			if (previousHome === undefined) delete process.env.BIRDCLAW_HOME;
+			else process.env.BIRDCLAW_HOME = previousHome;
+			resetBirdclawPathsForTests();
 		}
 	});
 

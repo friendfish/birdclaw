@@ -1,6 +1,6 @@
 import { registerModerationCommands as registerCommands } from "#/cli-moderation";
 import { importBlocklist } from "#/lib/blocklist";
-import type { ActionsTransport } from "#/lib/config";
+import { resolveActionsTransport, type ActionsTransport } from "#/lib/config";
 import type { CliCommandContext } from "./command-context";
 
 export function registerModerationCommands(context: CliCommandContext) {
@@ -10,7 +10,10 @@ export function registerModerationCommands(context: CliCommandContext) {
 		asJson: context.asJson,
 		importBlocklist,
 		resolveActionOptions: (options: { transport?: string }) => ({
-			transport: options.transport as ActionsTransport | undefined,
+			transport:
+				options.transport === undefined
+					? undefined
+					: (resolveActionsTransport(options.transport) as ActionsTransport),
 		}),
 	});
 }

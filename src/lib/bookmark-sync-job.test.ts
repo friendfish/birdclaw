@@ -123,6 +123,34 @@ describe("bookmark sync job", () => {
 		expect(agent.programArguments).not.toContain("--mode");
 	});
 
+	it("rejects invalid runtime and LaunchAgent modes before side effects", async () => {
+		const parentDir = makeTempDir("birdclaw-invalid-bookmark-job-");
+		const homeDir = path.join(parentDir, "home");
+		const launchAgentsDir = path.join(parentDir, "LaunchAgents");
+		process.env.BIRDCLAW_HOME = homeDir;
+		resetBirdclawPathsForTests();
+
+		await expect(
+			runBookmarkSyncJob({ mode: "invalid" as "auto", db: {} as never }),
+		).rejects.toThrow("--mode must be auto, bird, or xurl");
+		expect(existsSync(homeDir)).toBe(false);
+		expect(syncTimelineCollectionMock).not.toHaveBeenCalled();
+
+		expect(() =>
+			buildBookmarkSyncLaunchAgentPlist({ mode: "invalid" as "auto" }),
+		).toThrow("--mode must be auto, bird, or xurl");
+
+		await expect(
+			installBookmarkSyncLaunchAgent({
+				mode: "invalid" as "auto",
+				launchAgentsDir,
+				load: false,
+			}),
+		).rejects.toThrow("--mode must be auto, bird, or xurl");
+		expect(existsSync(homeDir)).toBe(false);
+		expect(existsSync(launchAgentsDir)).toBe(false);
+	});
+
 	it("builds bookmark sync jobs lazily as Effect programs", async () => {
 		process.env.BIRDCLAW_HOME = makeTempDir("birdclaw-job-lazy-");
 		resetBirdclawPathsForTests();

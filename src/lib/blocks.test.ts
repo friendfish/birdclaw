@@ -245,6 +245,24 @@ describe("blocklist", () => {
 		expect(listBlocks({ account: "acct_primary" })).toHaveLength(0);
 	});
 
+	it("rejects an invalid explicit transport before lookup, live action, or persistence", async () => {
+		setupTempHome();
+		const { addBlock, listBlocks } = await import("./blocks");
+
+		await expect(
+			addBlock("acct_primary", "@amelia", {
+				transport: "invalid" as "bird",
+			}),
+		).rejects.toThrow("--transport must be auto, bird, or xurl");
+
+		expect(mocks.lookupProfileViaBird).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByHandles).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
+		expect(mocks.blockUserViaBird).not.toHaveBeenCalled();
+		expect(mocks.blockUserViaXurl).not.toHaveBeenCalled();
+		expect(listBlocks({ account: "acct_primary" })).toHaveLength(0);
+	});
+
 	it("rejects blocking the current account", async () => {
 		setupTempHome();
 		const { addBlock } = await import("./blocks");

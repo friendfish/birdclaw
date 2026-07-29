@@ -101,6 +101,14 @@ function isFresh(updatedAt: string, maxAgeMs: number) {
 	return Date.now() - new Date(updatedAt).getTime() <= maxAgeMs;
 }
 
+function isCachedLookupCompatible(
+	value: CachedProfileLookup,
+	xurlFallback: boolean,
+) {
+	if (value.status === "hit") return true;
+	return value.source === (xurlFallback ? "xurl" : "bird");
+}
+
 function cacheKeyForUserId(externalUserId: string) {
 	return `profile:lookup:user-id:${externalUserId}`;
 }
@@ -325,7 +333,10 @@ export function resolveProfilesForIdsEffect(
 			if (cached && !options.refresh) {
 				const maxAge =
 					cached.value.status === "hit" ? maxAgeMs : negativeMaxAgeMs;
-				if (isFresh(cached.updatedAt, maxAge)) {
+				if (
+					isFresh(cached.updatedAt, maxAge) &&
+					isCachedLookupCompatible(cached.value, xurlFallback)
+				) {
 					if (cached.value.status === "hit" && cached.value.user) {
 						const resolved = yield* trySync(() => {
 							const resolved = upsertProfileFromXUser(db, cached.value.user!);
