@@ -89,13 +89,18 @@ describe("api profile analysis route", () => {
 	});
 
 	it("rejects an invalid explicit transport mode", async () => {
-		await expect(
-			GET({
-				request: new Request(
-					"http://localhost/api/profile-analysis?handle=alice&mode=invalid",
-				),
-			}),
-		).rejects.toThrow("mode must be auto, bird, or xurl");
+		const response = await GET({
+			request: new Request(
+				"http://localhost/api/profile-analysis?handle=alice&mode=invalid",
+			),
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toEqual({
+			ok: false,
+			error: "mode must be auto, bird, or xurl",
+		});
+		expect(maybeAutoUpdateBackupMock).not.toHaveBeenCalled();
 		expect(streamProfileAnalysisMock).not.toHaveBeenCalled();
 	});
 

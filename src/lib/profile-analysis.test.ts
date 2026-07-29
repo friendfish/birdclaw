@@ -237,6 +237,26 @@ describe("profile analysis", () => {
 		expect(mocks.lookupUsersByHandlesEffect).not.toHaveBeenCalled();
 		expect(mocks.listUserTweetsEffect).not.toHaveBeenCalled();
 		expect(mocks.searchRecentByConversationIdEffect).not.toHaveBeenCalled();
+		expect(
+			getNativeDb()
+				.prepare(
+					"select tweet_id, kind, source from tweet_account_edges where tweet_id in ('tweet_1', 'reply_1') order by tweet_id",
+				)
+				.all(),
+		).toEqual([
+			{ tweet_id: "reply_1", kind: "thread_context", source: "bird" },
+			{ tweet_id: "tweet_1", kind: "profile", source: "bird" },
+		]);
+		expect(
+			getNativeDb()
+				.prepare(
+					"select revision_id, source from tweet_revisions where revision_id in ('tweet_1', 'reply_1') order by revision_id",
+				)
+				.all(),
+		).toEqual([
+			{ revision_id: "reply_1", source: "bird" },
+			{ revision_id: "tweet_1", source: "bird" },
+		]);
 	});
 
 	it("does not reuse xurl profile context cache for Bird mode", async () => {
@@ -301,6 +321,26 @@ describe("profile analysis", () => {
 				)
 				.get(),
 		).toEqual({ count: 1 });
+		expect(
+			getNativeDb()
+				.prepare(
+					"select tweet_id, kind, source from tweet_account_edges where tweet_id in ('tweet_1', 'reply_1') order by tweet_id",
+				)
+				.all(),
+		).toEqual([
+			{ tweet_id: "reply_1", kind: "thread_context", source: "xurl" },
+			{ tweet_id: "tweet_1", kind: "profile", source: "xurl" },
+		]);
+		expect(
+			getNativeDb()
+				.prepare(
+					"select revision_id, source from tweet_revisions where revision_id in ('tweet_1', 'reply_1') order by revision_id",
+				)
+				.all(),
+		).toEqual([
+			{ revision_id: "reply_1", source: "xurl" },
+			{ revision_id: "tweet_1", source: "xurl" },
+		]);
 		expect(
 			listTimelineItems({
 				resource: "search",

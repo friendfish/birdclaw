@@ -134,10 +134,7 @@ export function validateDiscussSearch(
 			["search", "all", "home", "mentions", "authored", "likes", "bookmarks"],
 			"search",
 		),
-		mode:
-			search.mode === undefined
-				? "bird"
-				: enumValue(search.mode, ["auto", "bird", "xurl", "local"], "xurl"),
+		mode: enumValue(search.mode, ["auto", "bird", "xurl", "local"], "bird"),
 		includeDms: booleanValue(search.includeDms),
 	};
 }
