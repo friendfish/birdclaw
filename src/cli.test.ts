@@ -1606,6 +1606,28 @@ describe("cli", () => {
 		expect(process.exitCode).toBe(5);
 	});
 
+	it("resolves an omitted mention-thread mode before dispatching", async () => {
+		resolveMentionThreadReadModeMock.mockReturnValue("xurl");
+		syncMentionThreadsMock.mockResolvedValueOnce({
+			ok: true,
+			partial: false,
+		});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "sync", "mention-threads"]);
+
+		expect(resolveMentionThreadReadModeMock).toHaveBeenCalledWith(undefined);
+		expect(syncMentionThreadsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "xurl" }),
+		);
+		expect(
+			JSON.parse(consoleLogMock.mock.lastCall?.[0] as string),
+		).toMatchObject({
+			ok: true,
+			mode: "xurl",
+		});
+	});
+
 	it("imports an explicit archive path without discovery", async () => {
 		const { runCli } = await loadCli();
 
@@ -2919,8 +2941,20 @@ describe("cli", () => {
 		expect(removeBlockMock).toHaveBeenCalledWith("acct_studio", "@sam", {
 			transport: "bird",
 		});
-		expect(syncBlocksMock).toHaveBeenCalledWith("acct_studio");
+		expect(syncBlocksMock).toHaveBeenCalledWith("acct_studio", {
+			mode: undefined,
+		});
 		expect(recordBlockMock).toHaveBeenCalledWith("acct_studio", "@sam");
+	});
+
+	it("forwards an explicit block sync read mode", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "blocks", "sync", "--mode", "xurl"]);
+
+		expect(syncBlocksMock).toHaveBeenCalledWith("acct_primary", {
+			mode: "xurl",
+		});
 	});
 
 	it("rejects invalid moderation transports before command dispatch", async () => {

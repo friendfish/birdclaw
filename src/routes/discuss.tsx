@@ -27,8 +27,8 @@ import {
 	isTerminalStreamEvent,
 	searchDiscussionStreamEventSchema,
 } from "#/lib/client-stream-contracts";
-import type { TweetSearchMode } from "#/lib/tweet-search-live";
 import {
+	type DiscussRouteMode,
 	type DiscussRouteSearch,
 	type RouteSearchChange,
 	validateDiscussSearch,
@@ -65,7 +65,8 @@ const sources: Array<{ value: SearchDiscussionSource; label: string }> = [
 	{ value: "bookmarks", label: "Bookmarks" },
 ];
 
-const modes: Array<{ value: TweetSearchMode; label: string }> = [
+const modes: Array<{ value: DiscussRouteMode; label: string }> = [
+	{ value: "", label: "Configured" },
 	{ value: "auto", label: "Auto" },
 	{ value: "bird", label: "Bird" },
 	{ value: "xurl", label: "xurl" },
@@ -88,7 +89,7 @@ function discussionUrl(
 	query: string,
 	options: {
 		source: SearchDiscussionSource;
-		mode: TweetSearchMode;
+		mode: DiscussRouteMode;
 		includeDms: boolean;
 		question: string;
 		refresh: boolean;
@@ -97,7 +98,9 @@ function discussionUrl(
 	const url = new URL("/api/search-discussion", window.location.origin);
 	url.searchParams.set("query", query);
 	url.searchParams.set("source", options.source);
-	url.searchParams.set("mode", options.mode);
+	if (options.mode) {
+		url.searchParams.set("mode", options.mode);
+	}
 	url.searchParams.set("includeDms", String(options.includeDms));
 	url.searchParams.set("limit", String(DISCUSS_SEARCH_LIMIT));
 	url.searchParams.set("maxPages", String(DISCUSS_MAX_PAGES));
@@ -172,7 +175,7 @@ function formatCounts(context: SearchDiscussionContext | null) {
 function useDiscussionStream(
 	query: string,
 	source: SearchDiscussionSource,
-	mode: TweetSearchMode,
+	mode: DiscussRouteMode,
 	includeDms: boolean,
 	question: string,
 ) {

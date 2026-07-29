@@ -24,8 +24,11 @@ describe("route search schemas", () => {
 			kind: "videos",
 			range: "week",
 		});
-		expect(validateDiscussSearch({ mode: "bad" }).mode).toBe("bird");
-		expect(validateDiscussSearch({}).mode).toBe("bird");
+		expect(validateDiscussSearch({ mode: "bad" }).mode).toBe("");
+		expect(validateDiscussSearch({}).mode).toBe("");
+		for (const mode of ["auto", "bird", "xurl", "local"] as const) {
+			expect(validateDiscussSearch({ mode }).mode).toBe(mode);
+		}
 		expect(validateTodaySearch({ period: "bad" }).period).toBe("today");
 		expect(validateTodaySearch({ contentSource: "bad" }).contentSource).toBe(
 			"all",

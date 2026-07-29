@@ -119,9 +119,11 @@ export interface DiscussRouteSearch {
 	q: string;
 	question: string;
 	source: SearchDiscussionSource;
-	mode: TweetSearchMode;
+	mode: DiscussRouteMode;
 	includeDms: boolean;
 }
+
+export type DiscussRouteMode = TweetSearchMode | "";
 
 export function validateDiscussSearch(
 	search: Record<string, unknown>,
@@ -134,7 +136,7 @@ export function validateDiscussSearch(
 			["search", "all", "home", "mentions", "authored", "likes", "bookmarks"],
 			"search",
 		),
-		mode: enumValue(search.mode, ["auto", "bird", "xurl", "local"], "bird"),
+		mode: enumValue(search.mode, ["auto", "bird", "xurl", "local"], ""),
 		includeDms: booleanValue(search.includeDms),
 	};
 }
