@@ -28,7 +28,7 @@ function assertComposeTransportEffect() {
 		if (transport === "bird") {
 			return yield* Effect.fail(
 				new Error(
-					"Compose writes are not supported when actions transport is Bird",
+					"Compose writes require xurl; set actions.transport to auto or xurl",
 				),
 			);
 		}
