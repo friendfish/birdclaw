@@ -81,6 +81,39 @@ describe("profile hydration", () => {
 		expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
 	});
 
+	it("skips xurl probing when bird is configured", async () => {
+		const previousDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		try {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+			resetBirdclawPathsForTests();
+			mocks.getTransportStatus.mockResolvedValueOnce({
+				availableTransport: "local",
+				installed: false,
+				statusText: "xurl missing",
+			});
+			mocks.getAuthenticatedBirdAccount.mockRejectedValueOnce(
+				new Error("bird unavailable"),
+			);
+			const { hydrateProfilesFromX } = await import("./profile-hydration");
+
+			await expect(hydrateProfilesFromX()).resolves.toEqual({
+				ok: true,
+				hydratedProfiles: 0,
+				hydratedAccount: false,
+				reason: "xurl disabled by bird transport selection",
+			});
+			expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+			expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
+		} finally {
+			if (previousDataSource === undefined) {
+				delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+			} else {
+				process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = previousDataSource;
+			}
+			resetBirdclawPathsForTests();
+		}
+	});
+
 	it("hydrates imported placeholder profiles from xurl", async () => {
 		const db = getNativeDb();
 		db.exec(`

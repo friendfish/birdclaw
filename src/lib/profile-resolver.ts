@@ -6,6 +6,7 @@ import {
 	lookupProfilesViaBirdEffect,
 } from "./bird";
 import { runEffectPromise } from "./effect-runtime";
+import { resolveLiveReadMode } from "./live-transport-policy";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
 import {
 	hydrateProfileAffiliationOrganizationsEffect,
@@ -277,7 +278,8 @@ export function resolveProfilesForIdsEffect(
 		const maxAgeMs = options.maxAgeMs ?? PROFILE_CACHE_TTL_MS;
 		const negativeMaxAgeMs =
 			options.negativeMaxAgeMs ?? PROFILE_NEGATIVE_CACHE_TTL_MS;
-		const xurlFallback = options.xurlFallback ?? true;
+		const xurlFallback =
+			options.xurlFallback ?? resolveLiveReadMode() !== "bird";
 		const ordered: Array<
 			| { kind: "ready"; result: ProfileResolveResult }
 			| { kind: "pending"; profileId: string; externalUserId: string }
@@ -425,7 +427,8 @@ export function resolveProfilesForHandlesEffect(
 ): Effect.Effect<HandleProfileResolveResult[], unknown> {
 	return Effect.gen(function* () {
 		const db = yield* trySync(() => getNativeDb());
-		const xurlFallback = options.xurlFallback ?? true;
+		const xurlFallback =
+			options.xurlFallback ?? resolveLiveReadMode() !== "bird";
 		const targets = Array.from(
 			new Set(
 				handles.map(profileHandleKey).filter((handle) => handle.length > 0),
