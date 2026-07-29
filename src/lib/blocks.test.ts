@@ -510,6 +510,32 @@ describe("blocklist", () => {
 		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
 	});
 
+	it("skips configured and explicit Bird block syncs without opening the database", async () => {
+		const tempRoot = setupTempHome();
+		const dbPath = path.join(tempRoot, "birdclaw.sqlite");
+		vi.stubEnv("BIRDCLAW_LIVE_DATA_SOURCE", "bird");
+		const { syncBlocks, syncBlocksEffect } = await import("./blocks");
+
+		const effect = syncBlocksEffect("acct_explicit", { mode: "bird" });
+		expect(existsSync(dbPath)).toBe(false);
+
+		await expect(Effect.runPromise(effect)).resolves.toMatchObject({
+			ok: true,
+			accountId: "acct_explicit",
+			synced: false,
+		});
+		await expect(syncBlocks("")).resolves.toMatchObject({
+			ok: true,
+			accountId: "default",
+			synced: false,
+		});
+
+		expect(existsSync(dbPath)).toBe(false);
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
+	});
+
 	it("rejects invalid explicit block sync modes before xurl work or database mutation", async () => {
 		const tempRoot = setupTempHome();
 		const dbPath = path.join(tempRoot, "birdclaw.sqlite");

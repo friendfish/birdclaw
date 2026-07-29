@@ -744,6 +744,9 @@ export function collectProfileAnalysisContextEffect(
 	handlers: ProfileAnalysisStreamHandlers = {},
 ): Effect.Effect<ProfileAnalysisContext, Error> {
 	return Effect.gen(function* () {
+		const liveMode = yield* tryProfileSync(() =>
+			resolveLiveReadMode(options.mode),
+		);
 		const db = getNativeDb();
 		const handle = yield* tryProfileSync(() => normalizeHandle(options.handle));
 		const account = yield* tryProfileSync(() =>
@@ -781,7 +784,6 @@ export function collectProfileAnalysisContextEffect(
 		const rateLimitRetryMs = rateLimitRetryMsFromOptions(options);
 		const rateLimitMaxRetries = rateLimitMaxRetriesFromOptions(options);
 		const cacheTtlMs = normalizeCacheTtlMs(options.cacheTtlMs);
-		const liveMode = resolveLiveReadMode(options.mode);
 		const contextKey = contextCacheKey({
 			accountId: account.id,
 			handle,

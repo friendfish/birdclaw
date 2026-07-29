@@ -1,12 +1,15 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
-import { streamProfileAnalysis } from "./profile-analysis";
+import {
+	collectProfileAnalysisContextEffect,
+	streamProfileAnalysis,
+} from "./profile-analysis";
 import { listTimelineItems } from "./queries";
 
 const mocks = vi.hoisted(() => ({
@@ -223,6 +226,37 @@ afterEach(() => {
 });
 
 describe("profile analysis", () => {
+	it("rejects invalid profile analysis modes before opening the database", async () => {
+		for (const mode of ["invalid", " \t "]) {
+			const tempRoot = mkdtempSync(
+				path.join(os.tmpdir(), "birdclaw-profile-ai-"),
+			);
+			tempRoots.push(tempRoot);
+			process.env.BIRDCLAW_HOME = tempRoot;
+			resetBirdclawPathsForTests();
+			resetDatabaseForTests();
+			const dbPath = path.join(tempRoot, "birdclaw.sqlite");
+
+			const effect = collectProfileAnalysisContextEffect({
+				handle: "alice",
+				mode: mode as never,
+			});
+			expect(existsSync(dbPath)).toBe(false);
+
+			await expect(Effect.runPromise(effect)).rejects.toThrow(
+				"Invalid live-read mode; expected auto, bird, or xurl",
+			);
+			expect(existsSync(dbPath)).toBe(false);
+		}
+		expect(mocks.lookupProfileViaBirdEffect).not.toHaveBeenCalled();
+		expect(mocks.listUserTweetsViaBirdEffect).not.toHaveBeenCalled();
+		expect(mocks.listThreadViaBirdEffect).not.toHaveBeenCalled();
+		expect(mocks.getTransportStatusEffect).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByHandlesEffect).not.toHaveBeenCalled();
+		expect(mocks.listUserTweetsEffect).not.toHaveBeenCalled();
+		expect(mocks.searchRecentByConversationIdEffect).not.toHaveBeenCalled();
+	});
+
 	it("uses Bird for profile, tweets, and threads without probing xurl in Bird mode", async () => {
 		const result = await streamProfileAnalysis({
 			handle: "@alice",

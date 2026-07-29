@@ -36,6 +36,7 @@ export function registerMentionCommands({
 		)
 		.option("--limit <n>", "Limit results", "20")
 		.action(async (query, options) => {
+			const mode = resolveMentionsDataSource(options.mode);
 			await autoUpdateBeforeRead();
 			const replyFilter = options.replied
 				? "replied"
@@ -43,7 +44,6 @@ export function registerMentionCommands({
 					? "unreplied"
 					: "all";
 			const limit = Number(options.limit);
-			const mode = resolveMentionsDataSource(options.mode);
 			if (mode === "xurl" || mode === "bird" || mode === "auto") {
 				const exportFn =
 					mode === "xurl"

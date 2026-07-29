@@ -148,8 +148,13 @@ export function setActionsTransport(transport: ActionsTransport) {
 export function resolveMentionsDataSource(
 	requestedMode?: string,
 ): MentionsDataSource {
-	if (isMentionsDataSource(requestedMode)) {
-		return requestedMode;
+	if (requestedMode !== undefined) {
+		if (isMentionsDataSource(requestedMode)) {
+			return requestedMode;
+		}
+		throw new Error(
+			"Invalid mentions data source; expected birdclaw, auto, bird, or xurl",
+		);
 	}
 
 	const liveEnvMode = process.env.BIRDCLAW_LIVE_DATA_SOURCE?.trim();

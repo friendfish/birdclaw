@@ -188,6 +188,21 @@ describe("config", () => {
 		expect(resolveActionsTransport("xurl")).toBe("xurl");
 	});
 
+	it("rejects invalid explicit mention data sources instead of falling back", () => {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "xurl";
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+
+		for (const mode of ["invalid", "", " \t "]) {
+			expect(() => resolveMentionsDataSource(mode)).toThrow(
+				"Invalid mentions data source; expected birdclaw, auto, bird, or xurl",
+			);
+		}
+		expect(resolveMentionsDataSource("birdclaw")).toBe("birdclaw");
+		expect(resolveMentionsDataSource("auto")).toBe("auto");
+		expect(resolveMentionsDataSource("bird")).toBe("bird");
+		expect(resolveMentionsDataSource("xurl")).toBe("xurl");
+	});
+
 	it("sets actions transport in the active config file", () => {
 		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
 		tempRoots.push(tempRoot);

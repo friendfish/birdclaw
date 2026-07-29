@@ -119,6 +119,19 @@ export function syncBlocksEffect(
 ) {
 	return Effect.gen(function* () {
 		const mode = yield* trySync(() => resolveLiveSyncMode(options.mode));
+		if (mode === "bird") {
+			return {
+				ok: true,
+				accountId: accountId || "default",
+				synced: false,
+				syncedCount: 0,
+				transport: {
+					ok: true,
+					output:
+						"remote block sync skipped (xurl disabled by bird transport selection)",
+				},
+			};
+		}
 		const db = yield* trySync(() => getNativeDb());
 		const resolvedAccountId = accountId || getDefaultAccountId(db);
 		const accountHandle = getAccountHandle(db, resolvedAccountId);
@@ -135,19 +148,6 @@ export function syncBlocksEffect(
 					| { handle: string; external_user_id: string | null }
 					| undefined,
 		);
-		if (mode === "bird") {
-			return {
-				ok: true,
-				accountId: resolvedAccountId,
-				synced: false,
-				syncedCount: 0,
-				transport: {
-					ok: true,
-					output:
-						"remote block sync skipped (xurl disabled by bird transport selection)",
-				},
-			};
-		}
 		const blockedAt = new Date().toISOString();
 		const remoteProfileIds: string[] = [];
 
