@@ -158,7 +158,7 @@ See [Public tweet import](public-tweets.md) for the full privacy and capability 
 
 ### `auth use <transport>`
 
-- set preferred live write transport
+- set the preferred transport for compose and policy-backed moderation writes; it does not apply to Bird-only DM request mutations (`dms accept`, `dms reject`, and `dms block`)
 - allowed: `auto`, `xurl`, `bird`
 - Bird mode rejects post, reply, and DM compose because those writes are xurl-only.
 
