@@ -2,9 +2,37 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Effect } from "effect";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
+
+const mocks = vi.hoisted(() => ({
+	lookupProfileViaBird: vi.fn(),
+	lookupProfilesViaBird: vi.fn(),
+	lookupUsersByIds: vi.fn(),
+}));
+
+vi.mock("./bird", () => ({
+	lookupProfileViaBirdEffect: (target: string) =>
+		Effect.tryPromise({
+			try: () => mocks.lookupProfileViaBird(target),
+			catch: (error) => error,
+		}),
+	lookupProfilesViaBirdEffect: (targets: string[]) =>
+		Effect.tryPromise({
+			try: () => mocks.lookupProfilesViaBird(targets),
+			catch: (error) => error,
+		}),
+}));
+
+vi.mock("./xurl", () => ({
+	lookupUsersByIdsEffect: (ids: string[]) =>
+		Effect.tryPromise({
+			try: () => mocks.lookupUsersByIds(ids),
+			catch: (error) => error,
+		}),
+}));
 
 let homeDir = "";
 
@@ -14,6 +42,9 @@ describe("whois", () => {
 		process.env.BIRDCLAW_HOME = homeDir;
 		resetBirdclawPathsForTests();
 		resetDatabaseForTests();
+		mocks.lookupProfileViaBird.mockReset();
+		mocks.lookupProfilesViaBird.mockReset();
+		mocks.lookupUsersByIds.mockReset();
 		const db = getNativeDb();
 		db.exec(`
       delete from ai_scores;
@@ -276,6 +307,36 @@ describe("whois", () => {
 				source: "local",
 			}),
 		]);
+	});
+
+	it("uses configured bird policy for whois profile resolution", async () => {
+		const previousDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		try {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+			resetBirdclawPathsForTests();
+			const db = getNativeDb();
+			db.prepare(
+				"update profiles set handle = 'id42', display_name = 'id42', bio = 'Imported from archive user 42', followers_count = 0 where id = 'profile_user_42'",
+			).run();
+			mocks.lookupProfileViaBird.mockResolvedValueOnce(null);
+			const { runWhois } = await import("./whois");
+
+			const result = await runWhois("blacksmith", {
+				expandUrls: false,
+				context: 1,
+			});
+			expect(result.profileResolution).toEqual([
+				expect.objectContaining({ source: "bird", status: "miss" }),
+			]);
+			expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
+		} finally {
+			if (previousDataSource === undefined) {
+				delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+			} else {
+				process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = previousDataSource;
+			}
+			resetBirdclawPathsForTests();
+		}
 	});
 
 	it("uses significant terms and bio entities for fuzzy identity queries", async () => {

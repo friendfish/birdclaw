@@ -53,7 +53,7 @@ export function registerDirectMessageCommands({
 		.option("--replied", "Only replied threads")
 		.option("--unreplied", "Only unreplied threads")
 		.option("--limit <n>", "Limit results", "20")
-		.action(async (options) => {
+		.action(async (options, command) => {
 			const replyFilter = options.replied
 				? "replied"
 				: options.unreplied
@@ -121,7 +121,10 @@ export function registerDirectMessageCommands({
 					expandUrls: Boolean(options.expandUrls),
 					refreshProfileCache: Boolean(options.refreshProfileCache),
 					refreshUrlCache: Boolean(options.refreshUrlCache),
-					xurlFallback: options.xurlFallback,
+					xurlFallback:
+						command.getOptionValueSource("xurlFallback") === "cli"
+							? options.xurlFallback
+							: undefined,
 				},
 			);
 			print(items, program.opts().json ?? false);

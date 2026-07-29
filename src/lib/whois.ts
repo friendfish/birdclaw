@@ -801,7 +801,7 @@ export function runWhoisEffect(
 				conversations.map((item) => item.participant.id),
 				{
 					refresh: options.refreshProfileCache,
-					xurlFallback: options.xurlFallback ?? true,
+					xurlFallback: options.xurlFallback,
 				},
 			);
 			conversations = yield* trySync(() =>

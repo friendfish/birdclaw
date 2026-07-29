@@ -132,7 +132,7 @@ export function registerSearchCommands({
 		.option("--replied", "Only replied threads")
 		.option("--unreplied", "Only unreplied threads")
 		.option("--limit <n>", "Limit results", "20")
-		.action(async (query, options) => {
+		.action(async (query, options, command) => {
 			await autoUpdateBeforeRead();
 			const context = parseNonNegativeIntegerOption(
 				options.context,
@@ -176,7 +176,10 @@ export function registerSearchCommands({
 					expandUrls: Boolean(options.expandUrls),
 					refreshProfileCache: Boolean(options.refreshProfileCache),
 					refreshUrlCache: Boolean(options.refreshUrlCache),
-					xurlFallback: options.xurlFallback,
+					xurlFallback:
+						command.getOptionValueSource("xurlFallback") === "cli"
+							? options.xurlFallback
+							: undefined,
 				},
 			);
 			print(items, asJson());
@@ -355,7 +358,7 @@ export function registerSearchCommands({
 		)
 		.option("--context <n>", "DM messages before and after each match", "4")
 		.option("--limit <n>", "Limit candidates", "10")
-		.action(async (query, options) => {
+		.action(async (query, options, command) => {
 			await autoUpdateBeforeRead();
 			const context = parseNonNegativeIntegerOption(
 				options.context,
@@ -370,7 +373,10 @@ export function registerSearchCommands({
 				expandUrls: options.expandUrls,
 				refreshProfileCache: Boolean(options.refreshProfileCache),
 				refreshUrlCache: Boolean(options.refreshUrlCache),
-				xurlFallback: options.xurlFallback,
+				xurlFallback:
+					command.getOptionValueSource("xurlFallback") === "cli"
+						? options.xurlFallback
+						: undefined,
 				affiliation: options.affiliation,
 				currentAffiliation: options.currentAffiliation,
 				excludeDomainOnly: Boolean(options.excludeDomainOnly),
