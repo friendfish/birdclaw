@@ -5,6 +5,8 @@ import { databaseWriteEffect } from "./database-writer";
 import { getNativeDb } from "./db";
 import { runEffectPromise, trySync } from "./effect-runtime";
 import { liveTransportGateway } from "./live-transport-gateway";
+
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import {
 	assertLiveAccountMatches,
 	resolveLiveSyncAccount,
@@ -271,11 +273,11 @@ function parseMaxPages(value?: number) {
 }
 
 function parseSyncMode(value?: string): MentionSyncMode {
-	const mode = value ?? "auto";
-	if (mode !== "auto" && mode !== "bird" && mode !== "xurl") {
+	try {
+		return resolveLiveSyncMode(value);
+	} catch {
 		throw new Error("--mode must be auto, bird, or xurl");
 	}
-	return mode;
 }
 
 function getCachedPaginationToken(

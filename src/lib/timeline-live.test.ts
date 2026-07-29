@@ -3,13 +3,35 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { resetBirdclawPathsForTests } from "./config";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 import { listTimelineItems } from "./queries";
 
 const listHomeTimelineViaBirdMock = vi.fn();
 const listHomeTimelineViaXurlMock = vi.fn();
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+
+function resetLiveDataSourceEnvironment() {
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	resetBirdclawPathsForTests();
+}
+
+function restoreLiveDataSourceEnvironment() {
+	if (originalLiveDataSource === undefined) {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+	}
+	if (originalMentionsDataSource === undefined) {
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+	}
+	resetBirdclawPathsForTests();
+}
 
 vi.mock("./bird", async () => {
 	const { Effect } = await import("effect");
@@ -37,6 +59,10 @@ vi.mock("./xurl", async () => {
 
 const tempDirs: string[] = [];
 
+beforeEach(() => {
+	resetLiveDataSourceEnvironment();
+});
+
 function makeTempHome() {
 	const tempDir = mkdtempSync(
 		path.join(os.tmpdir(), "birdclaw-timeline-live-"),
@@ -50,6 +76,7 @@ afterEach(() => {
 	resetDatabaseForTests();
 	resetBirdclawPathsForTests();
 	delete process.env.BIRDCLAW_HOME;
+	restoreLiveDataSourceEnvironment();
 	listHomeTimelineViaBirdMock.mockReset();
 	listHomeTimelineViaXurlMock.mockReset();
 
@@ -59,6 +86,43 @@ afterEach(() => {
 });
 
 describe("live home timeline sync", () => {
+	it("uses configured xurl for omitted home timeline mode", async () => {
+		makeTempHome();
+		writeBirdclawConfig({ live: { dataSource: "xurl" } });
+		listHomeTimelineViaXurlMock.mockResolvedValueOnce({
+			data: [],
+			meta: { result_count: 0 },
+		});
+		const { syncHomeTimeline } = await import("./timeline-live");
+
+		await expect(
+			syncHomeTimeline({ account: "acct_primary", limit: 5, refresh: true }),
+		).resolves.toMatchObject({ source: "xurl" });
+		expect(listHomeTimelineViaXurlMock).toHaveBeenCalledTimes(1);
+		expect(listHomeTimelineViaBirdMock).not.toHaveBeenCalled();
+	});
+
+	it("uses configured Bird for omitted for-you sync without xurl calls", async () => {
+		makeTempHome();
+		writeBirdclawConfig({ live: { dataSource: "bird" } });
+		listHomeTimelineViaBirdMock.mockResolvedValueOnce({
+			data: [],
+			meta: { result_count: 0 },
+		});
+		const { syncHomeTimeline } = await import("./timeline-live");
+
+		await expect(
+			syncHomeTimeline({
+				account: "acct_primary",
+				following: false,
+				limit: 5,
+				refresh: true,
+			}),
+		).resolves.toMatchObject({ source: "bird", feed: "for-you" });
+		expect(listHomeTimelineViaBirdMock).toHaveBeenCalledTimes(1);
+		expect(listHomeTimelineViaXurlMock).not.toHaveBeenCalled();
+	});
+
 	it("keeps home timeline sync effects lazy", async () => {
 		makeTempHome();
 		listHomeTimelineViaBirdMock.mockResolvedValueOnce({

@@ -6,12 +6,14 @@ export type LiveReadMode = LiveDataSource;
 type LiveReadCapability =
 	| "xurl-first"
 	| "sync"
+	| "home-timeline"
 	| "mention-threads"
 	| "direct-messages";
 
 const capabilityDefaults: Record<LiveReadCapability, LiveReadMode> = {
 	"xurl-first": "xurl",
 	sync: "auto",
+	"home-timeline": "bird",
 	"mention-threads": "bird",
 	"direct-messages": "bird",
 };
@@ -43,6 +45,12 @@ export function resolveLiveReadMode(requestedMode?: string): LiveReadMode {
 
 export function resolveLiveSyncMode(requestedMode?: string): LiveReadMode {
 	return resolveModeForCapability(requestedMode, "sync");
+}
+
+export function resolveHomeTimelineReadMode(
+	requestedMode?: string,
+): LiveReadMode {
+	return resolveModeForCapability(requestedMode, "home-timeline");
 }
 
 export function resolveDirectMessagesReadMode(
