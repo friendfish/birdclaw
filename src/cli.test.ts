@@ -2194,14 +2194,14 @@ describe("cli", () => {
 		});
 		expect(syncDirectMessagesViaCachedBirdMock).toHaveBeenCalledWith({
 			account: "acct_primary",
-			mode: "bird",
+			mode: undefined,
 			limit: 12,
 			refresh: true,
 			cacheTtlMs: 120_000,
 		});
 		expect(syncDirectMessagesViaCachedBirdMock).toHaveBeenCalledWith({
 			account: "acct_primary",
-			mode: "bird",
+			mode: undefined,
 			limit: 7,
 			refresh: true,
 			cacheTtlMs: 45_000,

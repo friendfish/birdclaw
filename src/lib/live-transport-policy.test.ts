@@ -8,6 +8,7 @@ import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import {
 	resolveLiveReadMode,
 	resolveLiveSyncMode,
+	resolveDirectMessagesReadMode,
 	resolveMentionThreadReadMode,
 	xurlDisabledDataSourceStatus,
 	xurlDisabledTransportStatus,
@@ -100,6 +101,17 @@ describe("live transport policy", () => {
 		expect(resolveLiveReadMode()).toBe("xurl");
 		expect(resolveLiveSyncMode()).toBe("auto");
 		expect(resolveMentionThreadReadMode()).toBe("bird");
+		expect(resolveDirectMessagesReadMode()).toBe("bird");
+	});
+
+	it("uses global transport preference for direct messages without changing their default", () => {
+		root = mkdtempSync(path.join(os.tmpdir(), "birdclaw-policy-"));
+		process.env.BIRDCLAW_HOME = root;
+		writeBirdclawConfig({ live: { dataSource: "xurl" } });
+		expect(resolveDirectMessagesReadMode()).toBe("xurl");
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "bird";
+		expect(resolveDirectMessagesReadMode()).toBe("bird");
+		expect(resolveDirectMessagesReadMode("auto")).toBe("auto");
 	});
 
 	it("rejects auto for mention-thread sync", () => {

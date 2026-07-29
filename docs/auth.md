@@ -1,6 +1,6 @@
 ---
 title: Sign in
-description: "Connect birdclaw to X through xurl or bird, verify each tool, and choose the moderation write transport."
+description: "Connect birdclaw to X through xurl or bird, verify each tool, and choose the live write transport."
 ---
 
 # Sign in
@@ -41,7 +41,9 @@ Birdclaw preserves compatibility with existing private bird installations, but b
 bird whoami
 ```
 
-Existing bird configurations continue to provide cookie-backed fallback for supported reads and moderation writes.
+Existing bird configurations continue to provide cookie-backed fallback for
+supported reads and moderation writes. Post, reply, and DM compose remain
+xurl-only writes.
 
 ## Verify xurl in birdclaw
 
