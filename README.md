@@ -403,7 +403,8 @@ Notes:
 - `live.dataSource` controls all live reads and syncs: `bird`, `xurl`, or `auto`
 - live-read precedence is explicit operation mode, `BIRDCLAW_LIVE_DATA_SOURCE`, `live.dataSource`, legacy `BIRDCLAW_MENTIONS_DATA_SOURCE`, legacy `mentions.dataSource`, then the capability default
 - `mentions.dataSource` and `BIRDCLAW_MENTIONS_DATA_SOURCE` are compatibility aliases for older installations
-- `actions.transport` controls all live writes; post, reply, and DM compose reject `bird` because only xurl writes are implemented, so use `auto` or `xurl`
+- `actions.transport` controls compose writes (post, reply, and DM compose) and moderation writes that use the actions policy; compose commands reject `bird` because only xurl writes are implemented, so use `auto` or `xurl`
+- DM request mutations (`dms accept`, `dms reject`, and `dms block`) call Bird directly and do not use `actions.transport`
 - `bird` mode uses your local `bird` CLI and caches its mentions output into birdclaw's canonical store
 - filters still work in `xurl` mode; filtered payloads are rebuilt from the local canonical store after sync
 - `sync authored`, `sync mentions`, `sync mention-threads`, `sync likes`, `sync bookmarks`, and `sync timeline` store live results in the canonical local store; per-account authored/home/mention/like/bookmark membership is kept as edges so shared tweets do not clobber account ownership

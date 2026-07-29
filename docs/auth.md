@@ -12,7 +12,8 @@ birdclaw keeps its database local. Archive import needs no X credentials. Live r
 
 Install xurl for a new live-transport setup. `live.dataSource` is the global
 choice for live reads and syncs; supported commands can override it with
-`--mode`. `auth use` persists `actions.transport` for every live write.
+`--mode`. `auth use` persists `actions.transport` for compose writes (post,
+reply, and DM compose) and moderation writes that use the actions policy.
 
 On a fresh Birdclaw database, import your X archive before the first live sync. Archive import establishes your real account identity; `init --demo` creates only synthetic sample data. The current auth commands verify transports but do not bind a new database to the authenticated X account.
 
@@ -62,7 +63,8 @@ Use `xurl whoami` as the end-to-end authentication check. Run `xurl auth status`
 
 ## Choose write transport
 
-Persist the preferred transport for live writes:
+Persist the preferred transport for compose writes (post, reply, and DM
+compose) and moderation writes that use the actions policy:
 
 ```text
 birdclaw auth use auto
@@ -75,6 +77,8 @@ command-level `--transport` flag overrides the saved value, and
 `BIRDCLAW_ACTIONS_TRANSPORT` overrides it for one process. Bird has no post,
 reply, or DM compose implementation, so those commands explicitly reject
 `actions.transport: "bird"`; use `auto` or `xurl` for xurl writes.
+DM request mutations (`dms accept`, `dms reject`, and `dms block`) use Bird
+directly and do not use `actions.transport`.
 
 Live reads and syncs do not use this saved write setting. Set
 `live.dataSource` (or `BIRDCLAW_LIVE_DATA_SOURCE`) globally, or select a source
