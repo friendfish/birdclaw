@@ -261,6 +261,97 @@ describe("profile resolver", () => {
 		expect(mocks.lookupUsersByIds).toHaveBeenCalledTimes(1);
 	});
 
+	it.each(["miss", "error"] as const)(
+		"ignores a cached xurl %s after switching to Bird mode",
+		async (negativeStatus) => {
+			mocks.lookupProfileViaBird.mockResolvedValueOnce(null);
+			if (negativeStatus === "error") {
+				mocks.lookupUsersByIds.mockRejectedValueOnce(new Error("xurl down"));
+			} else {
+				mocks.lookupUsersByIds.mockResolvedValueOnce([]);
+			}
+			const { resolveProfilesForIds } = await import("./profile-resolver");
+
+			await expect(resolveProfilesForIds(["profile_user_42"])).resolves.toEqual(
+				[
+					expect.objectContaining({
+						status: negativeStatus,
+						source: "xurl",
+					}),
+				],
+			);
+
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+			resetBirdclawPathsForTests();
+			mocks.lookupProfileViaBird.mockResolvedValueOnce({
+				id: "42",
+				username: "sam",
+				name: "Sam Altman",
+				public_metrics: { followers_count: 123, following_count: 45 },
+			});
+
+			await expect(resolveProfilesForIds(["profile_user_42"])).resolves.toEqual(
+				[
+					expect.objectContaining({
+						status: "hit",
+						source: "bird",
+						profile: expect.objectContaining({ handle: "sam" }),
+					}),
+				],
+			);
+			expect(mocks.lookupProfileViaBird).toHaveBeenCalledTimes(2);
+			expect(mocks.lookupUsersByIds).toHaveBeenCalledTimes(1);
+		},
+	);
+
+	it("reuses a compatible cached Bird negative in Bird mode", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		mocks.lookupProfileViaBird.mockResolvedValueOnce(null);
+		const { resolveProfilesForIds } = await import("./profile-resolver");
+
+		await expect(resolveProfilesForIds(["profile_user_42"])).resolves.toEqual([
+			expect.objectContaining({ status: "miss", source: "bird" }),
+		]);
+		await expect(resolveProfilesForIds(["profile_user_42"])).resolves.toEqual([
+			expect.objectContaining({ status: "miss", source: "negative-cache" }),
+		]);
+		expect(mocks.lookupProfileViaBird).toHaveBeenCalledTimes(1);
+		expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
+	});
+
+	it("ignores a cached Bird-only miss when xurl fallback is later enabled", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		mocks.lookupProfileViaBird
+			.mockResolvedValueOnce(null)
+			.mockResolvedValueOnce(null);
+		mocks.lookupUsersByIds.mockResolvedValueOnce([
+			{
+				id: "42",
+				username: "sam",
+				name: "Sam Altman",
+				public_metrics: { followers_count: 123, following_count: 45 },
+			},
+		]);
+		const { resolveProfilesForIds } = await import("./profile-resolver");
+
+		await expect(resolveProfilesForIds(["profile_user_42"])).resolves.toEqual([
+			expect.objectContaining({ status: "miss", source: "bird" }),
+		]);
+		await expect(
+			resolveProfilesForIds(["profile_user_42"], { xurlFallback: true }),
+		).resolves.toEqual([
+			expect.objectContaining({
+				status: "hit",
+				source: "xurl",
+				profile: expect.objectContaining({ handle: "sam" }),
+			}),
+		]);
+		expect(mocks.lookupProfileViaBird).toHaveBeenCalledTimes(2);
+		expect(mocks.lookupUsersByIds).toHaveBeenCalledTimes(1);
+	});
+
 	it("resolves handle-only profiles through bird and xurl fallback", async () => {
 		const db = getNativeDb();
 		db.prepare(

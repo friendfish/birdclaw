@@ -62,6 +62,20 @@ describe("live transport policy", () => {
 		expect(resolveLiveReadMode("xurl")).toBe("xurl");
 	});
 
+	it("rejects every defined mode outside the public live-read modes", () => {
+		root = mkdtempSync(path.join(os.tmpdir(), "birdclaw-policy-"));
+		process.env.BIRDCLAW_HOME = root;
+		writeBirdclawConfig({ mentions: { dataSource: "bird" } });
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "xurl";
+
+		for (const mode of ["", "birdclaw", "invalid"]) {
+			expect(() => resolveLiveReadMode(mode)).toThrow(
+				"--mode must be auto, bird, or xurl",
+			);
+		}
+		expect(resolveLiveReadMode()).toBe("xurl");
+	});
+
 	it("resolves the direct environment source before configured Bird mode", () => {
 		root = mkdtempSync(path.join(os.tmpdir(), "birdclaw-policy-"));
 		process.env.BIRDCLAW_HOME = root;

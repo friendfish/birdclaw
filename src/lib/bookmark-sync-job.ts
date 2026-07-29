@@ -146,7 +146,9 @@ export function runBookmarkSyncJobEffect({
 	unknown
 > {
 	return Effect.gen(function* () {
-		const resolvedMode = mode ?? resolveLiveReadMode(undefined, "auto");
+		const resolvedMode = yield* trySync(() =>
+			resolveLiveReadMode(mode, "auto"),
+		);
 		yield* trySync(() => ensureBirdclawDirs());
 		const database =
 			db ?? (yield* trySync(() => getNativeDb({ seedDemoData: false })));
@@ -264,9 +266,11 @@ function buildProgramArguments({
 	logPath,
 	envFile,
 }: BookmarkSyncLaunchAgentOptions) {
+	const resolvedMode =
+		mode === undefined ? undefined : resolveLiveReadMode(mode, "auto");
 	const args = ["--json", "jobs", "sync-bookmarks"];
-	if (mode) {
-		args.push("--mode", mode);
+	if (resolvedMode) {
+		args.push("--mode", resolvedMode);
 	}
 	args.push(
 		"--limit",
@@ -325,10 +329,10 @@ export function installBookmarkSyncLaunchAgentEffect(
 	options: BookmarkSyncLaunchAgentOptions = {},
 ): Effect.Effect<BookmarkSyncLaunchAgentInstallResult, unknown> {
 	return Effect.gen(function* () {
-		yield* trySync(() => ensureBirdclawDirs());
 		const agent = yield* trySync(() =>
 			buildBookmarkSyncLaunchAgentPlist(options),
 		);
+		yield* trySync(() => ensureBirdclawDirs());
 		return yield* installLaunchAgentEffect(agent, options);
 	});
 }

@@ -138,6 +138,16 @@ describe("shared tweet lookup", () => {
 		expect(mocks.lookupTweetsByIdsViaBird).toHaveBeenCalledWith(["tweet_2"]);
 	});
 
+	it("rejects an invalid explicit mode before constructing a transport plan", async () => {
+		const { lookupTweetsByIdsEffect } = await import("./tweet-lookup");
+
+		expect(() =>
+			lookupTweetsByIdsEffect(["tweet_1"], "invalid" as "auto"),
+		).toThrow("--mode must be auto, bird, or xurl");
+		expect(mocks.lookupTweetsByIdsViaXurl).not.toHaveBeenCalled();
+		expect(mocks.lookupTweetsByIdsViaBird).not.toHaveBeenCalled();
+	});
+
 	it("reports both transport failures in auto mode", async () => {
 		mocks.lookupTweetsByIdsViaXurl.mockRejectedValue("xurl offline");
 		mocks.lookupTweetsByIdsViaBird.mockRejectedValue(new Error("bird offline"));

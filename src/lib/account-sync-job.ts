@@ -335,6 +335,7 @@ export async function runAccountSyncJob({
 	lockPath,
 	db,
 }: AccountSyncJobOptions = {}): Promise<AccountSyncAuditEntry> {
+	const resolvedMode = resolveLiveReadMode(mode, "auto");
 	ensureBirdclawDirs();
 	const database = db ?? getNativeDb({ seedDemoData: false });
 	const resolvedLogPath = resolveUserPath(
@@ -344,7 +345,6 @@ export async function runAccountSyncJob({
 		lockPath ?? getDefaultAccountSyncLockPath(),
 	);
 	const run = startScheduledJobRun();
-	const resolvedMode = resolveLiveReadMode(mode, "auto");
 	const options = {
 		...(account ? { account } : {}),
 		steps,
@@ -432,6 +432,8 @@ function buildProgramArguments({
 	logPath,
 	envFile,
 }: AccountSyncLaunchAgentOptions) {
+	const resolvedMode =
+		mode === undefined ? undefined : resolveLiveReadMode(mode, "auto");
 	const args = [
 		"--json",
 		"jobs",
@@ -449,8 +451,8 @@ function buildProgramArguments({
 	if (steps?.length) {
 		args.push("--steps", steps.join(","));
 	}
-	if (mode) {
-		args.push("--mode", mode);
+	if (resolvedMode) {
+		args.push("--mode", resolvedMode);
 	}
 	if (refresh) {
 		args.push("--refresh");
@@ -496,8 +498,8 @@ export function buildAccountSyncLaunchAgentPlist(
 export async function installAccountSyncLaunchAgent(
 	options: AccountSyncLaunchAgentOptions = {},
 ): Promise<AccountSyncLaunchAgentInstallResult> {
-	ensureBirdclawDirs();
 	const agent = buildAccountSyncLaunchAgentPlist(options);
+	ensureBirdclawDirs();
 	return installLaunchAgent(agent, options);
 }
 

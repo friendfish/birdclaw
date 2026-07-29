@@ -219,6 +219,96 @@ describe("web sync dispatcher", () => {
 		);
 	});
 
+	it("keeps default timeline, mentions, likes, and bookmarks on configured xurl", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "xurl";
+		syncHomeTimelineMock.mockResolvedValue({
+			ok: true,
+			source: "xurl",
+			count: 1,
+		});
+		syncMentionsMock.mockResolvedValue({
+			ok: true,
+			source: "xurl",
+			count: 1,
+			partial: false,
+		});
+		syncMentionThreadsMock.mockResolvedValue({
+			ok: true,
+			source: "xurl",
+			mergedTweets: 1,
+			partial: false,
+		});
+		syncTimelineCollectionMock.mockResolvedValue({
+			ok: true,
+			source: "xurl",
+			count: 1,
+		});
+
+		await runWebSync("timeline");
+		await runWebSync("mentions");
+		await runWebSync("likes");
+		await runWebSync("bookmarks");
+
+		expect(syncHomeTimelineMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "xurl" }),
+		);
+		expect(syncMentionsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "xurl" }),
+		);
+		expect(syncMentionThreadsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "xurl" }),
+		);
+		expect(syncTimelineCollectionMock).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({ kind: "likes", mode: "xurl" }),
+		);
+		expect(syncTimelineCollectionMock).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ kind: "bookmarks", mode: "xurl" }),
+		);
+		for (const [options] of syncTimelineCollectionMock.mock.calls) {
+			expect(options).not.toMatchObject({ mode: "auto" });
+			expect(options).not.toMatchObject({ mode: "bird" });
+		}
+	});
+
+	it("keeps For You on Bird when xurl is configured", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "xurl";
+		syncHomeTimelineMock.mockResolvedValue({
+			ok: true,
+			source: "bird",
+			count: 1,
+		});
+
+		await runWebSync("timeline", undefined, { feed: "for_you" });
+
+		expect(syncHomeTimelineMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				mode: "bird",
+				following: false,
+			}),
+		);
+	});
+
+	it("keeps nondefault-account For You on xurl without Bird fallback", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "xurl";
+		syncHomeTimelineMock.mockResolvedValue({
+			ok: false,
+			source: "xurl",
+			count: 0,
+		});
+
+		await runWebSync("timeline", "acct_studio", { feed: "for_you" });
+
+		expect(syncHomeTimelineMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				account: "acct_studio",
+				mode: "xurl",
+				following: false,
+			}),
+		);
+	});
+
 	it("passes dm request sync options through to Bird", async () => {
 		syncDirectMessagesViaCachedBirdMock.mockResolvedValue({
 			ok: true,

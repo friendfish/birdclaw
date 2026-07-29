@@ -118,6 +118,18 @@ describe("config", () => {
 		expect(getBirdCommand()).toBe("/tmp/env-bird");
 	});
 
+	it("rejects invalid explicit action transports instead of falling back", () => {
+		process.env.BIRDCLAW_ACTIONS_TRANSPORT = "bird";
+
+		expect(() => resolveActionsTransport("invalid")).toThrow(
+			"--transport must be auto, bird, or xurl",
+		);
+		expect(resolveActionsTransport()).toBe("bird");
+		expect(resolveActionsTransport("auto")).toBe("auto");
+		expect(resolveActionsTransport("bird")).toBe("bird");
+		expect(resolveActionsTransport("xurl")).toBe("xurl");
+	});
+
 	it("sets actions transport in the active config file", () => {
 		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
 		tempRoots.push(tempRoot);
