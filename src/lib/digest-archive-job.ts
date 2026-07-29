@@ -185,11 +185,15 @@ function formatLocalDateFolder(date: Date) {
 }
 
 export function resolveDigestArchiveLanguage(requested?: string) {
-	return normalizeDigestLanguage(
+	return normalizeDigestLanguage(selectDigestArchiveLanguage(requested));
+}
+
+function selectDigestArchiveLanguage(requested?: string) {
+	return (
 		requested?.trim() ||
-			process.env.BIRDCLAW_DIGEST_LANGUAGE?.trim() ||
-			getBirdclawConfig().language?.aiLanguage?.trim() ||
-			undefined,
+		process.env.BIRDCLAW_DIGEST_LANGUAGE?.trim() ||
+		getBirdclawConfig().language?.aiLanguage?.trim() ||
+		undefined
 	);
 }
 
@@ -418,9 +422,6 @@ export function runDigestArchiveJobEffect(
 		const retryDelayMs =
 			options.retryDelayMs ?? DEFAULT_DIGEST_ARCHIVE_RETRY_DELAY_MS;
 		const includeDms = options.includeDms ?? false;
-		const language = yield* trySync(() =>
-			resolveDigestArchiveLanguage(options.language),
-		);
 		const resolvedLogPath = yield* trySync(() =>
 			resolveUserPath(options.logPath ?? getDefaultDigestArchiveAuditLogPath()),
 		);
@@ -431,7 +432,10 @@ export function runDigestArchiveJobEffect(
 		const runDate = yield* trySync(() =>
 			formatLocalDateFolder(options.now?.() ?? new Date()),
 		);
-		const auditOptions = {
+		const selectedLanguage = yield* trySync(() =>
+			selectDigestArchiveLanguage(options.language),
+		);
+		const auditOptionsBase = {
 			period,
 			...(options.account ? { account: options.account } : {}),
 			includeDms,
@@ -439,12 +443,38 @@ export function runDigestArchiveJobEffect(
 			archiveDir,
 			retries,
 			retryDelayMs,
+			...(selectedLanguage ? { language: selectedLanguage } : {}),
+		};
+		const languageResult = yield* Effect.either(
+			trySync(() => normalizeDigestLanguage(selectedLanguage)),
+		);
+		if (languageResult._tag === "Left") {
+			const error = messageFromError(languageResult.left);
+			const entry: DigestArchiveAuditEntry = {
+				job: "digest-archive",
+				period,
+				ok: false,
+				status: "failed",
+				...run.finish(),
+				runDate,
+				options: auditOptionsBase,
+				sync: { status: "skipped", steps: [] },
+				steps: [],
+				error,
+			};
+			yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
+			return yield* Effect.fail(languageResult.left);
+		}
+		const language = languageResult.right;
+		const auditOptions = {
+			...auditOptionsBase,
 			...(language ? { language } : {}),
 		};
 
 		const releaseLock = yield* acquireScheduledJobLockEffect(
 			resolvedLockPath,
 			DEFAULT_LOCK_STALE_MS,
+			{ runDate },
 		);
 		if (!releaseLock) {
 			const entry: DigestArchiveAuditEntry = {
@@ -845,7 +875,9 @@ export async function peekDigestArchiveRunningRuns(): Promise<
 		if (metadata) {
 			running.push({
 				period,
-				runDate: formatLocalDateFolder(new Date(metadata.startedAt)),
+				runDate:
+					metadata.runDate ??
+					formatLocalDateFolder(new Date(metadata.startedAt)),
 			});
 		}
 	}
@@ -875,7 +907,9 @@ export function peekDigestArchiveRunningRunsEffect(): Effect.Effect<
 					metadata
 						? {
 								period,
-								runDate: formatLocalDateFolder(new Date(metadata.startedAt)),
+								runDate:
+									metadata.runDate ??
+									formatLocalDateFolder(new Date(metadata.startedAt)),
 							}
 						: undefined,
 				),

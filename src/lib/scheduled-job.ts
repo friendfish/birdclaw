@@ -21,6 +21,7 @@ export interface ScheduledJobLockMetadata {
 	startedAt: string;
 	host: string;
 	pid: number;
+	runDate?: string;
 }
 
 export type ScheduledJobLockRelease = () => Promise<void>;
@@ -63,6 +64,7 @@ export function appendScheduledJobAuditEffect(logPath: string, entry: unknown) {
 export async function acquireScheduledJobLock(
 	lockPath: string,
 	staleMs: number,
+	metadata: Pick<ScheduledJobLockMetadata, "runDate"> = {},
 ): Promise<ScheduledJobLockRelease | undefined> {
 	await fs.mkdir(path.dirname(lockPath), { recursive: true });
 	try {
@@ -73,6 +75,7 @@ export async function acquireScheduledJobLock(
 					pid: process.pid,
 					host: os.hostname(),
 					startedAt: new Date().toISOString(),
+					...(metadata.runDate ? { runDate: metadata.runDate } : {}),
 				})}\n`,
 				"utf8",
 			);
@@ -85,7 +88,7 @@ export async function acquireScheduledJobLock(
 		const stats = await fs.stat(lockPath).catch(() => undefined);
 		if (stats && Date.now() - stats.mtimeMs > staleMs) {
 			await fs.rm(lockPath, { force: true });
-			return acquireScheduledJobLock(lockPath, staleMs);
+			return acquireScheduledJobLock(lockPath, staleMs, metadata);
 		}
 		return undefined;
 	}
@@ -94,8 +97,11 @@ export async function acquireScheduledJobLock(
 export function acquireScheduledJobLockEffect(
 	lockPath: string,
 	staleMs: number,
+	metadata: Pick<ScheduledJobLockMetadata, "runDate"> = {},
 ): Effect.Effect<(() => Effect.Effect<void>) | undefined, unknown> {
-	return tryPromise(() => acquireScheduledJobLock(lockPath, staleMs)).pipe(
+	return tryPromise(() =>
+		acquireScheduledJobLock(lockPath, staleMs, metadata),
+	).pipe(
 		Effect.map((release) =>
 			release
 				? () =>
@@ -142,6 +148,10 @@ export async function peekScheduledJobLockMetadata(
 			startedAt: startedAt.toISOString(),
 			host: parsed.host,
 			pid: parsed.pid,
+			...(typeof parsed.runDate === "string" &&
+			/^\d{4}-\d{2}-\d{2}$/.test(parsed.runDate)
+				? { runDate: parsed.runDate }
+				: {}),
 		};
 	} catch {
 		// Older or partially-written locks still represent active work. Their

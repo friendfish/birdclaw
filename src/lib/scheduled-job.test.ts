@@ -52,7 +52,9 @@ describe("scheduled job runtime", () => {
 
 	it("rejects active locks and replaces stale locks", async () => {
 		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
-		const release = await acquireScheduledJobLock(lockPath, 1_000);
+		const release = await acquireScheduledJobLock(lockPath, 1_000, {
+			runDate: "2020-01-02",
+		});
 
 		expect(release).toBeTypeOf("function");
 		await expect(
@@ -61,6 +63,7 @@ describe("scheduled job runtime", () => {
 			expect.objectContaining({
 				host: os.hostname(),
 				pid: process.pid,
+				runDate: "2020-01-02",
 				startedAt: expect.any(String),
 			}),
 		);

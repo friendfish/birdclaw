@@ -76,18 +76,30 @@ export function useReadOnlyDigest({
 	running?: boolean;
 	activeRunDate?: string;
 }) {
-	const previousRunningRef = useRef(false);
-	const lastActiveRunDateRef = useRef<string | undefined>(undefined);
-	const [finalizing, setFinalizing] = useState(false);
+	const previousRunRef = useRef({ period, running: false });
+	const lastActiveRunRef = useRef<
+		{ period: PeriodRouteSearch; runDate: string } | undefined
+	>(undefined);
+	const [finalizingState, setFinalizingState] = useState({
+		period,
+		active: false,
+	});
 	if (running && activeRunDate) {
-		lastActiveRunDateRef.current = activeRunDate;
+		lastActiveRunRef.current = { period, runDate: activeRunDate };
 	}
-	const finishingTransition = previousRunningRef.current && !running;
+	const previousRun = previousRunRef.current;
+	const finishingTransition =
+		previousRun.period === period && previousRun.running && !running;
+	const finalizing =
+		finalizingState.period === period && finalizingState.active;
 	const polling = running || finalizing || finishingTransition;
 	const datesQuery = useDigestArchiveDates(period, enabled, polling);
 	const dates = (datesQuery.data?.dates ?? []) as DigestArchiveDateOption[];
 	const currentRunDate =
-		activeRunDate || (polling ? lastActiveRunDateRef.current : undefined);
+		activeRunDate ||
+		(polling && lastActiveRunRef.current?.period === period
+			? lastActiveRunRef.current.runDate
+			: undefined);
 	const effectiveDate = archiveDate || currentRunDate || dates[0]?.date;
 	const effectiveDateOption = dates.find(
 		(option) => option.date === effectiveDate,
@@ -113,21 +125,25 @@ export function useReadOnlyDigest({
 	});
 
 	useEffect(() => {
-		const wasRunning = previousRunningRef.current;
-		previousRunningRef.current = running;
-		if (!wasRunning || running) return;
+		const previous = previousRunRef.current;
+		previousRunRef.current = { period, running };
+		if (previous.period !== period) {
+			setFinalizingState({ period, active: false });
+			return;
+		}
+		if (!previous.running || running) return;
 
 		let cancelled = false;
-		setFinalizing(true);
+		setFinalizingState({ period, active: true });
 		void Promise.all([datesQuery.refetch(), entryQuery.refetch()]).finally(
 			() => {
-				if (!cancelled) setFinalizing(false);
+				if (!cancelled) setFinalizingState({ period, active: false });
 			},
 		);
 		return () => {
 			cancelled = true;
 		};
-	}, [datesQuery.refetch, entryQuery.refetch, running]);
+	}, [datesQuery.refetch, entryQuery.refetch, period, running]);
 
 	const result = (entryQuery.data?.result ??
 		null) as PeriodDigestRunResult | null;

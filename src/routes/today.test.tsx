@@ -962,6 +962,84 @@ describe("today route", () => {
 			await waitFor(() => expect(entryDates[0]).toBe("2026-07-29"));
 		});
 
+		it("does not carry an active Yesterday date into Week after navigation", async () => {
+			const entryRequests: string[] = [];
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({
+						ok: true,
+						runningPeriods: ["yesterday"],
+						activeRuns: [{ period: "yesterday", runDate: "2026-07-29" }],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					const period = url.searchParams.get("period");
+					return jsonResponse({
+						ok: true,
+						dates:
+							period === "week"
+								? [{ date: "2026-07-21", contentSources: ["all"] }]
+								: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-entry") {
+					const request = `${url.searchParams.get("period")}:${url.searchParams.get("date")}`;
+					entryRequests.push(request);
+					return jsonResponse({
+						ok: true,
+						result:
+							request === "week:2026-07-21"
+								? digestResult("Week archive", "# Correct Week archive")
+								: null,
+					});
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			const { rerender } = render(
+				<TodayRoute
+					searchState={{
+						period: "yesterday",
+						includeDms: false,
+						contentSource: "all",
+						archiveDate: "",
+					}}
+				/>,
+			);
+			expect(
+				await screen.findByText("Generating scheduled digest 0/3"),
+			).toBeInTheDocument();
+
+			rerender(
+				<TodayRoute
+					searchState={{
+						period: "week",
+						includeDms: false,
+						contentSource: "all",
+						archiveDate: "",
+					}}
+				/>,
+			);
+
+			expect(
+				await screen.findByRole("heading", {
+					name: "Correct Week archive",
+					level: 1,
+				}),
+			).toBeInTheDocument();
+			expect(entryRequests).toContain("week:2026-07-21");
+			expect(entryRequests).not.toContain("week:2026-07-29");
+		});
+
 		it("fetches the final archive once more when the job becomes idle", async () => {
 			let statusCalls = 0;
 			let entryCalls = 0;
