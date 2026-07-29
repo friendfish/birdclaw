@@ -7,6 +7,7 @@ const getBirdclawPathsMock = vi.fn();
 const getDefaultAccountSelectorMock = vi.fn();
 const resolveOperationAccountMock = vi.fn();
 const resolveMentionsDataSourceMock = vi.fn();
+const resolveLiveReadModeMock = vi.hoisted(() => vi.fn());
 const setActionsTransportMock = vi.fn();
 const getQueryEnvelopeMock = vi.fn();
 const getNativeDbMock = vi.fn();
@@ -96,6 +97,10 @@ vi.mock("#/lib/config", () => ({
 	resolveMentionsDataSource: (...args: unknown[]) =>
 		resolveMentionsDataSourceMock(...args),
 	setActionsTransport: (...args: unknown[]) => setActionsTransportMock(...args),
+}));
+
+vi.mock("#/lib/live-transport-policy", () => ({
+	resolveLiveReadMode: (...args: unknown[]) => resolveLiveReadModeMock(...args),
 }));
 
 vi.mock("#/lib/db", () => ({
@@ -324,6 +329,7 @@ describe("cli", () => {
 		getDefaultAccountSelectorMock.mockReset();
 		resolveOperationAccountMock.mockReset();
 		resolveMentionsDataSourceMock.mockReset();
+		resolveLiveReadModeMock.mockReset();
 		setActionsTransportMock.mockReset();
 		getQueryEnvelopeMock.mockReset();
 		getNativeDbMock.mockReset();
@@ -420,6 +426,7 @@ describe("cli", () => {
 		resolveMentionsDataSourceMock.mockImplementation(
 			(mode?: string) => mode ?? "birdclaw",
 		);
+		resolveLiveReadModeMock.mockReturnValue("bird");
 		setActionsTransportMock.mockImplementation((transport: string) => ({
 			configPath: "/tmp/.birdclaw/config.json",
 			transport,
@@ -2796,7 +2803,10 @@ describe("cli", () => {
 			"2026-05-16",
 			"--account",
 			"acct_primary",
+			"--live-mode",
+			"auto",
 		]);
+		await runCli(["node", "birdclaw", "digest", "week", "--live-mode", "xurl"]);
 
 		expect(streamPeriodDigestMock).toHaveBeenNthCalledWith(
 			1,
@@ -2812,7 +2822,7 @@ describe("cli", () => {
 				maxTweets: 10,
 				maxLinks: 2,
 				liveSync: true,
-				liveSyncMode: "xurl",
+				liveSyncMode: "bird",
 			},
 			expect.objectContaining({ onDelta: expect.any(Function) }),
 		);
@@ -2824,8 +2834,17 @@ describe("cli", () => {
 				until: "2026-05-16",
 				account: "acct_primary",
 				includeDms: false,
+				liveSyncMode: "auto",
 			}),
 			expect.objectContaining({ onDelta: undefined }),
+		);
+		expect(streamPeriodDigestMock).toHaveBeenNthCalledWith(
+			3,
+			expect.objectContaining({
+				period: "week",
+				liveSyncMode: "xurl",
+			}),
+			expect.objectContaining({ onDelta: expect.any(Function) }),
 		);
 		expect(stdoutWriteMock).toHaveBeenCalledWith("# Today\n");
 		expect(consoleLogMock).toHaveBeenCalledWith(
