@@ -4,6 +4,7 @@ import { databaseWriteEffect } from "./database-writer";
 import { getNativeDb } from "./db";
 import { runEffectPromise, trySync } from "./effect-runtime";
 import { liveTransportGateway } from "./live-transport-gateway";
+import { resolveMentionThreadReadMode } from "./live-transport-policy";
 import { resolveLiveSyncAccount } from "./live-sync-engine";
 import { runSyncPlanEffect } from "./sync-plan";
 import type {
@@ -22,7 +23,6 @@ import { ingestTweetPayload } from "./tweet-repository";
 const DEFAULT_LIMIT = 30;
 const DEFAULT_DELAY_MS = 1500;
 const DEFAULT_TIMEOUT_MS = 15_000;
-const DEFAULT_MODE = "bird";
 const DEFAULT_FALLBACK_DEPTH = 12;
 const MAX_XURL_SEARCH_RESULTS = 100;
 
@@ -80,11 +80,14 @@ function parseNonNegativeInteger(value: number | undefined, name: string) {
 }
 
 function parseMode(value: string | undefined): MentionThreadsMode {
-	const mode = value ?? DEFAULT_MODE;
-	if (mode !== "bird" && mode !== "xurl") {
+	try {
+		return resolveMentionThreadReadMode(value);
+	} catch (error) {
+		if (error instanceof Error && error.message.includes("only bird or xurl")) {
+			throw error;
+		}
 		throw new Error("--mode must be bird or xurl");
 	}
-	return mode;
 }
 
 function getRemainingThreadTimeoutMs(
@@ -619,7 +622,7 @@ function fetchThreadContextViaXurlEffect({
 
 export function syncMentionThreadsEffect({
 	account,
-	mode = DEFAULT_MODE,
+	mode,
 	limit = DEFAULT_LIMIT,
 	tweetIds,
 	delayMs = DEFAULT_DELAY_MS,

@@ -3,6 +3,7 @@ import type { Database } from "./sqlite";
 import { getNativeDb } from "./db";
 import { runEffectPromise } from "./effect-runtime";
 import { liveTransportGateway } from "./live-transport-gateway";
+import { resolveHomeTimelineReadMode } from "./live-transport-policy";
 import {
 	assertLiveAccountMatches,
 	createLiveTransportAdapter,
@@ -51,11 +52,11 @@ function assertLimit(limit: number) {
 }
 
 function parseMode(mode: HomeTimelineMode | undefined) {
-	const parsed = mode ?? "bird";
-	if (parsed !== "bird" && parsed !== "xurl" && parsed !== "auto") {
+	try {
+		return resolveHomeTimelineReadMode(mode);
+	} catch {
 		throw new Error("--mode must be bird, xurl, or auto");
 	}
-	return parsed;
 }
 
 function parseMaxPages(maxPages: number | undefined) {

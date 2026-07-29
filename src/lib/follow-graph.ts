@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { getNativeDb } from "./db";
 import { runEffectPromise, trySync } from "./effect-runtime";
 import { liveTransportGateway } from "./live-transport-gateway";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import type { Database } from "./sqlite";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
 import { runSyncPlanEffect } from "./sync-plan";
@@ -623,10 +624,11 @@ function makeDryRunResponse({
 }
 
 function parseMode(value?: FollowGraphSyncMode) {
-	if (!value || value === "auto" || value === "bird" || value === "xurl") {
-		return value ?? "auto";
+	try {
+		return resolveLiveSyncMode(value);
+	} catch {
+		throw new Error("--mode must be auto, bird, or xurl");
 	}
-	throw new Error("--mode must be auto, bird, or xurl");
 }
 
 function errorMessage(error: unknown) {
@@ -635,7 +637,6 @@ function errorMessage(error: unknown) {
 
 export function syncFollowGraphEffect(options: SyncFollowGraphOptions) {
 	return Effect.gen(function* () {
-		const db = yield* trySync(() => getNativeDb());
 		const mode = yield* trySync(() => parseMode(options.mode));
 		const limit = yield* trySync(() => parseLimit(options.limit));
 		const maxPages = yield* trySync(() =>
@@ -645,6 +646,7 @@ export function syncFollowGraphEffect(options: SyncFollowGraphOptions) {
 			parseOptionalPositiveInteger("--max-resources", options.maxResources),
 		);
 		const cacheTtlMs = parseCacheTtlMs(options.cacheTtlMs);
+		const db = yield* trySync(() => getNativeDb());
 		const account = yield* trySync(() => resolveAccount(db, options.account));
 		const cacheKey = buildCacheKey({
 			direction: options.direction,

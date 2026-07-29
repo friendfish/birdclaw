@@ -9,6 +9,7 @@ import {
 	resolveLiveReadMode,
 	resolveLiveSyncMode,
 	resolveDirectMessagesReadMode,
+	resolveHomeTimelineReadMode,
 	resolveMentionThreadReadMode,
 	xurlDisabledDataSourceStatus,
 	xurlDisabledTransportStatus,
@@ -100,8 +101,19 @@ describe("live transport policy", () => {
 		resetBirdclawPathsForTests();
 		expect(resolveLiveReadMode()).toBe("xurl");
 		expect(resolveLiveSyncMode()).toBe("auto");
+		expect(resolveHomeTimelineReadMode()).toBe("bird");
 		expect(resolveMentionThreadReadMode()).toBe("bird");
 		expect(resolveDirectMessagesReadMode()).toBe("bird");
+	});
+
+	it("uses the global transport preference for home timeline reads", () => {
+		root = mkdtempSync(path.join(os.tmpdir(), "birdclaw-policy-"));
+		process.env.BIRDCLAW_HOME = root;
+		writeBirdclawConfig({ live: { dataSource: "xurl" } });
+		expect(resolveHomeTimelineReadMode()).toBe("xurl");
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "bird";
+		expect(resolveHomeTimelineReadMode()).toBe("bird");
+		expect(resolveHomeTimelineReadMode("auto")).toBe("auto");
 	});
 
 	it("uses global transport preference for direct messages without changing their default", () => {

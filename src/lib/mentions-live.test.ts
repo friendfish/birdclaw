@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetBirdclawPathsForTests } from "./config";
+import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 import { listTimelineItems } from "./queries";
 
@@ -12,6 +12,28 @@ const listMentionsViaBirdMock = vi.fn();
 const listMentionsViaXurlMock = vi.fn();
 const lookupUsersByHandlesMock = vi.fn();
 const getAuthenticatedBirdAccountMock = vi.fn();
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+
+function resetLiveDataSourceEnvironment() {
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	resetBirdclawPathsForTests();
+}
+
+function restoreLiveDataSourceEnvironment() {
+	if (originalLiveDataSource === undefined) {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+	}
+	if (originalMentionsDataSource === undefined) {
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+	}
+	resetBirdclawPathsForTests();
+}
 
 vi.mock("./bird", async () => {
 	const { Effect } = await import("effect");
@@ -107,6 +129,7 @@ function insertLocalMentionBaseline({
 
 describe("cached live mentions", () => {
 	beforeEach(() => {
+		resetLiveDataSourceEnvironment();
 		listMentionsViaBirdMock.mockReset();
 		listMentionsViaXurlMock.mockReset();
 		lookupUsersByHandlesMock.mockReset();
@@ -122,6 +145,7 @@ describe("cached live mentions", () => {
 		resetDatabaseForTests();
 		resetBirdclawPathsForTests();
 		delete process.env.BIRDCLAW_HOME;
+		restoreLiveDataSourceEnvironment();
 
 		for (const dir of tempDirs.splice(0)) {
 			rmSync(dir, { recursive: true, force: true });
@@ -201,6 +225,39 @@ describe("cached live mentions", () => {
 				done: true,
 			}),
 		]);
+	});
+
+	it("uses configured Bird for omitted mention sync mode without xurl calls", async () => {
+		makeTempHome();
+		writeBirdclawConfig({ live: { dataSource: "bird" } });
+		listMentionsViaBirdMock.mockResolvedValueOnce({
+			data: [],
+			meta: { result_count: 0 },
+		});
+		const { syncMentions } = await import("./mentions-live");
+
+		await expect(
+			syncMentions({ account: "acct_primary", limit: 5, refresh: true }),
+		).resolves.toMatchObject({ source: "bird" });
+		expect(listMentionsViaBirdMock).toHaveBeenCalledTimes(1);
+		expect(listMentionsViaXurlMock).not.toHaveBeenCalled();
+		expect(lookupUsersByHandlesMock).not.toHaveBeenCalled();
+	});
+
+	it("uses configured xurl for omitted mention sync mode", async () => {
+		makeTempHome();
+		writeBirdclawConfig({ live: { dataSource: "xurl" } });
+		listMentionsViaXurlMock.mockResolvedValueOnce({
+			data: [],
+			meta: { result_count: 0 },
+		});
+		const { syncMentions } = await import("./mentions-live");
+
+		await expect(
+			syncMentions({ account: "acct_primary", limit: 5, refresh: true }),
+		).resolves.toMatchObject({ source: "xurl" });
+		expect(listMentionsViaXurlMock).toHaveBeenCalledTimes(1);
+		expect(listMentionsViaBirdMock).not.toHaveBeenCalled();
 	});
 
 	it("falls back from xurl to bird in auto mention sync", async () => {
