@@ -1,6 +1,10 @@
 import { Effect } from "effect";
 import { getAuthenticatedBirdAccountEffect } from "./bird";
 import { getNativeDb } from "./db";
+import {
+	resolveLiveReadMode,
+	xurlDisabledDataSourceStatus,
+} from "./live-transport-policy";
 import type { LiveDataSourcesResponse } from "./api-contracts";
 import type {
 	LiveDataSourceAccount,
@@ -204,8 +208,12 @@ export function getLiveDataSourcesEffect(): Effect.Effect<
 	never
 > {
 	return Effect.gen(function* () {
+		const xurlStatus =
+			resolveLiveReadMode() === "bird"
+				? Effect.succeed(xurlDisabledDataSourceStatus())
+				: getXurlStatusEffect();
 		const sources = yield* Effect.all(
-			[getBirdclawStatusEffect(), getBirdStatusEffect(), getXurlStatusEffect()],
+			[getBirdclawStatusEffect(), getBirdStatusEffect(), xurlStatus],
 			{ concurrency: "unbounded" },
 		);
 		return {
