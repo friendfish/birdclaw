@@ -5,6 +5,7 @@ import {
 	type PeriodDigestOptions,
 	type PeriodDigestPreset,
 } from "#/lib/period-digest";
+import { resolveLiveReadMode } from "#/lib/live-transport-policy";
 import {
 	streamProfileAnalysis,
 	type ProfileAnalysisOptions,
@@ -30,7 +31,10 @@ export function registerAnalysisCommands({
 	function parseDigestLiveModeOption(
 		value: string | undefined,
 	): PeriodDigestOptions["liveSyncMode"] {
-		const normalized = (value ?? "xurl").trim().toLowerCase();
+		if (value === undefined) {
+			return resolveLiveReadMode();
+		}
+		const normalized = value.trim().toLowerCase();
 		if (
 			normalized === "auto" ||
 			normalized === "bird" ||
@@ -458,11 +462,7 @@ export function registerAnalysisCommands({
 		.option("--max-tweets <n>", "Maximum tweet context", "5000")
 		.option("--max-links <n>", "Maximum linked articles", "12")
 		.option("--no-live-sync", "Use only the local database")
-		.option(
-			"--live-mode <mode>",
-			"Live timeline mode: xurl, bird, or auto",
-			"xurl",
-		)
+		.option("--live-mode <mode>", "Live timeline mode: xurl, bird, or auto")
 		.action(async (options) => {
 			await autoUpdateBeforeRead();
 			const digestOptions = buildDigestOptions("today", options);
@@ -486,11 +486,7 @@ export function registerAnalysisCommands({
 		.option("--max-tweets <n>", "Maximum tweet context", "5000")
 		.option("--max-links <n>", "Maximum linked articles", "12")
 		.option("--no-live-sync", "Use only the local database")
-		.option(
-			"--live-mode <mode>",
-			"Live timeline mode: xurl, bird, or auto",
-			"xurl",
-		)
+		.option("--live-mode <mode>", "Live timeline mode: xurl, bird, or auto")
 		.action(async (period, options) => {
 			await autoUpdateBeforeRead();
 			const digestOptions = buildDigestOptions(period, options);

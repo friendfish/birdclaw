@@ -13,6 +13,7 @@ import { maybeAutoSyncBackupEffect } from "./backup";
 import { getBirdclawConfig } from "./config";
 import { runEffectPromise } from "./effect-runtime";
 import { getLinkInsights } from "./link-insights";
+import { resolveLiveReadMode } from "./live-transport-policy";
 import { syncMentionThreadsEffect } from "./mention-threads-live";
 import { syncMentionsEffect } from "./mentions-live";
 import { listDmConversations } from "./dm-read-model";
@@ -760,17 +761,14 @@ function refreshPeriodDigestInputsEffect(
 	const includeThreads = phase.threads ?? true;
 	const window = resolvePeriodDigestWindow(options);
 	const liveStartTime = floorIsoToHour(window.since);
-	// For You isn't a "following" fetch, and xurl can't fetch it at all (see
-	// timeline-live.ts's fetchViaXurl rejecting following: false) — bird is
-	// the only transport that can, so force it (or auto, which resolves to
-	// bird when configured) instead of falling through to the xurl default
-	// that every other content source uses.
+	const liveMode = options.liveSyncMode ?? resolveLiveReadMode();
 	const timelineFollowing = options.contentSource !== "for_you";
-	const mode = timelineFollowing
-		? (options.liveSyncMode ?? "xurl")
-		: getBirdclawConfig().mentions?.dataSource === "bird"
+	const timelineMode = timelineFollowing
+		? liveMode
+		: liveMode === "bird"
 			? "bird"
 			: "auto";
+	const mentionThreadMode = liveMode === "bird" ? "bird" : "xurl";
 	const contextTweetBudget = Math.max(
 		20,
 		Math.trunc(options.maxTweets ?? DEFAULT_MAX_TWEETS),
@@ -804,12 +802,12 @@ function refreshPeriodDigestInputsEffect(
 				emitDigestStatus(
 					handlers,
 					"Fetching home timeline from X",
-					"Walking the selected time window with xurl.",
+					`Walking the selected time window with ${timelineMode}.`,
 				),
 			);
 			const result = yield* syncHomeTimelineEffect({
 				account: options.account,
-				mode,
+				mode: timelineMode,
 				limit: timelineLimit,
 				maxPages: timelineMaxPages,
 				startTime: liveStartTime,
@@ -857,7 +855,7 @@ function refreshPeriodDigestInputsEffect(
 			);
 			const result = yield* syncMentionsEffect({
 				account: options.account,
-				mode: "xurl",
+				mode: liveMode,
 				limit: mentionsLimit,
 				maxPages: mentionsMaxPages,
 				startTime: liveStartTime,
@@ -903,7 +901,7 @@ function refreshPeriodDigestInputsEffect(
 			);
 			const result = yield* syncMentionThreadsEffect({
 				account: options.account,
-				mode: "xurl",
+				mode: mentionThreadMode,
 				limit: threadLimit,
 				tweetIds: phase.threadTweetIds,
 				delayMs: 100,

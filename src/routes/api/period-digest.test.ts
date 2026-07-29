@@ -3,8 +3,8 @@ import { Effect } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getRouteHandler } from "#/test/route-handlers";
 
-vi.mock("#/lib/config", () => ({
-	getBirdclawConfig: () => ({}),
+vi.mock("#/lib/live-transport-policy", () => ({
+	resolveLiveReadMode: () => "bird",
 }));
 
 const maybeAutoUpdateBackupMock = vi.fn();
@@ -119,7 +119,7 @@ describe("api period digest route", () => {
 				maxTweets: 42,
 				maxLinks: 7,
 				liveSync: true,
-				liveSyncMode: "xurl",
+				liveSyncMode: "bird",
 				liveTimelineLimit: undefined,
 				liveTimelineMaxPages: undefined,
 				// Deliberately not the request's AbortSignal — see the "Option A"

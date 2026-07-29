@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getRouteHandler } from "#/test/route-handlers";
 
-vi.mock("#/lib/config", () => ({
-	getBirdclawConfig: () => ({}),
+vi.mock("#/lib/live-transport-policy", () => ({
+	resolveLiveReadMode: () => "bird",
 }));
 
 const resolveEffectivePromptMock = vi.hoisted(() => vi.fn());
@@ -77,7 +77,7 @@ describe("api period-digest-metadata route", () => {
 			maxTweets: 5000,
 			maxLinks: 20,
 			liveSync: false,
-			liveSyncMode: "xurl",
+			liveSyncMode: "bird",
 			liveTimelineLimit: undefined,
 			liveTimelineMaxPages: undefined,
 		})}`;

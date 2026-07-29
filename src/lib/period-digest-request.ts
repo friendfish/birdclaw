@@ -1,5 +1,5 @@
-import { getBirdclawConfig } from "./config";
 import { parseBoundedInteger } from "./http-effect";
+import { resolveLiveReadMode } from "./live-transport-policy";
 import {
 	normalizeDigestLanguage,
 	type PeriodDigestContentSource,
@@ -40,8 +40,7 @@ export function parsePeriodDigestRequestOptions(url: URL): PeriodDigestOptions {
 			max: 25,
 		}),
 		liveSync: url.searchParams.get("liveSync") !== "false",
-		liveSyncMode:
-			getBirdclawConfig().mentions?.dataSource === "bird" ? "bird" : "xurl",
+		liveSyncMode: resolveLiveReadMode(),
 		liveTimelineLimit: parseBoundedInteger(
 			url.searchParams.get("liveTimelineLimit"),
 			{ max: 100_000 },

@@ -352,6 +352,12 @@ describe("period digest live refresh", () => {
 				following: true,
 				mode: "bird",
 			});
+			expect(syncMentionsMock.mock.calls[0]?.[0]).toMatchObject({
+				mode: "bird",
+			});
+			expect(syncMentionThreadsMock.mock.calls.at(-1)?.[0]).toMatchObject({
+				mode: "bird",
+			});
 		});
 	});
 });
