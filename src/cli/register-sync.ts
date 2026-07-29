@@ -4,16 +4,23 @@ import {
 	type AuthoredSyncMode,
 } from "#/lib/authored-live";
 import { resolveLiveReadMode } from "#/lib/live-transport-policy";
-import { syncFollowGraph } from "#/lib/follow-graph";
+import {
+	syncFollowGraph,
+	type SyncFollowGraphOptions,
+} from "#/lib/follow-graph";
 import { syncMentionThreads } from "#/lib/mention-threads-live";
 import { syncMentions } from "#/lib/mentions-live";
 import {
 	syncTimelineCollection,
 	type TimelineCollectionMode,
 } from "#/lib/timeline-collections-live";
-import { syncHomeTimeline } from "#/lib/timeline-live";
+import { syncHomeTimeline, type HomeTimelineMode } from "#/lib/timeline-live";
 import { syncXLists, type XListSyncMode } from "#/lib/x-lists";
 import { errorMessage, type CliCommandContext } from "./command-context";
+
+function resolveSyncMode(mode: string | undefined) {
+	return mode ?? resolveLiveReadMode(undefined, "auto");
+}
 
 export function registerSyncCommands({
 	program,
@@ -28,16 +35,17 @@ export function registerSyncCommands({
 		.command("lists")
 		.description("Sync owned X Lists and rate-limited membership pages")
 		.option("--account <username>", "Account username or id")
-		.option("--mode <mode>", "auto, bird, or xurl", "auto")
+		.option("--mode <mode>", "auto, bird, or xurl")
 		.option("--max-lists <n>", "Maximum owned Lists to inspect", "20")
 		.option("--member-limit <n>", "Members per transport page", "20")
 		.option("--max-member-pages <n>", "Maximum membership pages per List", "1")
 		.option("--delay-ms <n>", "Delay between Lists", "1000")
 		.action(async (options) => {
+			const mode = resolveSyncMode(options.mode) as XListSyncMode;
 			try {
 				const result = await syncXLists({
 					account: options.account,
-					mode: options.mode as XListSyncMode,
+					mode,
 					maxLists: Number(options.maxLists),
 					memberLimit: Number(options.memberLimit),
 					maxMemberPages: Number(options.maxMemberPages),
@@ -51,7 +59,7 @@ export function registerSyncCommands({
 					{
 						ok: false,
 						kind: "lists",
-						mode: options.mode,
+						mode,
 						error: errorMessage(error),
 					},
 					true,
@@ -64,16 +72,17 @@ export function registerSyncCommands({
 		.command("timeline")
 		.description("Refresh live home timeline through xurl or bird")
 		.option("--account <username>", "Account username or id")
-		.option("--mode <mode>", "auto, xurl, or bird", "auto")
+		.option("--mode <mode>", "auto, xurl, or bird")
 		.option("--limit <n>", "Result limit", "100")
 		.option("--max-pages <n>", "Stop after N xurl pages", "3")
 		.option("--for-you", 'Fetch "For You" instead of chronological Following')
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
 		.option("--refresh", "Bypass live-cache freshness window")
 		.action(async (options) => {
+			const mode = resolveSyncMode(options.mode);
 			const result = await syncHomeTimeline({
 				account: options.account,
-				mode: options.mode,
+				mode: mode as HomeTimelineMode,
 				limit: Number(options.limit),
 				maxPages: Number(options.maxPages),
 				following: !options.forYou,
@@ -88,7 +97,7 @@ export function registerSyncCommands({
 		.command("mentions")
 		.description("Refresh live mentions through xurl or bird")
 		.option("--account <username>", "Account username or id")
-		.option("--mode <mode>", "auto, bird, or xurl", "auto")
+		.option("--mode <mode>", "auto, bird, or xurl")
 		.option("--limit <n>", "Result limit per page", "20")
 		.option("--max-pages <n>", "Stop after N pages")
 		.option("--since-id <id>", "Fetch mentions newer than this tweet id")
@@ -99,10 +108,11 @@ export function registerSyncCommands({
 		.option("--refresh", "Bypass live-cache freshness window")
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
 		.action(async (options) => {
+			const mode = resolveSyncMode(options.mode);
 			try {
 				const result = await syncMentions({
 					account: options.account,
-					mode: options.mode,
+					mode,
 					limit: Number(options.limit),
 					maxPages: options.maxPages ? Number(options.maxPages) : undefined,
 					sinceId: options.sinceId,
@@ -118,7 +128,7 @@ export function registerSyncCommands({
 					{
 						ok: false,
 						kind: "mentions",
-						mode: options.mode ?? "xurl",
+						mode,
 						error: errorMessage(error),
 					},
 					true,
@@ -214,7 +224,7 @@ export function registerSyncCommands({
 			.command(kind)
 			.description(`Refresh live ${kind} through xurl or bird`)
 			.option("--account <username>", "Account username or id")
-			.option("--mode <mode>", "auto, xurl, or bird", "auto")
+			.option("--mode <mode>", "auto, xurl, or bird")
 			.option("--limit <n>", "Per-page/result limit", "20")
 			.option("--all", "Fetch every retrievable page")
 			.option(
@@ -225,10 +235,11 @@ export function registerSyncCommands({
 			.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
 			.option("--refresh", "Bypass live-cache freshness window")
 			.action(async (options) => {
+				const mode = resolveSyncMode(options.mode);
 				const result = await syncTimelineCollection({
 					kind,
 					account: options.account,
-					mode: options.mode as TimelineCollectionMode,
+					mode: mode as TimelineCollectionMode,
 					limit: Number(options.limit),
 					all: Boolean(options.all) || options.maxPages !== undefined,
 					maxPages: options.maxPages ? Number(options.maxPages) : undefined,
@@ -248,7 +259,7 @@ export function registerSyncCommands({
 				`Dry-run or refresh live ${direction} into the local follow graph`,
 			)
 			.option("--account <username>", "Account username or id")
-			.option("--mode <mode>", "auto, bird, or xurl", "auto")
+			.option("--mode <mode>", "auto, bird, or xurl")
 			.option("--limit <n>", "X API users per page", "1000")
 			.option("--max-pages <n>", "Stop after N pages")
 			.option("--max-resources <n>", "Stop after N unique users")
@@ -257,11 +268,12 @@ export function registerSyncCommands({
 			.option("--allow-partial", "Acknowledge capped/incomplete snapshot")
 			.option("--yes", "Confirm live sync or fresh-cache merge")
 			.action(async (options) => {
+				const mode = resolveSyncMode(options.mode);
 				try {
 					const result = await syncFollowGraph({
 						direction,
 						account: options.account,
-						mode: options.mode,
+						mode: mode as NonNullable<SyncFollowGraphOptions["mode"]>,
 						limit: Number(options.limit),
 						maxPages: options.maxPages ? Number(options.maxPages) : undefined,
 						maxResources: options.maxResources

@@ -88,6 +88,7 @@ function deferred<T>() {
 }
 
 const originalBirdclawHome = process.env.BIRDCLAW_HOME;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 const tempRoots: string[] = [];
 
 function setupTempHome() {
@@ -140,6 +141,11 @@ describe("web sync dispatcher", () => {
 		} else {
 			process.env.BIRDCLAW_HOME = originalBirdclawHome;
 		}
+		if (originalMentionsDataSource === undefined) {
+			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+		}
 		for (const tempRoot of tempRoots.splice(0)) {
 			rmSync(tempRoot, { recursive: true, force: true });
 		}
@@ -168,6 +174,49 @@ describe("web sync dispatcher", () => {
 			summary: "Synced 42 items",
 			steps: [{ kind: "timeline", count: 42, source: "bird" }],
 		});
+	});
+
+	it("keeps every web sync plan on Bird when Bird is selected by the environment", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		syncHomeTimelineMock.mockResolvedValue({
+			ok: true,
+			source: "bird",
+			count: 1,
+		});
+		syncMentionsMock.mockResolvedValue({
+			ok: true,
+			source: "bird",
+			count: 1,
+			partial: false,
+		});
+		syncMentionThreadsMock.mockResolvedValue({
+			ok: true,
+			source: "bird",
+			mergedTweets: 1,
+			partial: false,
+		});
+		syncTimelineCollectionMock.mockResolvedValue({
+			ok: true,
+			source: "bird",
+			count: 1,
+		});
+
+		await runWebSync("timeline", "acct_studio");
+		await runWebSync("mentions", "acct_studio");
+		await runWebSync("bookmarks", "acct_studio");
+
+		expect(syncHomeTimelineMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncMentionsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncMentionThreadsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncTimelineCollectionMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
 	});
 
 	it("passes dm request sync options through to Bird", async () => {

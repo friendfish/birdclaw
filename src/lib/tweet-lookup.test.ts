@@ -1,11 +1,12 @@
 // @vitest-environment node
 import { Effect } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	lookupTweetsByIdsViaBird: vi.fn(),
 	lookupTweetsByIdsViaXurl: vi.fn(),
 }));
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 
 vi.mock("./bird", () => ({
 	lookupTweetsByIdsViaBird: mocks.lookupTweetsByIdsViaBird,
@@ -30,10 +31,19 @@ vi.mock("./xurl", async () => {
 });
 
 describe("shared tweet lookup", () => {
+	beforeEach(() => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "birdclaw";
+	});
+
 	afterEach(() => {
 		vi.resetModules();
 		for (const mock of Object.values(mocks)) {
 			mock.mockReset();
+		}
+		if (originalMentionsDataSource === undefined) {
+			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
 		}
 	});
 
@@ -50,6 +60,27 @@ describe("shared tweet lookup", () => {
 		});
 		expect(mocks.lookupTweetsByIdsViaXurl).toHaveBeenCalledWith(["tweet_1"]);
 		expect(mocks.lookupTweetsByIdsViaBird).not.toHaveBeenCalled();
+	});
+
+	it("uses Bird without probing xurl when omitted mode resolves to Bird", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		mocks.lookupTweetsByIdsViaXurl.mockResolvedValue({
+			data: [
+				{ id: "tweet_1", author_id: "42", text: "xurl", created_at: "now" },
+			],
+		});
+		mocks.lookupTweetsByIdsViaBird.mockResolvedValue({
+			data: [
+				{ id: "tweet_1", author_id: "42", text: "bird", created_at: "now" },
+			],
+		});
+		const { lookupTweetsByIds } = await import("./tweet-lookup");
+
+		await expect(lookupTweetsByIds(["tweet_1"])).resolves.toMatchObject({
+			data: [{ id: "tweet_1", text: "bird" }],
+		});
+		expect(mocks.lookupTweetsByIdsViaBird).toHaveBeenCalledWith(["tweet_1"]);
+		expect(mocks.lookupTweetsByIdsViaXurl).not.toHaveBeenCalled();
 	});
 
 	it("exposes tweet lookup as a lazy Effect program", async () => {

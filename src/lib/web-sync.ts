@@ -5,6 +5,7 @@ import { syncDirectMessagesViaCachedBirdEffect } from "./dms-live";
 import { runEffectBackground, runEffectPromise } from "./effect-runtime";
 import { syncMentionThreadsEffect } from "./mention-threads-live";
 import { syncMentionsEffect } from "./mentions-live";
+import { resolveLiveReadMode } from "./live-transport-policy";
 import {
 	defaultServerRuntimeServices,
 	type ServerRuntimeServices,
@@ -13,7 +14,6 @@ import NativeSqliteDatabase from "./sqlite";
 import { syncTimelineCollectionEffect } from "./timeline-collections-live";
 import { syncHomeTimelineEffect } from "./timeline-live";
 import type { HomeFeed } from "./tweet-feed-edges";
-import { getBirdclawConfig } from "./config";
 import { syncFollowGraphEffect } from "./follow-graph";
 
 import type { WebSyncKind } from "./api-enums";
@@ -143,7 +143,7 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 				const result = yield* syncHomeTimelineEffect({
 					account,
 					mode:
-						getBirdclawConfig().mentions?.dataSource === "bird"
+						resolveLiveReadMode(undefined, "auto") === "bird"
 							? "bird"
 							: !account || account === resolveDefaultSyncAccountId(runtime)
 								? "auto"
@@ -171,9 +171,7 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 				const mentions = yield* syncMentionsEffect({
 					account,
 					mode:
-						getBirdclawConfig().mentions?.dataSource === "bird"
-							? "bird"
-							: "auto",
+						resolveLiveReadMode(undefined, "auto") === "bird" ? "bird" : "auto",
 					limit: 100,
 					maxPages: 3,
 					refresh: true,
@@ -191,9 +189,7 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 				const threads = yield* syncMentionThreadsEffect({
 					account,
 					mode:
-						getBirdclawConfig().mentions?.dataSource === "bird"
-							? "bird"
-							: "xurl",
+						resolveLiveReadMode(undefined, "auto") === "bird" ? "bird" : "xurl",
 					limit: 30,
 					delayMs: 1500,
 					timeoutMs: 15000,
@@ -289,7 +285,7 @@ function syncSavedCollection(
 			kind,
 			account,
 			mode:
-				getBirdclawConfig().mentions?.dataSource === "bird"
+				resolveLiveReadMode(undefined, "auto") === "bird"
 					? "bird"
 					: isNonDefaultAccount
 						? "xurl"

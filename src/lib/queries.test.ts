@@ -93,6 +93,7 @@ const queryEnvKeys = [
 	"BIRDCLAW_HOME",
 	"BIRDCLAW_CONFIG",
 	"BIRDCLAW_MENTIONS_DATA_SOURCE",
+	"BIRDCLAW_ACTIONS_TRANSPORT",
 ] as const;
 const queryEnvSnapshot = new Map(
 	queryEnvKeys.map((key) => [key, process.env[key]] as const),
@@ -2425,6 +2426,42 @@ describe("birdclaw queries", () => {
 			body: "Fresh local-first post",
 		});
 		expect(mocks.postViaXurl).toHaveBeenCalledWith("Fresh local-first post");
+	});
+
+	it("rejects posts before xurl when Bird actions are configured", async () => {
+		setupTempHome();
+		process.env.BIRDCLAW_ACTIONS_TRANSPORT = "bird";
+
+		await expect(createPost("acct_primary", "Bird-only post")).rejects.toThrow(
+			/not supported.*bird/i,
+		);
+
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.postViaXurl).not.toHaveBeenCalled();
+	});
+
+	it("rejects tweet replies before xurl when Bird actions are configured", async () => {
+		setupTempHome();
+		process.env.BIRDCLAW_ACTIONS_TRANSPORT = "bird";
+
+		await expect(
+			createTweetReply("acct_primary", "tweet_004", "Bird-only tweet reply"),
+		).rejects.toThrow(/not supported.*bird/i);
+
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.replyViaXurl).not.toHaveBeenCalled();
+	});
+
+	it("rejects dm replies before xurl when Bird actions are configured", async () => {
+		setupTempHome();
+		process.env.BIRDCLAW_ACTIONS_TRANSPORT = "bird";
+
+		await expect(createDmReply("dm_003", "Bird-only DM reply")).rejects.toThrow(
+			/not supported.*bird/i,
+		);
+
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.dmViaXurl).not.toHaveBeenCalled();
 	});
 
 	it("exposes local compose writes as lazy Effect programs", async () => {

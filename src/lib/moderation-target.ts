@@ -18,6 +18,10 @@ export interface ResolvedModerationProfile {
 	externalUserId: string | null;
 }
 
+export interface ResolveModerationProfileOptions {
+	xurlFallback?: boolean;
+}
+
 function toError(error: unknown) {
 	return error instanceof Error ? error : new Error(String(error));
 }
@@ -92,6 +96,7 @@ export function resolveLocalProfile(
 export function resolveProfileEffect(
 	query: string,
 	providedDb?: Database,
+	{ xurlFallback = true }: ResolveModerationProfileOptions = {},
 ): Effect.Effect<ResolvedModerationProfile, unknown> {
 	return Effect.gen(function* () {
 		const db = providedDb ?? (yield* trySync(() => getNativeDb()));
@@ -134,7 +139,7 @@ export function resolveProfileEffect(
 			lastError = birdResult.error;
 		}
 
-		if (!user) {
+		if (!user && xurlFallback) {
 			const xurlResult = yield* (
 				/^\d+$/.test(normalizedQuery)
 					? lookupUsersByIdsEffect([normalizedQuery])

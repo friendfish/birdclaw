@@ -196,6 +196,32 @@ describe("moderation target helpers", () => {
 		expect(mocks.lookupUsersByIds).toHaveBeenCalledWith(["88"]);
 	});
 
+	it("does not fall back to xurl while resolving a Bird moderation target", async () => {
+		makeTempHome();
+		mocks.lookupProfileViaBird.mockResolvedValueOnce(null);
+		mocks.lookupUsersByHandles.mockResolvedValueOnce([
+			{
+				id: "88",
+				username: "xurl-only",
+				name: "Xurl Only",
+			},
+		]);
+		const { resolveModerationTargetEffect } =
+			await import("./moderation-state");
+
+		await expect(
+			Effect.runPromise(
+				resolveModerationTargetEffect({
+					accountId: "acct_primary",
+					query: "xurl-only",
+					selfActionError: "Cannot block the current account",
+					transport: "bird",
+				}),
+			),
+		).rejects.toThrow("Profile not found: xurl-only");
+		expect(mocks.lookupUsersByHandles).not.toHaveBeenCalled();
+	});
+
 	it("exposes moderation target resolution as lazy Effect programs", async () => {
 		makeTempHome();
 		mocks.lookupProfileViaBird.mockResolvedValueOnce(null);

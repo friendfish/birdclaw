@@ -1,10 +1,11 @@
 // @vitest-environment node
 import { Effect } from "effect";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const resolveProfileMock = vi.fn();
 const resolveOperationAccountMock = vi.fn();
 const listUserTweetsMock = vi.fn();
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 
 vi.mock("./account-selection", () => ({
 	resolveOperationAccount: (...args: unknown[]) =>
@@ -29,6 +30,39 @@ describe("profile reply inspection", () => {
 			id: "acct_primary",
 			username: "selected_user",
 		});
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "auto";
+	});
+
+	afterEach(() => {
+		if (originalMentionsDataSource === undefined) {
+			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+		}
+	});
+
+	it("rejects xurl-only reply inspection before lookup when Bird is configured", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		resolveProfileMock.mockResolvedValue({
+			profile: {
+				id: "profile_user_42",
+				handle: "jpctan",
+				displayName: "Jason Tan",
+				bio: "",
+				followersCount: 268,
+				avatarHue: 18,
+				createdAt: "2015-05-20T09:27:37.000Z",
+			},
+			externalUserId: "42",
+		});
+		listUserTweetsMock.mockResolvedValue({ items: [] });
+		const { inspectProfileReplies } = await import("./profile-replies");
+
+		await expect(inspectProfileReplies("@jpctan")).rejects.toThrow(
+			/not supported.*bird/i,
+		);
+		expect(resolveProfileMock).not.toHaveBeenCalled();
+		expect(listUserTweetsMock).not.toHaveBeenCalled();
 	});
 
 	it("builds profile reply inspection effects lazily", async () => {

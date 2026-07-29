@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { getBirdclawConfig } from "./config";
+import { resolveMentionsDataSource } from "./config";
 import { syncMentionThreadsEffect } from "./mention-threads-live";
 import { syncMentionsEffect } from "./mentions-live";
 import {
@@ -45,7 +45,7 @@ function messageFromError(error: unknown) {
 }
 
 function configuredTransport(): DigestArchiveSyncTransport {
-	const source = getBirdclawConfig().mentions?.dataSource;
+	const source = resolveMentionsDataSource();
 	return source === "bird" || source === "xurl" || source === "auto"
 		? source
 		: "local";

@@ -3,7 +3,7 @@ import {
 	type ActionTransportResult,
 	runModerationAction,
 } from "./actions-transport";
-import type { ActionsTransport } from "./config";
+import { type ActionsTransport, resolveActionsTransport } from "./config";
 import { getNativeDb } from "./db";
 import { databaseWriteEffect } from "./database-writer";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
@@ -374,10 +374,12 @@ export function resolveModerationTargetEffect({
 	accountId,
 	query,
 	selfActionError,
+	transport,
 }: {
 	accountId: string;
 	query: string;
 	selfActionError: string;
+	transport?: ActionsTransport;
 }) {
 	return Effect.gen(function* () {
 		const db = yield* trySync(() => getNativeDb());
@@ -395,7 +397,12 @@ export function resolveModerationTargetEffect({
 			return yield* Effect.fail(new Error(selfActionError));
 		}
 
-		const resolved = yield* resolveProfileEffect(query, db);
+		const resolvedTransport = yield* trySync(() =>
+			resolveActionsTransport(transport),
+		);
+		const resolved = yield* resolveProfileEffect(query, db, {
+			xurlFallback: resolvedTransport !== "bird",
+		});
 		const account = yield* trySync(
 			() =>
 				db
@@ -453,6 +460,7 @@ export function addModerationEffect<K extends ModerationKind>(
 				accountId,
 				query,
 				selfActionError: descriptor.selfActionError,
+				transport: options.transport,
 			});
 		const transport = yield* tryPromise(() =>
 			runModerationAction({
@@ -565,6 +573,7 @@ export function removeModerationEffect<K extends ModerationKind>(
 				accountId,
 				query,
 				selfActionError: descriptor.selfActionError,
+				transport: options.transport,
 			});
 		const transport = yield* tryPromise(() =>
 			runModerationAction({
