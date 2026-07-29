@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
@@ -15,8 +15,10 @@ const getAuthenticatedBirdAccountMock = vi.fn();
 const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 const originalConfig = process.env.BIRDCLAW_CONFIG;
+const originalHome = process.env.BIRDCLAW_HOME;
 
 function resetLiveDataSourceEnvironment() {
+	delete process.env.BIRDCLAW_HOME;
 	delete process.env.BIRDCLAW_CONFIG;
 	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
@@ -24,6 +26,11 @@ function resetLiveDataSourceEnvironment() {
 }
 
 function restoreLiveDataSourceEnvironment() {
+	if (originalHome === undefined) {
+		delete process.env.BIRDCLAW_HOME;
+	} else {
+		process.env.BIRDCLAW_HOME = originalHome;
+	}
 	if (originalConfig === undefined) {
 		delete process.env.BIRDCLAW_CONFIG;
 	} else {
@@ -160,9 +167,9 @@ describe("cached live mentions", () => {
 	});
 
 	it("builds mention sync effects lazily", async () => {
-		makeTempHome();
-		insertLocalMentionBaseline();
+		const home = makeTempHome();
 		const { syncMentionsEffect } = await import("./mentions-live");
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 
 		const effect = syncMentionsEffect({
 			mode: "xurl",
@@ -171,6 +178,10 @@ describe("cached live mentions", () => {
 		});
 
 		expect(listMentionsViaXurlMock).not.toHaveBeenCalled();
+		expect(listMentionsViaBirdMock).not.toHaveBeenCalled();
+		expect(lookupUsersByHandlesMock).not.toHaveBeenCalled();
+		expect(getAuthenticatedBirdAccountMock).not.toHaveBeenCalled();
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 		listMentionsViaXurlMock.mockResolvedValueOnce({
 			data: [
 				{
@@ -195,15 +206,20 @@ describe("cached live mentions", () => {
 	});
 
 	it("validates mention sync effects only when run", async () => {
-		makeTempHome();
+		const home = makeTempHome();
 		const { syncMentionsEffect } = await import("./mentions-live");
 
-		const effect = syncMentionsEffect({ mode: "xurl", limit: 4 });
+		const effect = syncMentionsEffect({ mode: "" as never, limit: 5 });
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 
 		await expect(Effect.runPromise(effect)).rejects.toThrow(
-			"xurl mode requires --limit between 5 and 100",
+			"--mode must be auto, bird, or xurl",
 		);
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 		expect(listMentionsViaXurlMock).not.toHaveBeenCalled();
+		expect(listMentionsViaBirdMock).not.toHaveBeenCalled();
+		expect(lookupUsersByHandlesMock).not.toHaveBeenCalled();
+		expect(getAuthenticatedBirdAccountMock).not.toHaveBeenCalled();
 	});
 
 	it("reports bird mention sync progress", async () => {
