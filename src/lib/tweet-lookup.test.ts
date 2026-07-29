@@ -1,11 +1,13 @@
 // @vitest-environment node
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetBirdclawPathsForTests } from "./config";
 
 const mocks = vi.hoisted(() => ({
 	lookupTweetsByIdsViaBird: vi.fn(),
 	lookupTweetsByIdsViaXurl: vi.fn(),
 }));
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 
 vi.mock("./bird", () => ({
@@ -32,7 +34,9 @@ vi.mock("./xurl", async () => {
 
 describe("shared tweet lookup", () => {
 	beforeEach(() => {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "birdclaw";
+		resetBirdclawPathsForTests();
 	});
 
 	afterEach(() => {
@@ -40,11 +44,17 @@ describe("shared tweet lookup", () => {
 		for (const mock of Object.values(mocks)) {
 			mock.mockReset();
 		}
+		if (originalLiveDataSource === undefined) {
+			delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+		}
 		if (originalMentionsDataSource === undefined) {
 			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 		} else {
 			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
 		}
+		resetBirdclawPathsForTests();
 	});
 
 	it("uses xurl first in auto mode", async () => {
@@ -64,6 +74,7 @@ describe("shared tweet lookup", () => {
 
 	it("uses Bird without probing xurl when omitted mode resolves to Bird", async () => {
 		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
 		mocks.lookupTweetsByIdsViaXurl.mockResolvedValue({
 			data: [
 				{ id: "tweet_1", author_id: "42", text: "xurl", created_at: "now" },

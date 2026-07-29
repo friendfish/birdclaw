@@ -88,6 +88,7 @@ function deferred<T>() {
 }
 
 const originalBirdclawHome = process.env.BIRDCLAW_HOME;
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 const tempRoots: string[] = [];
 
@@ -117,6 +118,9 @@ function setupDefaultAccount(accountId: string) {
 
 describe("web sync dispatcher", () => {
 	beforeEach(() => {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		resetBirdclawPathsForTests();
 		setupTempHome();
 		clearWebSyncLocksForTests();
 		vi.useRealTimers();
@@ -135,17 +139,22 @@ describe("web sync dispatcher", () => {
 
 	afterEach(() => {
 		resetDatabaseForTests();
-		resetBirdclawPathsForTests();
 		if (originalBirdclawHome === undefined) {
 			delete process.env.BIRDCLAW_HOME;
 		} else {
 			process.env.BIRDCLAW_HOME = originalBirdclawHome;
+		}
+		if (originalLiveDataSource === undefined) {
+			delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
 		}
 		if (originalMentionsDataSource === undefined) {
 			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 		} else {
 			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
 		}
+		resetBirdclawPathsForTests();
 		for (const tempRoot of tempRoots.splice(0)) {
 			rmSync(tempRoot, { recursive: true, force: true });
 		}

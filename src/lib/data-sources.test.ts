@@ -40,6 +40,7 @@ vi.mock("./xurl", async () => {
 const envKeys = [
 	"BIRDCLAW_HOME",
 	"BIRDCLAW_CONFIG",
+	"BIRDCLAW_LIVE_DATA_SOURCE",
 	"BIRDCLAW_MENTIONS_DATA_SOURCE",
 ] as const;
 const envSnapshot = new Map(
