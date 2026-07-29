@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
@@ -14,8 +14,10 @@ const getAuthenticatedBirdAccountMock = vi.fn();
 const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 const originalConfig = process.env.BIRDCLAW_CONFIG;
+const originalHome = process.env.BIRDCLAW_HOME;
 
 function resetLiveDataSourceEnvironment() {
+	delete process.env.BIRDCLAW_HOME;
 	delete process.env.BIRDCLAW_CONFIG;
 	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
@@ -23,6 +25,11 @@ function resetLiveDataSourceEnvironment() {
 }
 
 function restoreLiveDataSourceEnvironment() {
+	if (originalHome === undefined) {
+		delete process.env.BIRDCLAW_HOME;
+	} else {
+		process.env.BIRDCLAW_HOME = originalHome;
+	}
 	if (originalConfig === undefined) {
 		delete process.env.BIRDCLAW_CONFIG;
 	} else {
@@ -143,7 +150,7 @@ describe("live home timeline sync", () => {
 	});
 
 	it("keeps home timeline sync effects lazy", async () => {
-		makeTempHome();
+		const home = makeTempHome();
 		listHomeTimelineViaBirdMock.mockResolvedValueOnce({
 			data: [],
 			meta: { result_count: 0 },
@@ -158,7 +165,9 @@ describe("live home timeline sync", () => {
 			onProgress: (value) => progress.push(value),
 		});
 
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 		expect(listHomeTimelineViaBirdMock).not.toHaveBeenCalled();
+		expect(listHomeTimelineViaXurlMock).not.toHaveBeenCalled();
 		await expect(Effect.runPromise(effect)).resolves.toMatchObject({
 			source: "bird",
 			count: 0,
@@ -172,6 +181,23 @@ describe("live home timeline sync", () => {
 			}),
 		]);
 		expect(listHomeTimelineViaBirdMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("defers invalid home timeline mode validation without opening a database", async () => {
+		const home = makeTempHome();
+		const { syncHomeTimelineEffect } = await import("./timeline-live");
+
+		const effect = syncHomeTimelineEffect({ mode: "" as never });
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
+		expect(listHomeTimelineViaBirdMock).not.toHaveBeenCalled();
+		expect(listHomeTimelineViaXurlMock).not.toHaveBeenCalled();
+
+		await expect(Effect.runPromise(effect)).rejects.toThrow(
+			"--mode must be bird, xurl, or auto",
+		);
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
+		expect(listHomeTimelineViaBirdMock).not.toHaveBeenCalled();
+		expect(listHomeTimelineViaXurlMock).not.toHaveBeenCalled();
 	});
 
 	it("stores account-scoped home timeline edges without moving canonical tweets", async () => {

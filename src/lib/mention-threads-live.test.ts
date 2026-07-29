@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
@@ -16,8 +16,10 @@ const mocks = vi.hoisted(() => ({
 const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 const originalConfig = process.env.BIRDCLAW_CONFIG;
+const originalHome = process.env.BIRDCLAW_HOME;
 
 function resetLiveDataSourceEnvironment() {
+	delete process.env.BIRDCLAW_HOME;
 	delete process.env.BIRDCLAW_CONFIG;
 	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
@@ -25,6 +27,11 @@ function resetLiveDataSourceEnvironment() {
 }
 
 function restoreLiveDataSourceEnvironment() {
+	if (originalHome === undefined) {
+		delete process.env.BIRDCLAW_HOME;
+	} else {
+		process.env.BIRDCLAW_HOME = originalHome;
+	}
 	if (originalConfig === undefined) {
 		delete process.env.BIRDCLAW_CONFIG;
 	} else {
@@ -100,6 +107,14 @@ function setupTempHome() {
 		text: "mention text",
 		created_at: "2026-05-04T07:00:00.000Z",
 	});
+}
+
+function makeTempHome() {
+	const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-threads-"));
+	tempRoots.push(tempRoot);
+	process.env.BIRDCLAW_HOME = tempRoot;
+	resetBirdclawPathsForTests();
+	return tempRoot;
 }
 
 function insertMention(
@@ -186,6 +201,25 @@ describe("mention thread sync", () => {
 			threads: 1,
 		});
 		expect(mocks.listThreadViaBird).toHaveBeenCalledTimes(1);
+	});
+
+	it("defers invalid mention thread sync validation without opening a database", async () => {
+		const home = makeTempHome();
+		const { syncMentionThreadsEffect } = await import("./mention-threads-live");
+
+		const effect = syncMentionThreadsEffect({ mode: "" as never });
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
+		expect(mocks.listThreadViaBird).not.toHaveBeenCalled();
+		expect(mocks.searchRecentByConversationId).not.toHaveBeenCalled();
+		expect(mocks.getTweetById).not.toHaveBeenCalled();
+
+		await expect(Effect.runPromise(effect)).rejects.toThrow(
+			"--mode must be bird or xurl",
+		);
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
+		expect(mocks.listThreadViaBird).not.toHaveBeenCalled();
+		expect(mocks.searchRecentByConversationId).not.toHaveBeenCalled();
+		expect(mocks.getTweetById).not.toHaveBeenCalled();
 	});
 
 	it("uses configured Bird for omitted mention thread mode without xurl calls", async () => {

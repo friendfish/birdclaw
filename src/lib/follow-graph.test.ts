@@ -15,8 +15,10 @@ const mocks = vi.hoisted(() => ({
 const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 const originalConfig = process.env.BIRDCLAW_CONFIG;
+const originalHome = process.env.BIRDCLAW_HOME;
 
 function resetLiveDataSourceEnvironment() {
+	delete process.env.BIRDCLAW_HOME;
 	delete process.env.BIRDCLAW_CONFIG;
 	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
@@ -24,6 +26,11 @@ function resetLiveDataSourceEnvironment() {
 }
 
 function restoreLiveDataSourceEnvironment() {
+	if (originalHome === undefined) {
+		delete process.env.BIRDCLAW_HOME;
+	} else {
+		process.env.BIRDCLAW_HOME = originalHome;
+	}
 	if (originalConfig === undefined) {
 		delete process.env.BIRDCLAW_CONFIG;
 	} else {
