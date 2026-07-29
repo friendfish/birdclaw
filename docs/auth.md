@@ -10,7 +10,9 @@ birdclaw keeps its database local. Archive import needs no X credentials. Live r
 - [`xurl`](https://github.com/xdevplatform/xurl) is the recommended setup for new users and uses the official X API with your own developer app.
 - Existing private `bird` installations remain supported for cookie-backed workflows and compatibility fallback.
 
-Install xurl for a new live-transport setup. Transport selection is workflow-specific: sync commands expose `--mode`, while `auth use` only controls moderation writes such as block, unblock, mute, and unmute.
+Install xurl for a new live-transport setup. `live.dataSource` is the global
+choice for live reads and syncs; supported commands can override it with
+`--mode`. `auth use` persists `actions.transport` for every live write.
 
 On a fresh Birdclaw database, import your X archive before the first live sync. Archive import establishes your real account identity; `init --demo` creates only synthetic sample data. The current auth commands verify transports but do not bind a new database to the authenticated X account.
 
@@ -39,7 +41,7 @@ Birdclaw preserves compatibility with existing private bird installations, but b
 bird whoami
 ```
 
-Existing bird configurations continue to provide cookie-backed fallback for supported reads and writes.
+Existing bird configurations continue to provide cookie-backed fallback for supported reads and moderation writes.
 
 ## Verify xurl in birdclaw
 
@@ -49,16 +51,16 @@ birdclaw auth status --json
 
 `auth status` runs a coarse xurl status probe. It does not probe bird, prove that a specific X API request will succeed, or choose a transport for every command.
 
-- `installed` reports whether the xurl executable exists.
+- `installed` appears only when Birdclaw actually probes xurl; it reports whether the executable exists. A deliberately disabled xurl transport omits this field rather than claiming xurl is uninstalled.
 - `availableTransport` is `xurl` when `xurl auth status` succeeds without a known unauthenticated message; otherwise it is `local`.
 - `statusText` explains the detected state.
 - `rawStatus` contains xurl's status output when available.
 
 Use `xurl whoami` as the end-to-end authentication check. Run `xurl auth status` for detailed app/token state. Existing private bird users can run `bird whoami` to verify bird independently.
 
-## Choose moderation transport
+## Choose write transport
 
-Persist the preferred transport for block, unblock, mute, and unmute:
+Persist the preferred transport for live writes:
 
 ```text
 birdclaw auth use auto
@@ -66,9 +68,15 @@ birdclaw auth use bird
 birdclaw auth use xurl
 ```
 
-`auto` tries bird first for moderation writes, then xurl. A command-level `--transport` flag overrides the saved value. `BIRDCLAW_ACTIONS_TRANSPORT` overrides the config for one process.
+`auto` tries Bird first for supported moderation writes, then xurl. A
+command-level `--transport` flag overrides the saved value, and
+`BIRDCLAW_ACTIONS_TRANSPORT` overrides it for one process. Bird has no post,
+reply, or DM compose implementation, so those commands explicitly reject
+`actions.transport: "bird"`; use `auto` or `xurl` for xurl writes.
 
-Sync commands do not use this saved moderation setting. Select their source with the command's `--mode` flag:
+Live reads and syncs do not use this saved write setting. Set
+`live.dataSource` (or `BIRDCLAW_LIVE_DATA_SOURCE`) globally, or select a source
+with the command's `--mode` flag:
 
 ```text
 birdclaw sync timeline --mode auto

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { queryEnvelopeSchema } from "./api-contracts";
 import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import {
 	resolveLiveReadMode,
@@ -109,10 +110,12 @@ describe("live transport policy", () => {
 
 	it("builds stable disabled xurl statuses", () => {
 		expect(xurlDisabledTransportStatus()).toEqual({
-			installed: false,
 			availableTransport: "local",
 			statusText: "xurl disabled by bird transport selection",
 		});
+		expect(
+			queryEnvelopeSchema.shape.transport.parse(xurlDisabledTransportStatus()),
+		).not.toHaveProperty("installed");
 		expect(xurlDisabledDataSourceStatus()).toEqual({
 			source: "xurl",
 			label: "xurl",

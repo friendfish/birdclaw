@@ -52,7 +52,6 @@ export function resolveMentionThreadReadMode(
 
 export function xurlDisabledTransportStatus(): TransportStatus {
 	return {
-		installed: false,
 		availableTransport: "local",
 		statusText: "xurl disabled by bird transport selection",
 	};

@@ -2160,14 +2160,16 @@ describe("birdclaw queries", () => {
 		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
 		resetBirdclawPathsForTests();
 
-		await expect(
-			Effect.runPromise(getQueryEnvelopeEffect({ includeArchives: false })),
-		).resolves.toMatchObject({
+		const envelope = await Effect.runPromise(
+			getQueryEnvelopeEffect({ includeArchives: false }),
+		);
+		expect(envelope).toMatchObject({
 			transport: {
 				availableTransport: "local",
 				statusText: "xurl disabled by bird transport selection",
 			},
 		});
+		expect(envelope.transport).not.toHaveProperty("installed");
 		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
 	});
 

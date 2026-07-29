@@ -21,6 +21,7 @@ Flags:
 
 - `--refresh` — refresh live DMs before listing
 - `--mode bird|xurl|auto` — choose the live transport for refreshes
+- `--[no-]xurl-fallback` — allow or forbid xurl fallback for profile resolution; when omitted, configuration and the operation default decide
 - `--cache-ttl <seconds>` — tune freshness
 - `--participant <handle-or-id>`
 - `--min-followers <n>` / `--max-followers <n>`
@@ -58,11 +59,15 @@ birdclaw search dms "prototype" --json
 birdclaw search dms "layout" --min-followers 1000 --min-influence-score 120 --sort followers --json
 birdclaw search dms "invoice" --participant @someone --replied --json
 birdclaw search dms "blacksmith" --context 4 --resolve-profiles --expand-urls --no-xurl-fallback --json
-birdclaw whois "blacksmith guy" --context 4 --no-xurl-fallback --json
+birdclaw whois "blacksmith guy" --context 4 --xurl-fallback --json
 birdclaw whois "blacksmith" --context 4 --no-xurl-fallback --json
 ```
 
 Same FTS5 backbone as tweet search, with the DM-specific filters layered on top. See [Search](search.md#search-dms) for the full flag list.
+
+`search dms` and `whois` both accept `--[no-]xurl-fallback`; without either
+flag, whether profile resolution may use xurl comes from configured transport
+policy and the operation default.
 
 For identity lookups, `whois` clusters matching conversations, includes nearby DM
 context, resolves numeric archive profiles through cache-backed `bird`/`xurl`
