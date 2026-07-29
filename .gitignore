@@ -15,6 +15,7 @@ todos.json
 .cta.json
 .playwright-home
 .playwright-home-*
+.worktrees/
 coverage
 playwright-report
 test-results
