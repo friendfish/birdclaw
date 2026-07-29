@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { getBirdclawConfig } from "./config";
+import { resolveMentionsDataSource } from "./config";
 import { syncMentionThreadsEffect } from "./mention-threads-live";
 import { syncMentionsEffect } from "./mentions-live";
 import {
@@ -71,10 +71,8 @@ function durableErrorMessage(error: unknown) {
 }
 
 function configuredTransport(): DigestArchiveSyncTransport {
-	const source = getBirdclawConfig().mentions?.dataSource;
-	return source === "bird" || source === "xurl" || source === "auto"
-		? source
-		: "local";
+	const source = resolveMentionsDataSource();
+	return source === "birdclaw" ? "local" : source;
 }
 
 function floorIsoToHour(value: string) {
@@ -128,7 +126,6 @@ function aggregateStatus(
 	if (steps.every((step) => step.status === "skipped")) {
 		return "skipped";
 	}
-	if (steps.some((step) => step.status === "skipped")) return "degraded";
 	return "fresh";
 }
 

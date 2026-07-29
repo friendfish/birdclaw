@@ -57,7 +57,9 @@ interface DigestArchiveSyncResult {
 type DigestArchiveBatchStatus = "ok" | "degraded" | "failed";
 ```
 
-`fresh` means every required sync step succeeded. `degraded` means at least one required step failed or could not use a live transport while another required step ran, and generation continued from local data. A step is `skipped` when local-only configuration prevents that transport; the batch is `skipped` when the caller passes `liveSync: false` or every required step is skipped. For You is an intentional exception to the mentions transport setting because it has no local/xurl refresh equivalent: requested For You data always attempts Bird, and a Bird failure is recorded as degraded.
+`fresh` means every configured live-sync attempt succeeded; individual steps that are intentionally disabled by local-only configuration remain visible as `skipped` without degrading the whole batch. `degraded` means at least one attempted required step failed, returned partial data, or could not resolve its requested live transport, and generation continued from local data. The batch is `skipped` when the caller passes `liveSync: false` or every required step is skipped. For You is an intentional exception to the mentions transport setting because it has no local/xurl refresh equivalent: requested For You data always attempts Bird, and a Bird failure is recorded as degraded.
+
+The mentions transport is resolved through `resolveMentionsDataSource()`, preserving the existing precedence of `BIRDCLAW_MENTIONS_DATA_SOURCE`, config, then the `birdclaw` local-only default.
 
 Network or authentication failures do not abort archive generation. They remain visible in the audit and every archive JSON file. The final batch status is `failed` when any model/archive step fails, `degraded` when generation succeeds after an incomplete pre-sync, and `ok` otherwise. A degraded batch is therefore never represented as an indistinguishable complete success.
 

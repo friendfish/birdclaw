@@ -1,9 +1,10 @@
 // @vitest-environment node
 import { Effect } from "effect";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	getBirdclawConfig: vi.fn(),
+	resolveMentionsDataSource: vi.fn(),
 	resolvePeriodDigestWindow: vi.fn(),
 	collectPeriodDigestContext: vi.fn(),
 	syncHomeTimelineEffect: vi.fn(),
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./config", () => ({
 	getBirdclawConfig: () => mocks.getBirdclawConfig(),
+	resolveMentionsDataSource: () => mocks.resolveMentionsDataSource(),
 }));
 
 vi.mock("./period-digest", () => ({
@@ -45,6 +47,18 @@ describe("digest archive pre-sync", () => {
 		mocks.getBirdclawConfig.mockReturnValue({
 			mentions: { dataSource: "bird" },
 		});
+		mocks.resolveMentionsDataSource.mockImplementation(() => {
+			const envSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+			if (
+				envSource === "bird" ||
+				envSource === "xurl" ||
+				envSource === "auto" ||
+				envSource === "birdclaw"
+			) {
+				return envSource;
+			}
+			return mocks.getBirdclawConfig().mentions?.dataSource ?? "birdclaw";
+		});
 		mocks.resolvePeriodDigestWindow.mockReturnValue({
 			label: "Yesterday",
 			since: "2026-07-28T00:25:00.000Z",
@@ -76,6 +90,10 @@ describe("digest archive pre-sync", () => {
 				partial: false,
 			}),
 		);
+	});
+
+	afterEach(() => {
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 	});
 
 	it("syncs each required input once and in a stable order", async () => {
@@ -206,7 +224,7 @@ describe("digest archive pre-sync", () => {
 		).toEqual(expect.objectContaining({ transport: "bird" }));
 	});
 
-	it("reports mixed fresh and skipped required inputs as degraded", async () => {
+	it("keeps configured local skips visible without degrading a successful batch", async () => {
 		mocks.getBirdclawConfig.mockReturnValue({
 			mentions: { dataSource: "birdclaw" },
 		});
@@ -223,7 +241,7 @@ describe("digest archive pre-sync", () => {
 		expect(mocks.syncHomeTimelineEffect).toHaveBeenCalledWith(
 			expect.objectContaining({ mode: "bird", following: false }),
 		);
-		expect(result.status).toBe("degraded");
+		expect(result.status).toBe("fresh");
 		expect(
 			result.steps.map(({ operation, status }) => ({ operation, status })),
 		).toEqual([
@@ -232,6 +250,36 @@ describe("digest archive pre-sync", () => {
 			{ operation: "mentions", status: "skipped" },
 			{ operation: "mention_threads", status: "skipped" },
 		]);
+	});
+
+	it("honors the resolved datasource environment override", async () => {
+		mocks.getBirdclawConfig.mockReturnValue({
+			mentions: { dataSource: "birdclaw" },
+		});
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+
+		const result = await runEffectPromise(
+			runDigestArchivePreSyncEffect({
+				period: "yesterday",
+				contentSources: ["following"],
+				liveSync: true,
+			}),
+		);
+
+		expect(mocks.resolveMentionsDataSource).toHaveBeenCalledTimes(1);
+		expect(mocks.syncHomeTimelineEffect).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird", following: true }),
+		);
+		expect(result).toEqual({
+			status: "fresh",
+			steps: [
+				expect.objectContaining({
+					operation: "following",
+					status: "fresh",
+					transport: "bird",
+				}),
+			],
+		});
 	});
 
 	it("skips all transports when live sync is disabled", async () => {
