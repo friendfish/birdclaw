@@ -121,9 +121,11 @@ describe("config", () => {
 	it("rejects invalid explicit action transports instead of falling back", () => {
 		process.env.BIRDCLAW_ACTIONS_TRANSPORT = "bird";
 
-		expect(() => resolveActionsTransport("invalid")).toThrow(
-			"--transport must be auto, bird, or xurl",
-		);
+		for (const transport of ["invalid", "", " \t "]) {
+			expect(() => resolveActionsTransport(transport)).toThrow(
+				"--transport must be auto, bird, or xurl",
+			);
+		}
 		expect(resolveActionsTransport()).toBe("bird");
 		expect(resolveActionsTransport("auto")).toBe("auto");
 		expect(resolveActionsTransport("bird")).toBe("bird");

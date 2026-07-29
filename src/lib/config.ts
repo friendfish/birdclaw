@@ -193,7 +193,7 @@ export function resolveActionsTransport(
 	requestedMode?: string,
 ): ActionsTransport {
 	const explicitMode = requestedMode?.trim();
-	if (explicitMode) {
+	if (requestedMode !== undefined) {
 		if (
 			explicitMode === "auto" ||
 			explicitMode === "bird" ||
