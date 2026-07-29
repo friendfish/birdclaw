@@ -48,10 +48,16 @@ import { Route } from "./status";
 const GET = getRouteHandler(Route, "GET");
 
 describe("status api route", () => {
+	const tempRoots: string[] = [];
+
 	afterEach(() => {
+		resetDatabaseForTests();
+		for (const root of tempRoots) {
+			rmSync(root, { recursive: true, force: true });
+		}
+		tempRoots.length = 0;
 		mocks.useActualQueryStatus = false;
 		mocks.getTransportStatus.mockReset();
-		resetDatabaseForTests();
 		resetBirdclawPathsForTests();
 		delete process.env.BIRDCLAW_HOME;
 		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
@@ -134,6 +140,7 @@ describe("status api route", () => {
 
 	it("omits installed from disabled xurl status without probing xurl", async () => {
 		const root = mkdtempSync(path.join(os.tmpdir(), "birdclaw-status-route-"));
+		tempRoots.push(root);
 		process.env.BIRDCLAW_HOME = root;
 		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "bird";
 		resetBirdclawPathsForTests();
@@ -154,6 +161,5 @@ describe("status api route", () => {
 		});
 		expect(payload).not.toHaveProperty("transport.installed");
 		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
-		rmSync(root, { recursive: true, force: true });
 	});
 });
