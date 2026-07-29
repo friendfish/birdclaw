@@ -114,16 +114,13 @@ describe("discuss route", () => {
 			screen.getByRole("heading", { name: "Discuss", level: 1 }),
 		).toBeInTheDocument();
 		expect(screen.getByText("Search to begin.")).toBeInTheDocument();
-		expect(screen.getByLabelText("Mode")).toHaveValue("bird");
+		expect(screen.getByLabelText("Mode")).toHaveValue("");
 
 		fireEvent.change(screen.getByPlaceholderText("Keywords"), {
 			target: { value: "ChatGPT" },
 		});
 		fireEvent.change(screen.getByPlaceholderText("Optional question"), {
 			target: { value: "Useful takeaways" },
-		});
-		fireEvent.change(screen.getByLabelText("Mode"), {
-			target: { value: "bird" },
 		});
 		fireEvent.change(screen.getByLabelText("Source"), {
 			target: { value: "all" },
@@ -141,20 +138,27 @@ describe("discuss route", () => {
 			),
 		).toBeInTheDocument();
 		expect(urls[0]?.searchParams.get("source")).toBe("all");
-		expect(urls[0]?.searchParams.get("mode")).toBe("bird");
+		expect(urls[0]?.searchParams.has("mode")).toBe(false);
 		expect(urls[0]?.searchParams.get("includeDms")).toBe("true");
 		expect(urls[0]?.searchParams.get("question")).toBe("Useful takeaways");
 		expect(urls[0]?.searchParams.get("limit")).toBe("20000");
 		expect(urls[0]?.searchParams.get("maxPages")).toBe("200");
 		expect(urls[0]?.searchParams.has("refresh")).toBe(false);
 
-		fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+		fireEvent.change(screen.getByLabelText("Mode"), {
+			target: { value: "xurl" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Discuss" }));
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-		expect(urls[1]?.searchParams.get("refresh")).toBe("true");
+		expect(urls[1]?.searchParams.get("mode")).toBe("xurl");
+
+		fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		expect(urls[2]?.searchParams.get("refresh")).toBe("true");
 
 		fireEvent.click(screen.getByRole("button", { name: "Discuss" }));
-		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-		expect(urls[2]?.searchParams.has("refresh")).toBe(false);
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+		expect(urls[3]?.searchParams.has("refresh")).toBe(false);
 	});
 
 	it("renders request and stream errors", async () => {

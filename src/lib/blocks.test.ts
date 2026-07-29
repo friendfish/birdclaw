@@ -458,9 +458,10 @@ describe("blocklist", () => {
 		).toBe("manual");
 	});
 
-	it("skips xurl block sync before probing status when actions use Bird", async () => {
+	it("skips xurl block sync before probing status when live source uses Bird", async () => {
 		setupTempHome();
-		vi.stubEnv("BIRDCLAW_ACTIONS_TRANSPORT", "bird");
+		vi.stubEnv("BIRDCLAW_LIVE_DATA_SOURCE", "bird");
+		vi.stubEnv("BIRDCLAW_ACTIONS_TRANSPORT", "auto");
 		const { syncBlocks } = await import("./blocks");
 
 		const result = await syncBlocks("acct_primary");
@@ -479,6 +480,20 @@ describe("blocklist", () => {
 		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
 		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
 		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
+	});
+
+	it("uses xurl block sync when live source is xurl despite Bird actions", async () => {
+		setupTempHome();
+		vi.stubEnv("BIRDCLAW_LIVE_DATA_SOURCE", "xurl");
+		vi.stubEnv("BIRDCLAW_ACTIONS_TRANSPORT", "bird");
+		const { syncBlocks } = await import("./blocks");
+
+		const result = await syncBlocks("acct_primary");
+
+		expect(result).toMatchObject({ ok: true, synced: true, syncedCount: 0 });
+		expect(mocks.getTransportStatus).toHaveBeenCalledWith();
+		expect(mocks.lookupAuthenticatedUser).toHaveBeenCalledWith();
+		expect(mocks.listBlockedUsers).toHaveBeenCalledWith("25401953", undefined);
 	});
 
 	it("exposes remote block sync as an Effect program", async () => {

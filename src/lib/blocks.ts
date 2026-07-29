@@ -1,8 +1,9 @@
 import { Effect } from "effect";
-import { resolveActionsTransport } from "./config";
 import { getNativeDb } from "./db";
 import { databaseWriteEffect } from "./database-writer";
 import { runEffectPromise } from "./effect-runtime";
+
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import { getAccountHandle, getDefaultAccountId } from "./moderation-target";
 import {
 	createModerationActions,
@@ -108,8 +109,16 @@ export function getBlocksResponse({
 	};
 }
 
-export function syncBlocksEffect(accountId: string) {
+export interface SyncBlocksOptions {
+	mode?: string;
+}
+
+export function syncBlocksEffect(
+	accountId: string,
+	options: SyncBlocksOptions = {},
+) {
 	return Effect.gen(function* () {
+		const mode = yield* trySync(() => resolveLiveSyncMode(options.mode));
 		const db = yield* trySync(() => getNativeDb());
 		const resolvedAccountId = accountId || getDefaultAccountId(db);
 		const accountHandle = getAccountHandle(db, resolvedAccountId);
@@ -126,7 +135,7 @@ export function syncBlocksEffect(accountId: string) {
 					| { handle: string; external_user_id: string | null }
 					| undefined,
 		);
-		if (resolveActionsTransport() === "bird") {
+		if (mode === "bird") {
 			return {
 				ok: true,
 				accountId: resolvedAccountId,
@@ -296,6 +305,6 @@ export function syncBlocksEffect(accountId: string) {
 	});
 }
 
-export function syncBlocks(accountId: string) {
-	return runEffectPromise(syncBlocksEffect(accountId));
+export function syncBlocks(accountId: string, options: SyncBlocksOptions = {}) {
+	return runEffectPromise(syncBlocksEffect(accountId, options));
 }

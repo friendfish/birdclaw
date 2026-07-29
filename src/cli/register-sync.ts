@@ -211,17 +211,19 @@ export function registerSyncCommands({
 			"Fetch tweet conversation context for recent mentions through bird or xurl",
 		)
 		.option("--account <username>", "Account username or id")
-		.option("--mode <mode>", "bird or xurl", "bird")
+		.option("--mode <mode>", "bird or xurl")
 		.option("--limit <n>", "Recent mentions to inspect", "30")
 		.option("--delay-ms <n>", "Delay between thread fetches", "1500")
 		.option("--timeout-ms <n>", "Per-thread timeout", "15000")
 		.option("--all", "Fetch all retrievable thread pages")
 		.option("--max-pages <n>", "Stop after N pages")
 		.action(async (options) => {
+			let mode = options.mode ?? "bird";
 			try {
+				mode = resolveMentionThreadSyncMode(options.mode);
 				const result = await syncMentionThreads({
 					account: options.account,
-					mode: resolveMentionThreadSyncMode(options.mode),
+					mode,
 					limit: Number(options.limit),
 					delayMs: Number(options.delayMs),
 					timeoutMs: Number(options.timeoutMs),
@@ -229,14 +231,14 @@ export function registerSyncCommands({
 					maxPages: options.maxPages ? Number(options.maxPages) : undefined,
 				});
 				await autoSyncAfterWrite();
-				print(result, true);
+				print({ ...result, mode }, true);
 				if (result.partial) process.exitCode = 5;
 			} catch (error) {
 				print(
 					{
 						ok: false,
 						kind: "mention-threads",
-						mode: options.mode ?? "bird",
+						mode,
 						error: errorMessage(error),
 					},
 					true,
