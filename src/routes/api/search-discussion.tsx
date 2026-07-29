@@ -8,6 +8,7 @@ import {
 	sensitiveRequestErrorResponse,
 } from "#/lib/http-effect";
 import { createEffectNdjsonResponse } from "#/lib/ndjson-stream";
+import { resolveLiveReadMode } from "#/lib/live-transport-policy";
 import {
 	streamSearchDiscussionEffect,
 	type SearchDiscussionOptions,
@@ -39,6 +40,7 @@ function parseSource(value: string | null): SearchDiscussionSource {
 }
 
 function parseMode(value: string | null): TweetSearchMode {
+	if (value === null) return resolveLiveReadMode();
 	if (
 		value === "auto" ||
 		value === "bird" ||

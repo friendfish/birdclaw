@@ -8,6 +8,7 @@ import {
 	sensitiveRequestErrorResponse,
 } from "#/lib/http-effect";
 import { createEffectNdjsonResponse } from "#/lib/ndjson-stream";
+import type { LiveReadMode } from "#/lib/live-transport-policy";
 import {
 	streamProfileAnalysisEffect,
 	type ProfileAnalysisOptions,
@@ -16,6 +17,15 @@ import {
 
 function parseBoolean(value: string | null) {
 	return value === "true" || value === "1" || value === "yes";
+}
+
+function parseMode(value: string | null): LiveReadMode | undefined {
+	if (value === null) return undefined;
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "auto" || normalized === "bird" || normalized === "xurl") {
+		return normalized;
+	}
+	throw new Error("mode must be auto, bird, or xurl");
 }
 
 function parseOptions(url: URL): ProfileAnalysisOptions {
@@ -34,6 +44,7 @@ function parseOptions(url: URL): ProfileAnalysisOptions {
 	return {
 		handle: url.searchParams.get("handle") ?? "",
 		account: url.searchParams.get("account") ?? undefined,
+		mode: parseMode(url.searchParams.get("mode")),
 		refresh: parseBoolean(url.searchParams.get("refresh")),
 		model: url.searchParams.get("model") === "gpt-5.5" ? "gpt-5.5" : undefined,
 		language: url.searchParams.get("language") ?? undefined,

@@ -3,6 +3,7 @@ import {
 	syncAuthoredTweets,
 	type AuthoredSyncMode,
 } from "#/lib/authored-live";
+import { resolveLiveReadMode } from "#/lib/live-transport-policy";
 import { syncFollowGraph } from "#/lib/follow-graph";
 import { syncMentionThreads } from "#/lib/mention-threads-live";
 import { syncMentions } from "#/lib/mentions-live";
@@ -130,7 +131,7 @@ export function registerSyncCommands({
 		.command("authored")
 		.description("Refresh authenticated authored tweets through xurl")
 		.option("--account <username>", "Account username or id")
-		.option("--mode <mode>", "xurl", "xurl")
+		.option("--mode <mode>", "auto, bird, or xurl")
 		.option("--limit <n>", "X API page size", "100")
 		.option("--max-pages <n>", "Stop after N pages and resume later")
 		.option("--since-id <tweetId>", "Override the stored since_id cursor")
@@ -142,7 +143,9 @@ export function registerSyncCommands({
 			try {
 				const result = await syncAuthoredTweets({
 					account: options.account,
-					mode: options.mode as AuthoredSyncMode,
+					mode: (options.mode === undefined
+						? resolveLiveReadMode()
+						: options.mode) as AuthoredSyncMode,
 					limit: Number(options.limit),
 					maxPages: options.maxPages ? Number(options.maxPages) : undefined,
 					sinceId: options.sinceId,

@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { resolveActionsTransport } from "./config";
 import { getNativeDb } from "./db";
 import { databaseWriteEffect } from "./database-writer";
 import { runEffectPromise } from "./effect-runtime";
@@ -125,6 +126,19 @@ export function syncBlocksEffect(accountId: string) {
 					| { handle: string; external_user_id: string | null }
 					| undefined,
 		);
+		if (resolveActionsTransport() === "bird") {
+			return {
+				ok: true,
+				accountId: resolvedAccountId,
+				synced: false,
+				syncedCount: 0,
+				transport: {
+					ok: true,
+					output:
+						"remote block sync skipped (xurl disabled by bird transport selection)",
+				},
+			};
+		}
 		const blockedAt = new Date().toISOString();
 		const remoteProfileIds: string[] = [];
 

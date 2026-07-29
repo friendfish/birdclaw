@@ -154,7 +154,8 @@ export function registerAnalysisCommands({
 	}
 
 	function parseTweetSearchMode(value: string | undefined) {
-		const normalized = (value ?? "auto").trim().toLowerCase();
+		if (value === undefined) return resolveLiveReadMode();
+		const normalized = value.trim().toLowerCase();
 		if (
 			normalized === "auto" ||
 			normalized === "bird" ||
@@ -242,6 +243,7 @@ export function registerAnalysisCommands({
 		handle: string,
 		options: {
 			account?: string;
+			mode?: string;
 			model?: string;
 			refresh?: boolean;
 			maxTweets?: string;
@@ -253,6 +255,10 @@ export function registerAnalysisCommands({
 			rateLimitRetries?: string;
 		},
 	): ProfileAnalysisOptions | null {
+		const mode = parseProfileAnalysisMode(options.mode);
+		if (options.mode !== undefined && mode === undefined) {
+			return null;
+		}
 		const maxTweets = parsePositiveIntegerOption(
 			options.maxTweets,
 			"--max-tweets",
@@ -320,6 +326,7 @@ export function registerAnalysisCommands({
 		return {
 			handle,
 			account: options.account,
+			mode,
 			model: options.model,
 			refresh: Boolean(options.refresh),
 			maxTweets,
@@ -330,6 +337,23 @@ export function registerAnalysisCommands({
 			rateLimitRetryMs,
 			rateLimitMaxRetries,
 		};
+	}
+
+	function parseProfileAnalysisMode(
+		value: string | undefined,
+	): ProfileAnalysisOptions["mode"] {
+		if (value === undefined) return undefined;
+		const normalized = value.trim().toLowerCase();
+		if (
+			normalized === "auto" ||
+			normalized === "bird" ||
+			normalized === "xurl"
+		) {
+			return normalized;
+		}
+		printError("--mode must be auto, bird, or xurl");
+		process.exitCode = 1;
+		return undefined;
 	}
 
 	function runProfileAnalysisCli(options: ProfileAnalysisOptions) {
@@ -392,7 +416,7 @@ export function registerAnalysisCommands({
 			"all, search, home, mentions, authored, likes, or bookmarks",
 			"search",
 		)
-		.option("--mode <mode>", "auto, bird, xurl, or local", "xurl")
+		.option("--mode <mode>", "auto, bird, xurl, or local")
 		.option("--include-dms", "Include private DM search matches")
 		.option(
 			"--since <isoDate>",
@@ -418,6 +442,7 @@ export function registerAnalysisCommands({
 		.alias("profile-analyse")
 		.description("Backfill a profile with xurl and summarize it with AI")
 		.option("--account <username>", "Account username or id")
+		.option("--mode <mode>", "auto, bird, or xurl")
 		.option("--model <model>", "OpenAI model id")
 		.option("--refresh", "Bypass profile fetch and analysis caches")
 		.option("--max-tweets <n>", "Maximum profile tweets", "10000")

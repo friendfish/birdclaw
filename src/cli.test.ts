@@ -57,6 +57,7 @@ const hydrateProfilesFromXMock = vi.fn();
 const inspectProfileRepliesMock = vi.fn();
 const runResearchModeMock = vi.fn();
 const streamPeriodDigestMock = vi.fn();
+const streamProfileAnalysisMock = vi.fn();
 const streamSearchDiscussionMock = vi.fn();
 const syncAuthoredTweetsMock = vi.fn();
 const syncTimelineCollectionMock = vi.fn();
@@ -263,6 +264,11 @@ vi.mock("#/lib/search-discussion", () => ({
 		streamSearchDiscussionMock(...args),
 }));
 
+vi.mock("#/lib/profile-analysis", () => ({
+	streamProfileAnalysis: (...args: unknown[]) =>
+		streamProfileAnalysisMock(...args),
+}));
+
 vi.mock("#/lib/authored-live", () => ({
 	AuthoredSyncError: class AuthoredSyncError extends Error {
 		constructor(
@@ -379,6 +385,7 @@ describe("cli", () => {
 		inspectProfileRepliesMock.mockReset();
 		runResearchModeMock.mockReset();
 		streamPeriodDigestMock.mockReset();
+		streamProfileAnalysisMock.mockReset();
 		streamSearchDiscussionMock.mockReset();
 		syncAuthoredTweetsMock.mockReset();
 		syncTimelineCollectionMock.mockReset();
@@ -427,6 +434,9 @@ describe("cli", () => {
 			(mode?: string) => mode ?? "birdclaw",
 		);
 		resolveLiveReadModeMock.mockReturnValue("bird");
+		streamProfileAnalysisMock.mockResolvedValue({
+			markdown: "# Profile\n",
+		});
 		setActionsTransportMock.mockImplementation((transport: string) => ({
 			configPath: "/tmp/.birdclaw/config.json",
 			transport,
@@ -2219,6 +2229,39 @@ describe("cli", () => {
 		expect(process.exitCode).toBe(5);
 	});
 
+	it("resolves omitted authored mode and preserves explicit xurl", async () => {
+		syncAuthoredTweetsMock.mockResolvedValue({
+			ok: true,
+			source: "xurl",
+			kind: "authored",
+			count: 0,
+			partial: false,
+		});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "sync", "authored", "--limit", "5"]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"sync",
+			"authored",
+			"--mode",
+			"xurl",
+			"--limit",
+			"5",
+		]);
+
+		expect(resolveLiveReadModeMock).toHaveBeenCalledWith();
+		expect(syncAuthoredTweetsMock).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncAuthoredTweetsMock).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ mode: "xurl" }),
+		);
+	});
+
 	it("rejects invalid follow sync modes as json", async () => {
 		syncFollowGraphMock.mockRejectedValueOnce(
 			new Error("--mode must be auto, bird, or xurl"),
@@ -3013,6 +3056,7 @@ describe("cli", () => {
 			"gpt-5.5",
 		]);
 		await runCli(["node", "birdclaw", "--json", "discuss", "sync"]);
+		await runCli(["node", "birdclaw", "discuss", "explicit", "--mode", "xurl"]);
 
 		expect(streamSearchDiscussionMock).toHaveBeenNthCalledWith(
 			1,
@@ -3026,7 +3070,7 @@ describe("cli", () => {
 				question: "what changed?",
 				originalsOnly: true,
 				hideLowQuality: true,
-				mode: "xurl",
+				mode: "bird",
 				model: "gpt-5.5",
 				refresh: true,
 				limit: 25,
@@ -3039,12 +3083,20 @@ describe("cli", () => {
 			expect.objectContaining({
 				query: "sync",
 				source: "search",
-				mode: "xurl",
+				mode: "bird",
 				includeDms: false,
 				limit: 20000,
 				maxPages: 200,
 			}),
 			expect.objectContaining({ onDelta: undefined }),
+		);
+		expect(streamSearchDiscussionMock).toHaveBeenNthCalledWith(
+			3,
+			expect.objectContaining({
+				query: "explicit",
+				mode: "xurl",
+			}),
+			expect.objectContaining({ onDelta: expect.any(Function) }),
 		);
 		expect(stdoutWriteMock).toHaveBeenCalledWith("# Search discussion\n");
 		expect(consoleLogMock).toHaveBeenCalledWith(
@@ -3065,6 +3117,78 @@ describe("cli", () => {
 		expect(streamSearchDiscussionMock).not.toHaveBeenCalled();
 		expect(consoleErrorMock).toHaveBeenCalledWith(
 			expect.stringContaining("--source must be all"),
+		);
+		consoleErrorMock.mockRestore();
+	});
+
+	it("rejects invalid explicit discussion modes", async () => {
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "discuss", "sync", "--mode", "weird"]);
+
+		expect(process.exitCode).toBe(1);
+		expect(streamSearchDiscussionMock).not.toHaveBeenCalled();
+		expect(consoleErrorMock).toHaveBeenCalledWith(
+			expect.stringContaining("--mode must be auto, bird, xurl, or local"),
+		);
+		consoleErrorMock.mockRestore();
+	});
+
+	it("passes an optional validated mode to profile analysis", async () => {
+		const stdoutWriteMock = vi
+			.spyOn(process.stdout, "write")
+			.mockImplementation(() => true);
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"profile-analyze",
+			"@alice",
+			"--mode",
+			"BIRD",
+			"--max-tweets",
+			"1",
+			"--max-pages",
+			"1",
+			"--max-conversations",
+			"1",
+			"--max-conversation-pages",
+			"1",
+		]);
+
+		expect(streamProfileAnalysisMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				handle: "@alice",
+				mode: "bird",
+			}),
+			expect.objectContaining({ onDelta: expect.any(Function) }),
+		);
+		stdoutWriteMock.mockRestore();
+	});
+
+	it("rejects invalid profile analysis modes", async () => {
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"profile-analyze",
+			"alice",
+			"--mode",
+			"local",
+		]);
+
+		expect(process.exitCode).toBe(1);
+		expect(streamProfileAnalysisMock).not.toHaveBeenCalled();
+		expect(consoleErrorMock).toHaveBeenCalledWith(
+			expect.stringContaining("--mode must be auto, bird, or xurl"),
 		);
 		consoleErrorMock.mockRestore();
 	});

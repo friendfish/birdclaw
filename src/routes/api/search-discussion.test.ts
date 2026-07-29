@@ -5,6 +5,11 @@ import { getRouteHandler } from "#/test/route-handlers";
 
 const maybeAutoUpdateBackupMock = vi.fn();
 const streamSearchDiscussionMock = vi.fn();
+const resolveLiveReadModeMock = vi.fn();
+
+vi.mock("#/lib/live-transport-policy", () => ({
+	resolveLiveReadMode: (...args: unknown[]) => resolveLiveReadModeMock(...args),
+}));
 
 vi.mock("#/lib/backup", () => ({
 	maybeAutoUpdateBackup: () => maybeAutoUpdateBackupMock(),
@@ -24,6 +29,8 @@ describe("api search discussion route", () => {
 	beforeEach(() => {
 		maybeAutoUpdateBackupMock.mockReset();
 		streamSearchDiscussionMock.mockReset();
+		resolveLiveReadModeMock.mockReset();
+		resolveLiveReadModeMock.mockReturnValue("bird");
 		maybeAutoUpdateBackupMock.mockResolvedValue({ skipped: true });
 		streamSearchDiscussionMock.mockImplementation(
 			async (
@@ -59,6 +66,21 @@ describe("api search discussion route", () => {
 					},
 				});
 			},
+		);
+	});
+
+	it("uses the configured live transport when mode is omitted", async () => {
+		const response = await GET({
+			request: new Request(
+				"http://localhost/api/search-discussion?query=ChatGPT",
+			),
+		});
+
+		await response.text();
+		expect(resolveLiveReadModeMock).toHaveBeenCalledWith();
+		expect(streamSearchDiscussionMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+			expect.any(Object),
 		);
 	});
 

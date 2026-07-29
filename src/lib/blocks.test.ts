@@ -70,6 +70,7 @@ afterEach(() => {
 	resetBirdclawPathsForTests();
 	delete process.env.BIRDCLAW_HOME;
 	delete process.env.BIRDCLAW_DISABLE_LIVE_WRITES;
+	vi.unstubAllEnvs();
 	mocks.blockUserViaBird.mockReset();
 	mocks.lookupProfileViaBird.mockReset();
 	mocks.readBirdStatusViaBird.mockReset();
@@ -377,6 +378,29 @@ describe("blocklist", () => {
 		expect(
 			listed.find((item) => item.profile.handle === "amelia")?.source,
 		).toBe("manual");
+	});
+
+	it("skips xurl block sync before probing status when actions use Bird", async () => {
+		setupTempHome();
+		vi.stubEnv("BIRDCLAW_ACTIONS_TRANSPORT", "bird");
+		const { syncBlocks } = await import("./blocks");
+
+		const result = await syncBlocks("acct_primary");
+
+		expect(result).toEqual({
+			ok: true,
+			accountId: "acct_primary",
+			synced: false,
+			syncedCount: 0,
+			transport: {
+				ok: true,
+				output:
+					"remote block sync skipped (xurl disabled by bird transport selection)",
+			},
+		});
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
 	});
 
 	it("exposes remote block sync as an Effect program", async () => {

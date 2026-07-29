@@ -10,10 +10,22 @@ import { streamProfileAnalysis } from "./profile-analysis";
 import { listTimelineItems } from "./queries";
 
 const mocks = vi.hoisted(() => ({
+	listThreadViaBirdEffect: vi.fn(),
+	listUserTweetsViaBirdEffect: vi.fn(),
+	lookupProfileViaBirdEffect: vi.fn(),
 	listUserTweetsEffect: vi.fn(),
 	lookupUsersByHandlesEffect: vi.fn(),
 	searchRecentByConversationIdEffect: vi.fn(),
 	getTransportStatusEffect: vi.fn(),
+}));
+
+vi.mock("./bird", () => ({
+	listThreadViaBirdEffect: (...args: unknown[]) =>
+		mocks.listThreadViaBirdEffect(...args),
+	listUserTweetsViaBirdEffect: (...args: unknown[]) =>
+		mocks.listUserTweetsViaBirdEffect(...args),
+	lookupProfileViaBirdEffect: (...args: unknown[]) =>
+		mocks.lookupProfileViaBirdEffect(...args),
 }));
 
 vi.mock("./xurl", () => ({
@@ -53,7 +65,11 @@ beforeEach(() => {
 	process.env.BIRDCLAW_PROFILE_ANALYSIS_CONVERSATION_DELAY_MS = "0";
 	process.env.BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_RETRY_MS = "0";
 	process.env.BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_MAX_RETRIES = "0";
+	vi.stubEnv("BIRDCLAW_MENTIONS_DATA_SOURCE", "");
 	mocks.lookupUsersByHandlesEffect.mockReset();
+	mocks.lookupProfileViaBirdEffect.mockReset();
+	mocks.listUserTweetsViaBirdEffect.mockReset();
+	mocks.listThreadViaBirdEffect.mockReset();
 	mocks.listUserTweetsEffect.mockReset();
 	mocks.searchRecentByConversationIdEffect.mockReset();
 	mocks.getTransportStatusEffect.mockReset();
@@ -66,6 +82,54 @@ beforeEach(() => {
 	);
 	mocks.lookupUsersByHandlesEffect.mockReturnValue(
 		Effect.succeed([profileUser]),
+	);
+	mocks.lookupProfileViaBirdEffect.mockReturnValue(Effect.succeed(profileUser));
+	mocks.listUserTweetsViaBirdEffect.mockReturnValue(
+		Effect.succeed({
+			data: [
+				{
+					id: "tweet_1",
+					author_id: "42",
+					text: "Local tools should remember context.",
+					created_at: "2026-05-20T10:00:00.000Z",
+					conversation_id: "tweet_1",
+					public_metrics: {
+						like_count: 10,
+						reply_count: 2,
+						retweet_count: 1,
+						quote_count: 0,
+					},
+				},
+			],
+			includes: { users: [profileUser], media: [] },
+		}),
+	);
+	mocks.listThreadViaBirdEffect.mockReturnValue(
+		Effect.succeed({
+			data: [
+				{
+					id: "reply_1",
+					author_id: "99",
+					text: "The memory part matters.",
+					created_at: "2026-05-20T10:02:00.000Z",
+					conversation_id: "tweet_1",
+					public_metrics: { like_count: 3 },
+				},
+			],
+			includes: {
+				users: [
+					profileUser,
+					{
+						id: "99",
+						username: "bob",
+						name: "Bob",
+						description: "Replies to tools.",
+						public_metrics: { followers_count: 40 },
+					},
+				],
+				media: [],
+			},
+		}),
 	);
 	mocks.listUserTweetsEffect.mockReturnValue(
 		Effect.succeed({
@@ -136,6 +200,7 @@ afterEach(() => {
 	delete process.env.BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_RETRY_MS;
 	delete process.env.BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_MAX_RETRIES;
 	delete process.env.BIRDCLAW_PROFILE_ANALYSIS_ACCOUNT;
+	vi.unstubAllEnvs();
 	vi.unstubAllGlobals();
 	for (const tempRoot of tempRoots.splice(0)) {
 		rmSync(tempRoot, { recursive: true, force: true });
@@ -143,6 +208,60 @@ afterEach(() => {
 });
 
 describe("profile analysis", () => {
+	it("uses Bird for profile, tweets, and threads without probing xurl in Bird mode", async () => {
+		const result = await streamProfileAnalysis({
+			handle: "@alice",
+			mode: "bird",
+			refresh: true,
+			maxPages: 1,
+			maxTweets: 1,
+			maxConversations: 1,
+			maxConversationPages: 1,
+		});
+
+		expect(result.context.counts).toMatchObject({
+			tweets: 1,
+			conversationsScanned: 1,
+			conversationTweets: 1,
+		});
+		expect(mocks.lookupProfileViaBirdEffect).toHaveBeenCalledWith("alice");
+		expect(mocks.listUserTweetsViaBirdEffect).toHaveBeenCalledWith({
+			handle: "alice",
+			maxResults: 1,
+		});
+		expect(mocks.listThreadViaBirdEffect).toHaveBeenCalledWith({
+			tweetId: "tweet_1",
+			timeoutMs: 30_000,
+		});
+		expect(mocks.getTransportStatusEffect).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByHandlesEffect).not.toHaveBeenCalled();
+		expect(mocks.listUserTweetsEffect).not.toHaveBeenCalled();
+		expect(mocks.searchRecentByConversationIdEffect).not.toHaveBeenCalled();
+	});
+
+	it("does not reuse xurl profile context cache for Bird mode", async () => {
+		await streamProfileAnalysis({
+			handle: "alice",
+			mode: "xurl",
+			maxPages: 1,
+			maxTweets: 1,
+			maxConversations: 1,
+			maxConversationPages: 1,
+		});
+		mocks.lookupProfileViaBirdEffect.mockClear();
+
+		await streamProfileAnalysis({
+			handle: "alice",
+			mode: "bird",
+			maxPages: 1,
+			maxTweets: 1,
+			maxConversations: 1,
+			maxConversationPages: 1,
+		});
+
+		expect(mocks.lookupProfileViaBirdEffect).toHaveBeenCalledWith("alice");
+	});
+
 	it("backfills profile tweets and conversation context before caching the AI result", async () => {
 		const events: string[] = [];
 		const result = await streamProfileAnalysis(
