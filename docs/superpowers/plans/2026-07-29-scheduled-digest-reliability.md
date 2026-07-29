@@ -77,7 +77,7 @@
 
 - [x] Invoke `runDigestArchivePreSyncEffect` once after acquiring the lock. Pass period, account, requested sources, explicit window, and `liveSync: options.liveSync ?? true`. Always call `runOneContentSourceEffect` with `liveSync:false`.
 
-- [x] Add `status:"ok" | "degraded" | "failed"` and `sync` to `DigestArchiveAuditEntry`. Keep `ok` generation-only for compatibility: it remains true when every AI archive was generated even if pre-sync degraded.
+- [x] Add `status:"ok" | "degraded" | "failed"` and `sync` to `DigestArchiveAuditEntry`. Keep `ok` for compatibility: it remains true after a degraded pre-sync when every AI archive and the final batch-metadata update succeed, and becomes false on either generation or persistence failure.
 
 - [x] Run `pnpm vitest run src/lib/digest-archive-job.test.ts` and confirm the job tests pass.
 
@@ -100,7 +100,7 @@
   sync: DigestArchiveSyncResult;
   ```
 
-- [x] Write successful source files as v2. After all generation attempts finish, update each successful JSON file with the final batch status so earlier source files reflect a later source failure.
+- [x] Write successful source files as v2. After all generation attempts finish, update each successful JSON file with the final batch status so earlier source files reflect a later source failure. Use a same-directory temporary file plus `rename` to prevent readers from observing partial JSON; this does not claim `fsync` durability across power loss.
 
 - [x] Keep the existing reader tolerant: parse either v1 or v2 and return `null` only for missing or malformed JSON. Confirm the entry API continues mapping the shared digest fields without requiring a client contract change.
 

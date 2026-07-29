@@ -7,11 +7,17 @@ const digestArchiveStatusResponseSchema = z.object({
 	ok: z.boolean(),
 	runningPeriods: z.array(z.string()),
 	activeRuns: z
-		.array(z.object({ period: z.string(), runDate: z.string() }))
+		.array(
+			z.object({
+				period: z.string(),
+				runDate: z.string(),
+				totalSources: z.number().int().positive().default(3),
+			}),
+		)
 		.default([]),
 });
 
-const STATUS_POLL_INTERVAL_MS = 2000;
+const STATUS_POLL_INTERVAL_MS = 5_000;
 
 /** Which periods (if any) currently have a scheduled archive job in flight —
  * used to grey out Today/24h's manual refresh button so it doesn't race the
@@ -31,11 +37,8 @@ export function useDigestArchiveStatus() {
 	});
 	return {
 		runningPeriods: new Set(query.data?.runningPeriods ?? []),
-		activeRunDates: new Map(
-			(query.data?.activeRuns ?? []).map(({ period, runDate }) => [
-				period,
-				runDate,
-			]),
+		activeRuns: new Map(
+			(query.data?.activeRuns ?? []).map(({ period, ...run }) => [period, run]),
 		),
 	};
 }

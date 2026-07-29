@@ -843,7 +843,13 @@ describe("today route", () => {
 					return jsonResponse({
 						ok: true,
 						runningPeriods: ["yesterday"],
-						activeRuns: [{ period: "yesterday", runDate: "2026-07-29" }],
+						activeRuns: [
+							{
+								period: "yesterday",
+								runDate: "2026-07-29",
+								totalSources: 2,
+							},
+						],
 					});
 				}
 				if (url.pathname === "/api/digest-archive-dates") {
@@ -887,7 +893,7 @@ describe("today route", () => {
 			);
 
 			expect(
-				await screen.findByText("Generating scheduled digest 1/3"),
+				await screen.findByText("Generating scheduled digest 1/2"),
 			).toBeInTheDocument();
 			expect(
 				screen.getByText("This source is still being generated."),
@@ -906,6 +912,74 @@ describe("today route", () => {
 			).toBeInTheDocument();
 			expect(datesCalls).toBeGreaterThanOrEqual(2);
 			expect(entryCalls).toBeGreaterThanOrEqual(2);
+		});
+
+		it("does not show a historical date as pending during the current run", async () => {
+			const entryDates: Array<string | null> = [];
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({
+						ok: true,
+						runningPeriods: ["yesterday"],
+						activeRuns: [
+							{
+								period: "yesterday",
+								runDate: "2026-07-29",
+								totalSources: 3,
+							},
+						],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					return jsonResponse({
+						ok: true,
+						dates: [
+							{
+								date: "2026-07-29",
+								contentSources: ["all"],
+							},
+							{
+								date: "2026-07-28",
+								contentSources: ["all", "following"],
+							},
+						],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-entry") {
+					entryDates.push(url.searchParams.get("date"));
+					return jsonResponse({ ok: true, result: null });
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(
+				<TodayRoute
+					searchState={{
+						period: "yesterday",
+						includeDms: false,
+						contentSource: "for_you",
+						archiveDate: "2026-07-28",
+					}}
+				/>,
+			);
+
+			expect(
+				await screen.findByText(/No archived .*digest for this date/i),
+			).toBeInTheDocument();
+			expect(
+				screen.queryByText("This source is still being generated."),
+			).toBeNull();
+			expect(screen.queryByText(/Generating scheduled digest/)).toBeNull();
+			expect(entryDates).toEqual(["2026-07-28"]);
 		});
 
 		it("uses the active run date before its first archive file exists", async () => {
@@ -1112,7 +1186,7 @@ describe("today route", () => {
 			).toBeInTheDocument();
 			expect(statusCalls).toBeGreaterThanOrEqual(2);
 			expect(entryCalls).toBeGreaterThanOrEqual(2);
-		});
+		}, 8_000);
 
 		it("disables Today's refresh button while a scheduled archive job holds the lock", async () => {
 			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

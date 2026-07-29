@@ -40,8 +40,34 @@ export interface DigestArchivePreSyncOptions {
 	liveSync: boolean;
 }
 
-function messageFromError(error: unknown) {
-	return error instanceof Error ? error.message : String(error);
+const SENSITIVE_PARAMETER_PATTERN =
+	/^(?:access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|api[_-]?key|authorization)$/iu;
+
+function redactSensitiveUrl(value: string) {
+	try {
+		const url = new URL(value);
+		if (url.username) url.username = "[REDACTED]";
+		if (url.password) url.password = "[REDACTED]";
+		for (const key of url.searchParams.keys()) {
+			if (SENSITIVE_PARAMETER_PATTERN.test(key)) {
+				url.searchParams.set(key, "[REDACTED]");
+			}
+		}
+		return url.toString();
+	} catch {
+		return value;
+	}
+}
+
+function durableErrorMessage(error: unknown) {
+	const message = error instanceof Error ? error.message : String(error);
+	return message
+		.replace(/https?:\/\/[^\s<>"']+/giu, redactSensitiveUrl)
+		.replace(/\b(Bearer\s+)[^\s,;]+/giu, "$1[REDACTED]")
+		.replace(
+			/(["']?)\b(access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|api[_-]?key|authorization)\b\1(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
+			"$1$2$1$3[REDACTED]",
+		);
 }
 
 function configuredTransport(): DigestArchiveSyncTransport {
@@ -83,7 +109,7 @@ function recordStep<A>({
 				operation,
 				status: "degraded",
 				transport,
-				error: messageFromError(error),
+				error: durableErrorMessage(error),
 			} satisfies DigestArchiveSyncStep),
 		),
 	);
@@ -102,6 +128,7 @@ function aggregateStatus(
 	if (steps.every((step) => step.status === "skipped")) {
 		return "skipped";
 	}
+	if (steps.some((step) => step.status === "skipped")) return "degraded";
 	return "fresh";
 }
 
@@ -151,6 +178,9 @@ export function runDigestArchivePreSyncEffect(
 		}
 
 		if (needsForYou) {
+			// mentions.dataSource only controls transports that have local/xurl
+			// equivalents. For You is Bird-only, so a failed refresh must remain
+			// visible as degraded instead of being silently reported as skipped.
 			steps.push(
 				yield* recordStep({
 					operation: "for_you",
@@ -171,29 +201,60 @@ export function runDigestArchivePreSyncEffect(
 		}
 
 		if (needsMentions) {
+			let mentionThreadTransport:
+				| Extract<DigestArchiveSyncTransport, "bird" | "xurl">
+				| undefined =
+				transport === "bird" || transport === "xurl" ? transport : undefined;
 			if (transport === "local") {
 				steps.push(skippedStep("mentions"));
 			} else {
-				steps.push(
-					yield* recordStep({
-						operation: "mentions",
-						transport,
-						effect: syncMentionsEffect({
-							account: options.account,
-							mode: transport,
-							limit: 100,
-							maxPages: 3,
-							...(transport === "bird" ? {} : { startTime }),
-							refresh: true,
-							cacheTtlMs: 2 * 60_000,
-						}),
-						count: (value) => value.count,
-					}),
+				const mentionResult = yield* syncMentionsEffect({
+					account: options.account,
+					mode: transport,
+					limit: 100,
+					maxPages: 3,
+					...(transport === "bird" ? {} : { startTime }),
+					refresh: true,
+					cacheTtlMs: 2 * 60_000,
+				}).pipe(
+					Effect.map((value) => ({ ok: true as const, value })),
+					Effect.catchAll((error) =>
+						Effect.succeed({ ok: false as const, error }),
+					),
 				);
+				if (mentionResult.ok) {
+					const actualTransport =
+						mentionResult.value.source === "bird" ||
+						mentionResult.value.source === "xurl"
+							? mentionResult.value.source
+							: mentionThreadTransport;
+					mentionThreadTransport = actualTransport;
+					steps.push({
+						operation: "mentions",
+						status: "fresh",
+						transport: actualTransport ?? transport,
+						count: mentionResult.value.count,
+					});
+				} else {
+					steps.push({
+						operation: "mentions",
+						status: "degraded",
+						transport,
+						error: durableErrorMessage(mentionResult.error),
+					});
+				}
 			}
 
 			if (transport === "local") {
 				steps.push(skippedStep("mention_threads"));
+			} else if (!mentionThreadTransport) {
+				steps.push({
+					operation: "mention_threads",
+					status: "degraded",
+					transport,
+					error:
+						"Mention thread refresh skipped because auto mentions did not resolve a live transport",
+				});
 			} else {
 				const mentionIds = yield* Effect.try({
 					try: () =>
@@ -212,14 +273,14 @@ export function runDigestArchivePreSyncEffect(
 						steps.push({
 							operation: "mention_threads",
 							status: "degraded",
-							transport: transport === "auto" ? "xurl" : transport,
-							error: messageFromError(error),
+							transport: mentionThreadTransport,
+							error: durableErrorMessage(error),
 						});
 						return Effect.succeed(undefined);
 					}),
 				);
 				if (mentionIds) {
-					const threadTransport = transport === "auto" ? "xurl" : transport;
+					const threadTransport = mentionThreadTransport;
 					const threadStep = yield* syncMentionThreadsEffect({
 						account: options.account,
 						mode: threadTransport,
@@ -249,7 +310,7 @@ export function runDigestArchivePreSyncEffect(
 								operation: "mention_threads",
 								status: "degraded",
 								transport: threadTransport,
-								error: messageFromError(error),
+								error: durableErrorMessage(error),
 							} satisfies DigestArchiveSyncStep),
 						),
 					);

@@ -179,6 +179,61 @@ describe("digest archive pre-sync", () => {
 		expect(mocks.syncMentionsEffect).not.toHaveBeenCalled();
 	});
 
+	it("uses the concrete auto transport for mention thread refreshes", async () => {
+		mocks.getBirdclawConfig.mockReturnValue({
+			mentions: { dataSource: "auto" },
+		});
+		mocks.syncMentionsEffect.mockReturnValue(
+			Effect.succeed({ ok: true, source: "bird", count: 3 }),
+		);
+
+		const result = await runEffectPromise(
+			runDigestArchivePreSyncEffect({
+				period: "yesterday",
+				contentSources: ["all"],
+				liveSync: true,
+			}),
+		);
+
+		expect(mocks.syncMentionThreadsEffect).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(result.steps.find((step) => step.operation === "mentions")).toEqual(
+			expect.objectContaining({ status: "fresh", transport: "bird" }),
+		);
+		expect(
+			result.steps.find((step) => step.operation === "mention_threads"),
+		).toEqual(expect.objectContaining({ transport: "bird" }));
+	});
+
+	it("reports mixed fresh and skipped required inputs as degraded", async () => {
+		mocks.getBirdclawConfig.mockReturnValue({
+			mentions: { dataSource: "birdclaw" },
+		});
+
+		const result = await runEffectPromise(
+			runDigestArchivePreSyncEffect({
+				period: "yesterday",
+				contentSources: ["all"],
+				liveSync: true,
+			}),
+		);
+
+		expect(mocks.syncHomeTimelineEffect).toHaveBeenCalledTimes(1);
+		expect(mocks.syncHomeTimelineEffect).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird", following: false }),
+		);
+		expect(result.status).toBe("degraded");
+		expect(
+			result.steps.map(({ operation, status }) => ({ operation, status })),
+		).toEqual([
+			{ operation: "following", status: "skipped" },
+			{ operation: "for_you", status: "fresh" },
+			{ operation: "mentions", status: "skipped" },
+			{ operation: "mention_threads", status: "skipped" },
+		]);
+	});
+
 	it("skips all transports when live sync is disabled", async () => {
 		const result = await runEffectPromise(
 			runDigestArchivePreSyncEffect({
@@ -218,6 +273,33 @@ describe("digest archive pre-sync", () => {
 			error: "following transport failed",
 		});
 		expect(mocks.syncMentionThreadsEffect).toHaveBeenCalledTimes(1);
+	});
+
+	it("redacts credentials before persisting sync errors", async () => {
+		mocks.syncHomeTimelineEffect.mockImplementation(
+			(options: { following: boolean }) =>
+				options.following
+					? Effect.fail(
+							new Error(
+								'request failed for https://alice:password@example.com/callback?access_token=token-value with Bearer bearer-value, client_secret=secret-value, and "refresh_token":"refresh-value"',
+							),
+						)
+					: Effect.succeed({ ok: true, source: "bird", count: 20 }),
+		);
+
+		const result = await runEffectPromise(
+			runDigestArchivePreSyncEffect({
+				period: "yesterday",
+				contentSources: ["following"],
+				liveSync: true,
+			}),
+		);
+
+		const error = result.steps[0]?.error ?? "";
+		expect(error).toContain("[REDACTED]");
+		expect(error).not.toMatch(
+			/password|token-value|bearer-value|secret-value|refresh-value/,
+		);
 	});
 
 	it("treats partial or per-thread failures as degraded", async () => {

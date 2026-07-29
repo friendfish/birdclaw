@@ -474,7 +474,7 @@ export function runDigestArchiveJobEffect(
 		const releaseLock = yield* acquireScheduledJobLockEffect(
 			resolvedLockPath,
 			DEFAULT_LOCK_STALE_MS,
-			{ runDate },
+			{ runDate, totalSources: contentSources.length },
 		);
 		if (!releaseLock) {
 			const entry: DigestArchiveAuditEntry = {
@@ -861,6 +861,7 @@ export async function peekDigestArchiveRunningPeriods(): Promise<
 export interface DigestArchiveActiveRun {
 	period: PeriodDigestPreset;
 	runDate: string;
+	totalSources: number;
 }
 
 export async function peekDigestArchiveRunningRuns(): Promise<
@@ -878,6 +879,7 @@ export async function peekDigestArchiveRunningRuns(): Promise<
 				runDate:
 					metadata.runDate ??
 					formatLocalDateFolder(new Date(metadata.startedAt)),
+				totalSources: metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 			});
 		}
 	}
@@ -910,6 +912,8 @@ export function peekDigestArchiveRunningRunsEffect(): Effect.Effect<
 								runDate:
 									metadata.runDate ??
 									formatLocalDateFolder(new Date(metadata.startedAt)),
+								totalSources:
+									metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 							}
 						: undefined,
 				),

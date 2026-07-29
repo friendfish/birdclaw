@@ -57,7 +57,7 @@ interface DigestArchiveSyncResult {
 type DigestArchiveBatchStatus = "ok" | "degraded" | "failed";
 ```
 
-`fresh` means every required sync step succeeded. `degraded` means at least one required step failed and generation continued from local data. `skipped` means the caller explicitly passed `liveSync: false`, as used by historical backfills.
+`fresh` means every required sync step succeeded. `degraded` means at least one required step failed or could not use a live transport while another required step ran, and generation continued from local data. A step is `skipped` when local-only configuration prevents that transport; the batch is `skipped` when the caller passes `liveSync: false` or every required step is skipped. For You is an intentional exception to the mentions transport setting because it has no local/xurl refresh equivalent: requested For You data always attempts Bird, and a Bird failure is recorded as degraded.
 
 Network or authentication failures do not abort archive generation. They remain visible in the audit and every archive JSON file. The final batch status is `failed` when any model/archive step fails, `degraded` when generation succeeds after an incomplete pre-sync, and `ok` otherwise. A degraded batch is therefore never represented as an indistinguishable complete success.
 
@@ -89,7 +89,9 @@ New archive files add these fields:
 
 The reader continues accepting existing schema-version-1 files that omit these fields. Old files map to an unknown historical sync state in memory; the UI does not reinterpret them as degraded.
 
-The final audit entry adds `language`, `status`, and `sync`. Existing `ok` remains for backward compatibility and continues to describe model/archive step completion. Callers use `status` to distinguish complete, degraded, and failed batches.
+The final audit entry adds `language`, `status`, and `sync`. Existing `ok` remains for backward compatibility. It is true only when every model/archive step succeeds and the final batch metadata is persisted successfully; an incomplete pre-sync alone does not make it false. Callers use `status` to distinguish complete, degraded, and failed batches.
+
+Schema-v2 JSON updates use a same-directory temporary file followed by `rename`, so readers do not observe partially written JSON. This is an atomic-visibility guarantee only; the job does not claim `fsync`-level durability across abrupt power loss.
 
 ## UI State
 
@@ -97,11 +99,12 @@ Yesterday and Week continue reading archived files rather than starting live gen
 
 While the corresponding archive lock is active:
 
-- The archive date list and selected source entry poll every two seconds.
-- The UI derives completed sources from the selected date's `contentSources`.
-- The status line displays `Generating scheduled digest N/3`.
-- If the selected source is not complete, the body displays `This source is still being generated.`
-- The state must not display `Ready` or `No archived digest` while the batch is active.
+- The status endpoint exposes the active run date and configured source count; it polls every five seconds.
+- The archive date list and current-run source entry poll every two seconds while that run is active.
+- The UI derives completed sources from the active run date's `contentSources`.
+- The status line displays `Generating scheduled digest N/total` using the configured source count.
+- If the current-run source is not complete, the body displays `This source is still being generated.`
+- An explicitly selected historical date remains a normal historical view and is never labeled as pending because a newer run is active.
 - When the source file appears, React Query refetches it and the Markdown replaces the progress state without a manual reload.
 
 When the lock is not active, the existing missing-archive message remains valid.

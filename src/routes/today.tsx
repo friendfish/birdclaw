@@ -472,15 +472,16 @@ export function TodayRouteView({
 	const archiveStatus = useDigestArchiveStatus();
 	const archiveRunning =
 		isArchivedPeriod && archiveStatus.runningPeriods.has(period);
+	const activeArchiveRun = archiveStatus.activeRuns.get(period);
 	const archived = useReadOnlyDigest({
 		period,
 		contentSource: effectiveContentSource,
 		archiveDate,
 		enabled: isArchivedPeriod,
 		running: archiveRunning,
-		activeRunDate: archiveStatus.activeRunDates.get(period),
+		activeRunDate: activeArchiveRun?.runDate,
 	});
-	const archiveBusy = archiveRunning || archived.finalizing;
+	const archiveBusy = archived.activeRunInProgress;
 	const context = isArchivedPeriod ? archived.context : live.context;
 	const markdown = isArchivedPeriod ? archived.markdown : live.markdown;
 	const result = isArchivedPeriod ? archived.result : live.result;
@@ -489,7 +490,7 @@ export function TodayRouteView({
 	const retry = isArchivedPeriod ? archived.retry : () => live.run(true);
 	const status = isArchivedPeriod
 		? archiveBusy
-			? `Generating scheduled digest ${String(archived.completedSources)}/3`
+			? `Generating scheduled digest ${String(archived.completedSources)}/${String(activeArchiveRun?.totalSources ?? 3)}`
 			: "Loading archive"
 		: live.status;
 	useEffect(() => {

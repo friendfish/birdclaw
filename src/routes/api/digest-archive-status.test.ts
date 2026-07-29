@@ -17,8 +17,8 @@ const GET = getRouteHandler(Route, "GET");
 describe("api digest-archive-status route", () => {
 	it("reports which periods are currently archiving", async () => {
 		peekDigestArchiveRunningRunsEffectMock.mockResolvedValue([
-			{ period: "today", runDate: "2026-07-29" },
-			{ period: "24h", runDate: "2026-07-29" },
+			{ period: "today", runDate: "2026-07-29", totalSources: 2 },
+			{ period: "24h", runDate: "2026-07-29", totalSources: 1 },
 		]);
 
 		const response = await GET({
@@ -29,8 +29,8 @@ describe("api digest-archive-status route", () => {
 			ok: true,
 			runningPeriods: ["today", "24h"],
 			activeRuns: [
-				{ period: "today", runDate: "2026-07-29" },
-				{ period: "24h", runDate: "2026-07-29" },
+				{ period: "today", runDate: "2026-07-29", totalSources: 2 },
+				{ period: "24h", runDate: "2026-07-29", totalSources: 1 },
 			],
 		});
 	});

@@ -84,9 +84,6 @@ export function useReadOnlyDigest({
 		period,
 		active: false,
 	});
-	if (running && activeRunDate) {
-		lastActiveRunRef.current = { period, runDate: activeRunDate };
-	}
 	const previousRun = previousRunRef.current;
 	const finishingTransition =
 		previousRun.period === period && previousRun.running && !running;
@@ -101,10 +98,14 @@ export function useReadOnlyDigest({
 			? lastActiveRunRef.current.runDate
 			: undefined);
 	const effectiveDate = archiveDate || currentRunDate || dates[0]?.date;
-	const effectiveDateOption = dates.find(
-		(option) => option.date === effectiveDate,
+	const currentRunDateOption = dates.find(
+		(option) => option.date === currentRunDate,
 	);
-	const completedSources = effectiveDateOption?.contentSources.length ?? 0;
+	const completedSources = currentRunDateOption?.contentSources.length ?? 0;
+	const viewingActiveRun = Boolean(
+		currentRunDate && effectiveDate === currentRunDate,
+	);
+	const activeRunInProgress = polling && viewingActiveRun;
 
 	const entryQuery = useQuery({
 		queryKey: [
@@ -121,8 +122,14 @@ export function useReadOnlyDigest({
 				"Failed to load archived digest",
 			),
 		enabled: enabled && Boolean(effectiveDate),
-		refetchInterval: polling ? 2_000 : false,
+		refetchInterval: activeRunInProgress ? 2_000 : false,
 	});
+
+	useEffect(() => {
+		if (running && activeRunDate) {
+			lastActiveRunRef.current = { period, runDate: activeRunDate };
+		}
+	}, [activeRunDate, period, running]);
 
 	useEffect(() => {
 		const previous = previousRunRef.current;
@@ -135,15 +142,21 @@ export function useReadOnlyDigest({
 
 		let cancelled = false;
 		setFinalizingState({ period, active: true });
-		void Promise.all([datesQuery.refetch(), entryQuery.refetch()]).finally(
-			() => {
-				if (!cancelled) setFinalizingState({ period, active: false });
-			},
-		);
+		const refetches: Promise<unknown>[] = [datesQuery.refetch()];
+		if (viewingActiveRun) refetches.push(entryQuery.refetch());
+		void Promise.all(refetches).finally(() => {
+			if (!cancelled) setFinalizingState({ period, active: false });
+		});
 		return () => {
 			cancelled = true;
 		};
-	}, [datesQuery.refetch, entryQuery.refetch, period, running]);
+	}, [
+		datesQuery.refetch,
+		entryQuery.refetch,
+		period,
+		running,
+		viewingActiveRun,
+	]);
 
 	const result = (entryQuery.data?.result ??
 		null) as PeriodDigestRunResult | null;
@@ -169,7 +182,8 @@ export function useReadOnlyDigest({
 		dates,
 		effectiveDate,
 		completedSources,
-		sourcePending: polling && !result,
+		sourcePending: activeRunInProgress && !result,
+		activeRunInProgress,
 		finalizing: finalizing || finishingTransition,
 		// Distinguishes "this period has never been archived at all" (no
 		// dates exist yet) from "this date exists but this content source

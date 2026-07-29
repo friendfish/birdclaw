@@ -22,6 +22,7 @@ export interface ScheduledJobLockMetadata {
 	host: string;
 	pid: number;
 	runDate?: string;
+	totalSources?: number;
 }
 
 export type ScheduledJobLockRelease = () => Promise<void>;
@@ -64,7 +65,7 @@ export function appendScheduledJobAuditEffect(logPath: string, entry: unknown) {
 export async function acquireScheduledJobLock(
 	lockPath: string,
 	staleMs: number,
-	metadata: Pick<ScheduledJobLockMetadata, "runDate"> = {},
+	metadata: Pick<ScheduledJobLockMetadata, "runDate" | "totalSources"> = {},
 ): Promise<ScheduledJobLockRelease | undefined> {
 	await fs.mkdir(path.dirname(lockPath), { recursive: true });
 	try {
@@ -76,6 +77,10 @@ export async function acquireScheduledJobLock(
 					host: os.hostname(),
 					startedAt: new Date().toISOString(),
 					...(metadata.runDate ? { runDate: metadata.runDate } : {}),
+					...(Number.isInteger(metadata.totalSources) &&
+					(metadata.totalSources ?? 0) > 0
+						? { totalSources: metadata.totalSources }
+						: {}),
 				})}\n`,
 				"utf8",
 			);
@@ -97,7 +102,7 @@ export async function acquireScheduledJobLock(
 export function acquireScheduledJobLockEffect(
 	lockPath: string,
 	staleMs: number,
-	metadata: Pick<ScheduledJobLockMetadata, "runDate"> = {},
+	metadata: Pick<ScheduledJobLockMetadata, "runDate" | "totalSources"> = {},
 ): Effect.Effect<(() => Effect.Effect<void>) | undefined, unknown> {
 	return tryPromise(() =>
 		acquireScheduledJobLock(lockPath, staleMs, metadata),
@@ -151,6 +156,11 @@ export async function peekScheduledJobLockMetadata(
 			...(typeof parsed.runDate === "string" &&
 			/^\d{4}-\d{2}-\d{2}$/.test(parsed.runDate)
 				? { runDate: parsed.runDate }
+				: {}),
+			...(typeof parsed.totalSources === "number" &&
+			Number.isInteger(parsed.totalSources) &&
+			parsed.totalSources > 0
+				? { totalSources: parsed.totalSources }
 				: {}),
 		};
 	} catch {

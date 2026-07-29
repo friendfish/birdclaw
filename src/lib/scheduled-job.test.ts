@@ -54,6 +54,7 @@ describe("scheduled job runtime", () => {
 		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
 		const release = await acquireScheduledJobLock(lockPath, 1_000, {
 			runDate: "2020-01-02",
+			totalSources: 2,
 		});
 
 		expect(release).toBeTypeOf("function");
@@ -64,6 +65,7 @@ describe("scheduled job runtime", () => {
 				host: os.hostname(),
 				pid: process.pid,
 				runDate: "2020-01-02",
+				totalSources: 2,
 				startedAt: expect.any(String),
 			}),
 		);

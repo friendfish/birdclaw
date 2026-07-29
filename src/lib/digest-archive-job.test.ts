@@ -291,6 +291,7 @@ describe("digest-archive-job", () => {
 		await expect(peekDigestArchiveRunningRuns()).resolves.toContainEqual({
 			period: "yesterday",
 			runDate: "2020-01-02",
+			totalSources: 1,
 		});
 
 		resolveDigest(digestResult());
