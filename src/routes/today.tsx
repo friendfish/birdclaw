@@ -469,20 +469,26 @@ export function TodayRouteView({
 		effectiveContentSource,
 		!isArchivedPeriod,
 	);
+	const runningPeriods = useDigestArchiveRunningPeriods();
+	const archiveRunning = isArchivedPeriod && runningPeriods.has(period);
 	const archived = useReadOnlyDigest({
 		period,
 		contentSource: effectiveContentSource,
 		archiveDate,
 		enabled: isArchivedPeriod,
+		running: archiveRunning,
 	});
-	const runningPeriods = useDigestArchiveRunningPeriods();
 	const context = isArchivedPeriod ? archived.context : live.context;
 	const markdown = isArchivedPeriod ? archived.markdown : live.markdown;
 	const result = isArchivedPeriod ? archived.result : live.result;
 	const loading = isArchivedPeriod ? archived.loading : live.loading;
 	const error = isArchivedPeriod ? archived.error : live.error;
 	const retry = isArchivedPeriod ? archived.retry : () => live.run(true);
-	const status = isArchivedPeriod ? "Loading archive" : live.status;
+	const status = isArchivedPeriod
+		? archiveRunning
+			? `Generating scheduled digest ${String(archived.completedSources)}/3`
+			: "Loading archive"
+		: live.status;
 	useEffect(() => {
 		const root = document.documentElement;
 		root.classList.add("today-pdf-route");
@@ -662,20 +668,22 @@ export function TodayRouteView({
 
 			<div className="today-screen-only border-b border-[var(--line)] px-4 py-2 text-[13px] text-[var(--ink-soft)]">
 				<span className="inline-flex items-center gap-1">
-					{loading ? (
+					{loading || archiveRunning ? (
 						<Loader2 className="size-4 animate-spin" aria-hidden="true" />
 					) : markdown ? (
 						<CheckCircle2 className="size-4" aria-hidden="true" />
 					) : (
 						<Sparkles className="size-4" aria-hidden="true" />
 					)}
-					{loading
+					{archiveRunning
 						? status
-						: result
-							? `${result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
-							: error
-								? "Digest failed"
-								: "Ready"}
+						: loading
+							? status
+							: result
+								? `${result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
+								: error
+									? "Digest failed"
+									: "Ready"}
 				</span>
 			</div>
 
@@ -686,17 +694,19 @@ export function TodayRouteView({
 				/>
 			) : (
 				<div className="px-4 py-5 text-[14px] text-[var(--ink-soft)]">
-					{loading
-						? status
-						: error
-							? isArchivedPeriod
-								? "No digest was generated. Retry to load the archive again."
-								: "No digest was generated. Retry to start a new run."
-							: isArchivedPeriod
-								? archived.neverArchived
-									? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
-									: `No archived ${effectiveContentSource === "all" ? "" : `${effectiveContentSource} `}digest for this date. Try a different content-source tab.`
-								: "Waiting for the first tokens..."}
+					{archiveRunning && archived.sourcePending
+						? "This source is still being generated."
+						: loading
+							? status
+							: error
+								? isArchivedPeriod
+									? "No digest was generated. Retry to load the archive again."
+									: "No digest was generated. Retry to start a new run."
+								: isArchivedPeriod
+									? archived.neverArchived
+										? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
+										: `No archived ${effectiveContentSource === "all" ? "" : `${effectiveContentSource} `}digest for this date. Try a different content-source tab.`
+									: "Waiting for the first tokens..."}
 				</div>
 			)}
 		</div>
