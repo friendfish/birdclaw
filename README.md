@@ -447,9 +447,9 @@ birdclaw discuss "prototype" --include-dms --limit 500 --max-pages 5 --json
 
 ### Profile analysis
 
-`birdclaw profile-analyze` resolves a profile through `xurl`, walks as much of the retrievable timeline as the API allows, backfills high-signal conversations, caches both the fetched context and AI result in SQLite, and writes a Markdown profile brief.
+`birdclaw profile-analyze` follows the selected or configured live mode. Bird mode uses `bird` for profile lookup, user tweets, and thread context, with no `xurl` calls. xurl mode uses the corresponding xurl profile and timeline APIs, plus recent search for conversation backfill. Both modes cache fetched context and the AI result in SQLite, then write a Markdown profile brief.
 
-Conversation backfill uses X recent search, so Birdclaw paces those calls by default (`BIRDCLAW_PROFILE_ANALYSIS_CONVERSATION_DELAY_MS`, default `3100`) and retries a 429 once after `BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_RETRY_MS` (default `60000`) before continuing with partial context. Set `BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_MAX_RETRIES` or the matching CLI flags when you want different behavior.
+Only xurl recent-search conversation backfill is paced by default (`BIRDCLAW_PROFILE_ANALYSIS_CONVERSATION_DELAY_MS`, default `3100`) and retries a 429 once after `BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_RETRY_MS` (default `60000`) before continuing with partial context. Set `BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_MAX_RETRIES` or the matching CLI flags when you want different xurl recent-search behavior.
 
 When `xurl` has multiple OAuth2 labels, set `BIRDCLAW_XURL_OAUTH2_APP` and `BIRDCLAW_XURL_OAUTH2_USERNAME` to force the known-good token. Set `BIRDCLAW_PROFILE_ANALYSIS_ACCOUNT` to an account id or handle when profile backfills should use a non-default Birdclaw account.
 

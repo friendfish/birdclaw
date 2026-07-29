@@ -3205,6 +3205,44 @@ describe("cli", () => {
 		);
 	});
 
+	it("rejects an invalid mention export mode before auto-update or export work", async () => {
+		resolveMentionsDataSourceMock.mockImplementation((mode?: string) => {
+			if (
+				mode === "birdclaw" ||
+				mode === "auto" ||
+				mode === "bird" ||
+				mode === "xurl"
+			) {
+				return mode;
+			}
+			throw new Error(
+				"Invalid mentions data source; expected birdclaw, auto, bird, or xurl",
+			);
+		});
+		const { runCli } = await loadCli();
+
+		await expect(
+			runCli([
+				"node",
+				"birdclaw",
+				"mentions",
+				"export",
+				"--mode",
+				"invalid",
+				"--refresh",
+			]),
+		).rejects.toThrow(
+			"Invalid mentions data source; expected birdclaw, auto, bird, or xurl",
+		);
+
+		expect(maybeAutoUpdateBackupMock).not.toHaveBeenCalled();
+		expect(maybeAutoSyncBackupMock).not.toHaveBeenCalled();
+		expect(exportMentionItemsMock).not.toHaveBeenCalled();
+		expect(exportMentionsViaCachedAutoMock).not.toHaveBeenCalled();
+		expect(exportMentionsViaCachedBirdMock).not.toHaveBeenCalled();
+		expect(exportMentionsViaCachedXurlMock).not.toHaveBeenCalled();
+	});
+
 	it("exports mentions in cached xurl mode", async () => {
 		const { runCli } = await loadCli();
 
