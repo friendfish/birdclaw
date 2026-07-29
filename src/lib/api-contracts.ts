@@ -250,7 +250,7 @@ const archiveCandidateSchema: z.ZodType<ArchiveCandidate> = z.object({
 });
 
 const transportStatusSchema: z.ZodType<TransportStatus> = z.object({
-	installed: z.boolean().default(false),
+	installed: z.boolean().optional(),
 	availableTransport: z.enum(["xurl", "local"]).default("local"),
 	statusText: z.string(),
 	rawStatus: z.string().optional(),

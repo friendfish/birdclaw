@@ -7,6 +7,7 @@ import {
 import { databaseWriteEffect } from "./database-writer";
 import { getNativeDb, getReadDb } from "./db";
 import { runEffectPromise, toError, trySync } from "./effect-runtime";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import {
 	assertLiveAccountMatches,
 	createLiveTransportAdapter,
@@ -104,10 +105,8 @@ function nonNegativeInteger(name: string, value: number) {
 	return Math.floor(value);
 }
 
-function normalizedMode(value: XListSyncMode | undefined): XListSyncMode {
-	if (value === undefined) return "auto";
-	if (value === "auto" || value === "bird" || value === "xurl") return value;
-	throw new Error("--mode must be auto, bird, or xurl");
+function normalizedMode(value: string | undefined): XListSyncMode {
+	return resolveLiveSyncMode(value);
 }
 
 function metaString(meta: Record<string, unknown> | undefined, key: string) {

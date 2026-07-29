@@ -9,6 +9,9 @@
 ### Changed
 
 - Merge archive and backup imports by default so incomplete snapshots never delete destination-only rows; use explicit `--restore` for exact replacement.
+- Define `live.dataSource` and `BIRDCLAW_LIVE_DATA_SOURCE` as the global live read/sync controls, retaining the mentions config and environment keys as lower-precedence compatibility aliases.
+- Clarify that `actions.transport` controls live writes; Bird mode rejects xurl-only post, reply, and DM compose operations, while disabled xurl status omits unprobed installation state.
+- Document explicit live-read and xurl-fallback overrides, including `profiles replies --mode xurl` and `--[no-]xurl-fallback` for DM search and identity lookup.
 
 ## 0.11.0 - 2026-07-18
 

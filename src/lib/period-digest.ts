@@ -763,6 +763,8 @@ function refreshPeriodDigestInputsEffect(
 	const liveStartTime = floorIsoToHour(window.since);
 	const liveMode = options.liveSyncMode ?? resolveLiveReadMode();
 	const timelineFollowing = options.contentSource !== "for_you";
+	// xurl cannot fetch following:false. A resolved Bird mode for For You must not
+	// fall back to xurl.
 	const timelineMode = timelineFollowing
 		? liveMode
 		: liveMode === "bird"

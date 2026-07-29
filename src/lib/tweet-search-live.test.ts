@@ -6,6 +6,7 @@ import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
+import type { TweetSearchMode } from "./tweet-search-live";
 
 const mocks = vi.hoisted(() => ({
 	searchTweetsViaBird: vi.fn(),
@@ -79,6 +80,7 @@ afterEach(() => {
 	resetDatabaseForTests();
 	resetBirdclawPathsForTests();
 	delete process.env.BIRDCLAW_HOME;
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 	vi.clearAllMocks();
 	for (const tempRoot of tempRoots.splice(0)) {
 		rmSync(tempRoot, { recursive: true, force: true });
@@ -86,6 +88,54 @@ afterEach(() => {
 });
 
 describe("live tweet search sync", () => {
+	it("uses configured Bird for an omitted mode without calling xurl", async () => {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		mocks.searchTweetsViaBird.mockResolvedValue(
+			payload(["tweet_bird_omitted"]),
+		);
+		const { syncTweetSearch } = await import("./tweet-search-live");
+
+		await expect(
+			syncTweetSearch({ query: "local-first", refresh: true, limit: 10 }),
+		).resolves.toMatchObject({
+			source: "bird",
+			tweetIds: ["tweet_bird_omitted"],
+		});
+		expect(mocks.searchRecentTweets).not.toHaveBeenCalled();
+	});
+
+	it("keeps explicit auto behavior when Bird is configured", async () => {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		mocks.searchTweetsViaBird.mockRejectedValue(new Error("bird unavailable"));
+		mocks.searchRecentTweets.mockResolvedValue(payload(["tweet_xurl_auto"]));
+		const { syncTweetSearch } = await import("./tweet-search-live");
+
+		await expect(
+			syncTweetSearch({
+				query: "local-first",
+				mode: "auto",
+				refresh: true,
+				limit: 10,
+			}),
+		).resolves.toMatchObject({
+			source: "xurl",
+			tweetIds: ["tweet_xurl_auto"],
+		});
+		expect(mocks.searchRecentTweets).toHaveBeenCalledTimes(1);
+	});
+
+	it("rejects blank mode before opening a live transport", async () => {
+		const { syncTweetSearch } = await import("./tweet-search-live");
+
+		await expect(
+			syncTweetSearch({ query: "local-first", mode: "" as TweetSearchMode }),
+		).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
+		expect(mocks.searchTweetsViaBird).not.toHaveBeenCalled();
+		expect(mocks.searchRecentTweets).not.toHaveBeenCalled();
+	});
+
 	it("stores bird search results as search edges and FTS rows", async () => {
 		mocks.searchTweetsViaBird.mockResolvedValue(payload(["tweet_live_1"]));
 		const { syncTweetSearch } = await import("./tweet-search-live");

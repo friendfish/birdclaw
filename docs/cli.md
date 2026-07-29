@@ -41,6 +41,8 @@ User config:
 - `BIRDCLAW_HOME`
 - `BIRDCLAW_CONFIG`
 - `BIRDCLAW_ACTIONS_TRANSPORT`
+- `BIRDCLAW_LIVE_DATA_SOURCE`
+- `BIRDCLAW_MENTIONS_DATA_SOURCE` (legacy compatibility alias)
 - `BIRDCLAW_BIRD_COMMAND`
 - `BIRDCLAW_BASH_COMMAND`
 - `BIRDCLAW_MCP_TOKEN`
@@ -152,11 +154,21 @@ See [Public tweet import](public-tweets.md) for the full privacy and capability 
 - show transport availability
 - show active account/profile
 - never print secrets
+- `installed` is present only after an actual xurl status probe; a policy-disabled xurl transport leaves it absent.
 
 ### `auth use <transport>`
 
-- set preferred moderation action transport
+- set preferred live write transport
 - allowed: `auto`, `xurl`, `bird`
+- Bird mode rejects post, reply, and DM compose because those writes are xurl-only.
+
+### Live read/sync transport
+
+`live.dataSource` controls live reads and syncs globally: `bird`, `xurl`, or
+`auto`. Resolution is explicit operation mode, `BIRDCLAW_LIVE_DATA_SOURCE`,
+`live.dataSource`, legacy `BIRDCLAW_MENTIONS_DATA_SOURCE`, legacy
+`mentions.dataSource`, then the operation's capability default. The legacy
+mentions keys remain aliases for compatibility.
 
 ### `backup export`
 
@@ -447,14 +459,15 @@ Flags:
 - `--expand-urls`
 - `--refresh-profile-cache`
 - `--refresh-url-cache`
-- `--no-xurl-fallback`
+- `--[no-]xurl-fallback` — allow or forbid xurl profile fallback; when omitted, configuration and the operation default decide
 - `--replied`
 - `--unreplied`
 - `--limit <n>`
 
 Profile resolution reads the local profile row first, then the persistent lookup
-cache, then `bird user`, then `xurl` unless `--no-xurl-fallback` is set. Failed
-lookups are cached briefly so repeated searches do not keep spending live calls.
+cache, then `bird user`, and may use xurl according to the configured transport
+policy unless `--[no-]xurl-fallback` explicitly decides it. Failed lookups are
+cached briefly so repeated searches do not keep spending live calls.
 Resolved profile rows store bio, profile URL, location, verification type,
 structured X URL entities, raw profile JSON, and affiliation badge metadata when
 the live transport exposes it.
@@ -511,7 +524,7 @@ Flags:
 - `--no-expand-urls`
 - `--refresh-profile-cache`
 - `--refresh-url-cache`
-- `--no-xurl-fallback`
+- `--[no-]xurl-fallback` — allow or forbid xurl profile fallback; when omitted, configuration and the operation default decide
 - `--affiliation <query>` - require current/bio/history affiliation evidence
 - `--current-affiliation <query>` - require an active affiliation badge edge
 - `--exclude-domain-only` - drop candidates that only matched domains or URLs
@@ -572,7 +585,7 @@ Notes:
 - `--max-pages` limits that paged xurl scan and implies `--all`
 - in paged `xurl` mode, `--limit` is the page size, not the total returned item count
 - query and reply-state filters still work in `xurl` mode, but the filtered response is rebuilt from the local canonical store after sync
-- default live source can live in `~/.birdclaw/config.json` under `mentions.dataSource`
+- default live source is `live.dataSource`; legacy `mentions.dataSource` remains a compatibility alias
 
 ### `media fetch`
 

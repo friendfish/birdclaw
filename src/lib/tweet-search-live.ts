@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import type { Database } from "./sqlite";
 import { getNativeDb } from "./db";
 import { runEffectPromise, toError, trySync } from "./effect-runtime";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import { liveTransportGateway } from "./live-transport-gateway";
 import {
 	normalizeCacheTtlMs,
@@ -337,7 +338,7 @@ function combineTweetSearchResults(
 export function syncTweetSearchEffect({
 	query,
 	account,
-	mode = "auto",
+	mode,
 	limit,
 	maxPages,
 	since,
@@ -347,6 +348,9 @@ export function syncTweetSearchEffect({
 	timeoutMs,
 }: SyncTweetSearchOptions): Effect.Effect<SyncTweetSearchResult, Error> {
 	return Effect.gen(function* () {
+		const resolvedMode = yield* trySync(() =>
+			mode === "local" ? "local" : resolveLiveSyncMode(mode),
+		);
 		const normalizedQuery = query.trim();
 		if (!normalizedQuery) {
 			return yield* Effect.fail(new Error("Search query is required"));
@@ -365,7 +369,7 @@ export function syncTweetSearchEffect({
 			resolveLiveSyncAccount(db, account),
 		);
 		const accountId = resolvedAccount.accountId;
-		if (mode === "local") {
+		if (resolvedMode === "local") {
 			return {
 				ok: true,
 				source: "cache",
@@ -389,12 +393,12 @@ export function syncTweetSearchEffect({
 			cacheTtlMs: ttlMs,
 			timeoutMs,
 		};
-		if (mode === "bird" || mode === "xurl") {
-			return yield* runModeEffect(mode, runOptions).pipe(
+		if (resolvedMode === "bird" || resolvedMode === "xurl") {
+			return yield* runModeEffect(resolvedMode, runOptions).pipe(
 				Effect.catchAll((error) =>
 					Effect.succeed({
 						ok: false,
-						source: mode,
+						source: resolvedMode,
 						accountId,
 						query: normalizedQuery,
 						error: error.message,

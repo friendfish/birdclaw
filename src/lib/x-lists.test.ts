@@ -90,7 +90,7 @@ function setupAccount() {
 		external_user_id: string | null;
 	};
 	mocks.getAuthenticatedBirdAccount.mockResolvedValue({
-		username: account.handle,
+		username: account.handle.replace(/^@/, ""),
 		...(account.external_user_id ? { id: account.external_user_id } : {}),
 	});
 	return { db, account };
@@ -115,6 +115,7 @@ afterEach(() => {
 	resetDatabaseForTests();
 	resetBirdclawPathsForTests();
 	delete process.env.BIRDCLAW_HOME;
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 	for (const mock of Object.values(mocks)) mock.mockReset();
 	for (const root of tempRoots.splice(0)) {
 		rmSync(root, { recursive: true, force: true });
@@ -122,6 +123,41 @@ afterEach(() => {
 });
 
 describe("X List sync and local filtering", () => {
+	it("uses configured Bird for an omitted mode without calling xurl", async () => {
+		setupAccount();
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		mocks.listOwnedXListsViaBird.mockResolvedValue(ownedList(0));
+		const { syncXLists } = await import("./x-lists");
+
+		await expect(
+			syncXLists({ maxLists: 1, delayMs: 0 }),
+		).resolves.toMatchObject({ mode: "bird", source: "bird" });
+		expect(mocks.lookupAuthenticatedOAuth2User).not.toHaveBeenCalled();
+		expect(mocks.listOwnedXListsViaXurl).not.toHaveBeenCalled();
+		expect(mocks.listXListMembersViaXurl).not.toHaveBeenCalled();
+	});
+
+	it("keeps explicit auto behavior when Bird is configured", async () => {
+		const { account } = setupAccount();
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		mocks.listOwnedXListsViaBird.mockRejectedValue(
+			new Error("bird unavailable"),
+		);
+		mocks.lookupAuthenticatedOAuth2User.mockResolvedValue({
+			username: account.handle.replace(/^@/, ""),
+			id: account.external_user_id,
+		});
+		mocks.listOwnedXListsViaXurl.mockResolvedValue(ownedList(0));
+		const { syncXLists } = await import("./x-lists");
+
+		await expect(
+			syncXLists({ mode: "auto", maxLists: 1, delayMs: 0 }),
+		).resolves.toMatchObject({ mode: "auto", source: "xurl" });
+		expect(mocks.listOwnedXListsViaXurl).toHaveBeenCalledTimes(1);
+	});
+
 	it("syncs complete Bird membership and filters lexical search locally", async () => {
 		const { db, account } = setupAccount();
 		mocks.listOwnedXListsViaBird.mockResolvedValue(ownedList());
