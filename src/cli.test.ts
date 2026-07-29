@@ -2759,7 +2759,7 @@ describe("cli", () => {
 		expect(formatWhoisMock).toHaveBeenCalled();
 	});
 
-	it("preserves omitted xurl fallback options for DM and whois commands", async () => {
+	it("preserves explicit and omitted xurl fallback options for DM, search DM, and whois commands", async () => {
 		listDmConversationsMock.mockReturnValue([
 			{
 				id: "dm_1",
@@ -2786,7 +2786,47 @@ describe("cli", () => {
 			"--resolve-profiles",
 			"--no-xurl-fallback",
 		]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"dms",
+			"list",
+			"--resolve-profiles",
+			"--xurl-fallback",
+		]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"search",
+			"dms",
+			"blacksmith",
+			"--resolve-profiles",
+			"--no-xurl-fallback",
+		]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"search",
+			"dms",
+			"blacksmith",
+			"--resolve-profiles",
+			"--xurl-fallback",
+		]);
 		await runCli(["node", "birdclaw", "whois", "blacksmith"]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"whois",
+			"blacksmith",
+			"--no-xurl-fallback",
+		]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"whois",
+			"blacksmith",
+			"--xurl-fallback",
+		]);
 
 		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
 			1,
@@ -2812,9 +2852,43 @@ describe("cli", () => {
 				xurlFallback: false,
 			},
 		);
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			4,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: true,
+			},
+		);
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			5,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: false,
+			},
+		);
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			6,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: true,
+			},
+		);
 		expect(runWhoisMock).toHaveBeenCalledWith(
 			"blacksmith",
 			expect.objectContaining({ xurlFallback: undefined }),
+		);
+		expect(runWhoisMock).toHaveBeenNthCalledWith(
+			2,
+			"blacksmith",
+			expect.objectContaining({ xurlFallback: false }),
+		);
+		expect(runWhoisMock).toHaveBeenNthCalledWith(
+			3,
+			"blacksmith",
+			expect.objectContaining({ xurlFallback: true }),
 		);
 	});
 
@@ -3529,6 +3603,27 @@ describe("cli", () => {
 		expect(inspectProfileRepliesMock).toHaveBeenCalledWith("@sam", {
 			account: undefined,
 			limit: 7,
+			mode: undefined,
+		});
+	});
+
+	it("passes explicit profile reply read modes through to inspection", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"profiles",
+			"replies",
+			"@sam",
+			"--mode",
+			"xurl",
+		]);
+
+		expect(inspectProfileRepliesMock).toHaveBeenCalledWith("@sam", {
+			account: undefined,
+			limit: 12,
+			mode: "xurl",
 		});
 	});
 

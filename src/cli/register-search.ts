@@ -125,6 +125,7 @@ export function registerSearchCommands({
 		.option("--expand-urls", "Expand URLs through the persistent URL cache")
 		.option("--refresh-profile-cache", "Bypass profile lookup cache")
 		.option("--refresh-url-cache", "Bypass URL expansion cache")
+		.option("--xurl-fallback", "Fall back to xurl after bird profile lookup")
 		.option(
 			"--no-xurl-fallback",
 			"Do not fall back to xurl after bird profile lookup",
@@ -340,6 +341,7 @@ export function registerSearchCommands({
 		.option("--no-expand-urls", "Do not expand URLs")
 		.option("--refresh-profile-cache", "Bypass profile lookup cache")
 		.option("--refresh-url-cache", "Bypass URL expansion cache")
+		.option("--xurl-fallback", "Fall back to xurl after bird profile lookup")
 		.option(
 			"--no-xurl-fallback",
 			"Do not fall back to xurl after bird profile lookup",

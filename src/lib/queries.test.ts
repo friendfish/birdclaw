@@ -2429,40 +2429,30 @@ describe("birdclaw queries", () => {
 		expect(mocks.postViaXurl).toHaveBeenCalledWith("Fresh local-first post");
 	});
 
-	it("rejects posts before xurl when Bird actions are configured", async () => {
+	it("rejects every compose write before staging, auth, xurl, or database mutation when Bird actions are configured", async () => {
 		setupTempHome();
 		process.env.BIRDCLAW_ACTIONS_TRANSPORT = "bird";
+		const db = getNativeDb();
+		const prepareSpy = vi.spyOn(db, "prepare");
+		const execSpy = vi.spyOn(db, "exec");
 
-		await expect(createPost("acct_primary", "Bird-only post")).rejects.toThrow(
-			/not supported.*bird/i,
-		);
+		for (const compose of [
+			() => createPost("acct_primary", "Bird-only post"),
+			() =>
+				createTweetReply("acct_primary", "tweet_004", "Bird-only tweet reply"),
+			() => createDmReply("dm_003", "Bird-only DM reply"),
+		]) {
+			await expect(compose()).rejects.toThrow(
+				"Compose writes require xurl; set actions.transport to auto or xurl",
+			);
+		}
 
 		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
 		expect(mocks.postViaXurl).not.toHaveBeenCalled();
-	});
-
-	it("rejects tweet replies before xurl when Bird actions are configured", async () => {
-		setupTempHome();
-		process.env.BIRDCLAW_ACTIONS_TRANSPORT = "bird";
-
-		await expect(
-			createTweetReply("acct_primary", "tweet_004", "Bird-only tweet reply"),
-		).rejects.toThrow(/not supported.*bird/i);
-
-		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
 		expect(mocks.replyViaXurl).not.toHaveBeenCalled();
-	});
-
-	it("rejects dm replies before xurl when Bird actions are configured", async () => {
-		setupTempHome();
-		process.env.BIRDCLAW_ACTIONS_TRANSPORT = "bird";
-
-		await expect(createDmReply("dm_003", "Bird-only DM reply")).rejects.toThrow(
-			/not supported.*bird/i,
-		);
-
-		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
 		expect(mocks.dmViaXurl).not.toHaveBeenCalled();
+		expect(prepareSpy).not.toHaveBeenCalled();
+		expect(execSpy).not.toHaveBeenCalled();
 	});
 
 	it("exposes local compose writes as lazy Effect programs", async () => {

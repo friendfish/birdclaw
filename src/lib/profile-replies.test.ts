@@ -51,7 +51,7 @@ describe("profile reply inspection", () => {
 		resetBirdclawPathsForTests();
 	});
 
-	it("rejects xurl-only reply inspection before lookup when Bird is configured", async () => {
+	it("rejects omitted reply inspection before account or profile lookup when Bird is configured", async () => {
 		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
 		resetBirdclawPathsForTests();
 		resolveProfileMock.mockResolvedValue({
@@ -70,10 +70,38 @@ describe("profile reply inspection", () => {
 		const { inspectProfileReplies } = await import("./profile-replies");
 
 		await expect(inspectProfileReplies("@jpctan")).rejects.toThrow(
-			/not supported.*bird/i,
+			"Profile reply inspection requires xurl; select xurl explicitly",
 		);
+		expect(resolveOperationAccountMock).not.toHaveBeenCalled();
 		expect(resolveProfileMock).not.toHaveBeenCalled();
 		expect(listUserTweetsMock).not.toHaveBeenCalled();
+	});
+
+	it("allows an explicit xurl reply inspection override when Bird is configured", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		resolveProfileMock.mockResolvedValue({
+			profile: {
+				id: "profile_user_42",
+				handle: "jpctan",
+				displayName: "Jason Tan",
+				bio: "",
+				followersCount: 268,
+				avatarHue: 18,
+				createdAt: "2015-05-20T09:27:37.000Z",
+			},
+			externalUserId: "42",
+		});
+		listUserTweetsMock.mockResolvedValue({ items: [] });
+		const { inspectProfileReplies } = await import("./profile-replies");
+
+		await expect(
+			inspectProfileReplies("@jpctan", { mode: "xurl" }),
+		).resolves.toMatchObject({ externalUserId: "42", items: [] });
+		expect(listUserTweetsMock).toHaveBeenCalledWith("42", {
+			maxResults: 36,
+			excludeRetweets: true,
+		});
 	});
 
 	it("builds profile reply inspection effects lazily", async () => {

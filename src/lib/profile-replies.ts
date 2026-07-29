@@ -15,24 +15,28 @@ function getScanSize(limit: number) {
 	return Math.min(Math.max(limit * 3, 20), 100);
 }
 
+export interface InspectProfileRepliesOptions {
+	account?: string;
+	limit?: number;
+	mode?: string;
+}
+
 export function inspectProfileReplies(
 	query: string,
-	{ account, limit = 12 }: { account?: string; limit?: number } = {},
+	options: InspectProfileRepliesOptions = {},
 ): Promise<ProfileRepliesResponse> {
-	return runEffectPromise(
-		inspectProfileRepliesEffect(query, { account, limit }),
-	);
+	return runEffectPromise(inspectProfileRepliesEffect(query, options));
 }
 
 export function inspectProfileRepliesEffect(
 	query: string,
-	{ account, limit = 12 }: { account?: string; limit?: number } = {},
+	{ account, limit = 12, mode }: InspectProfileRepliesOptions = {},
 ): Effect.Effect<ProfileRepliesResponse, unknown> {
 	return Effect.gen(function* () {
-		if (resolveLiveSyncMode() === "bird") {
+		if (resolveLiveSyncMode(mode) === "bird") {
 			return yield* Effect.fail(
 				new Error(
-					"Profile reply inspection is not supported with Bird live transport",
+					"Profile reply inspection requires xurl; select xurl explicitly",
 				),
 			);
 		}
