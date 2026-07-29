@@ -832,7 +832,7 @@ function refreshPeriodDigestInputsEffect(
 				mode: liveMode,
 				limit: mentionsLimit,
 				maxPages: mentionsMaxPages,
-				startTime: liveStartTime,
+				...(liveMode === "bird" ? {} : { startTime: liveStartTime }),
 				refresh: Boolean(options.refresh),
 				cacheTtlMs: 2 * 60_000,
 				onProgress: (progress) =>
@@ -1387,6 +1387,7 @@ export function streamPeriodDigestEffect(
 	return Effect.gen(function* () {
 		const resolvedOptions = {
 			...options,
+			liveSyncMode: options.liveSyncMode ?? resolveLiveReadMode(),
 			language: yield* tryDigestSync(() => languageFromOptions(options)),
 		};
 		const latestCached = resolvedOptions.refresh
