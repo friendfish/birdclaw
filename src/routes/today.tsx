@@ -12,7 +12,7 @@ import { DigestArchiveCalendarPicker } from "#/components/DigestArchiveCalendarP
 import { DigestArchiveWeekPicker } from "#/components/DigestArchiveWeekPicker";
 import { MarkdownViewer } from "#/components/MarkdownViewer";
 import { useBirdAvailable } from "#/components/useBirdAvailable";
-import { useDigestArchiveRunningPeriods } from "#/components/useDigestArchiveStatus";
+import { useDigestArchiveStatus } from "#/components/useDigestArchiveStatus";
 import { useNdjsonRun } from "#/components/useNdjsonRun";
 import { usePeriodDigestMetadata } from "#/components/usePeriodDigestMetadata";
 import { useReadOnlyDigest } from "#/components/useReadOnlyDigest";
@@ -469,15 +469,18 @@ export function TodayRouteView({
 		effectiveContentSource,
 		!isArchivedPeriod,
 	);
-	const runningPeriods = useDigestArchiveRunningPeriods();
-	const archiveRunning = isArchivedPeriod && runningPeriods.has(period);
+	const archiveStatus = useDigestArchiveStatus();
+	const archiveRunning =
+		isArchivedPeriod && archiveStatus.runningPeriods.has(period);
 	const archived = useReadOnlyDigest({
 		period,
 		contentSource: effectiveContentSource,
 		archiveDate,
 		enabled: isArchivedPeriod,
 		running: archiveRunning,
+		activeRunDate: archiveStatus.activeRunDates.get(period),
 	});
+	const archiveBusy = archiveRunning || archived.finalizing;
 	const context = isArchivedPeriod ? archived.context : live.context;
 	const markdown = isArchivedPeriod ? archived.markdown : live.markdown;
 	const result = isArchivedPeriod ? archived.result : live.result;
@@ -485,7 +488,7 @@ export function TodayRouteView({
 	const error = isArchivedPeriod ? archived.error : live.error;
 	const retry = isArchivedPeriod ? archived.retry : () => live.run(true);
 	const status = isArchivedPeriod
-		? archiveRunning
+		? archiveBusy
 			? `Generating scheduled digest ${String(archived.completedSources)}/3`
 			: "Loading archive"
 		: live.status;
@@ -539,7 +542,7 @@ export function TodayRouteView({
 								type="button"
 								className={secondaryButtonClass}
 								onClick={() => live.run(true)}
-								disabled={loading || runningPeriods.has(period)}
+								disabled={loading || archiveStatus.runningPeriods.has(period)}
 							>
 								<RefreshCw
 									className={cx("size-4", loading && "animate-spin")}
@@ -668,14 +671,14 @@ export function TodayRouteView({
 
 			<div className="today-screen-only border-b border-[var(--line)] px-4 py-2 text-[13px] text-[var(--ink-soft)]">
 				<span className="inline-flex items-center gap-1">
-					{loading || archiveRunning ? (
+					{loading || archiveBusy ? (
 						<Loader2 className="size-4 animate-spin" aria-hidden="true" />
 					) : markdown ? (
 						<CheckCircle2 className="size-4" aria-hidden="true" />
 					) : (
 						<Sparkles className="size-4" aria-hidden="true" />
 					)}
-					{archiveRunning
+					{archiveBusy
 						? status
 						: loading
 							? status
@@ -694,7 +697,7 @@ export function TodayRouteView({
 				/>
 			) : (
 				<div className="px-4 py-5 text-[14px] text-[var(--ink-soft)]">
-					{archiveRunning && archived.sourcePending
+					{archiveBusy && archived.sourcePending
 						? "This source is still being generated."
 						: loading
 							? status

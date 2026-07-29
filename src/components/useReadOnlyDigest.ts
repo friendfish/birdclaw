@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { fetchJson } from "#/lib/api-client";
 import { queryKeys } from "#/lib/query-client";
@@ -66,16 +67,28 @@ export function useReadOnlyDigest({
 	archiveDate,
 	enabled,
 	running = false,
+	activeRunDate,
 }: {
 	period: PeriodRouteSearch;
 	contentSource: PeriodDigestContentSource;
 	archiveDate: string;
 	enabled: boolean;
 	running?: boolean;
+	activeRunDate?: string;
 }) {
-	const datesQuery = useDigestArchiveDates(period, enabled, running);
+	const previousRunningRef = useRef(false);
+	const lastActiveRunDateRef = useRef<string | undefined>(undefined);
+	const [finalizing, setFinalizing] = useState(false);
+	if (running && activeRunDate) {
+		lastActiveRunDateRef.current = activeRunDate;
+	}
+	const finishingTransition = previousRunningRef.current && !running;
+	const polling = running || finalizing || finishingTransition;
+	const datesQuery = useDigestArchiveDates(period, enabled, polling);
 	const dates = (datesQuery.data?.dates ?? []) as DigestArchiveDateOption[];
-	const effectiveDate = archiveDate || dates[0]?.date;
+	const currentRunDate =
+		activeRunDate || (polling ? lastActiveRunDateRef.current : undefined);
+	const effectiveDate = archiveDate || currentRunDate || dates[0]?.date;
 	const effectiveDateOption = dates.find(
 		(option) => option.date === effectiveDate,
 	);
@@ -96,8 +109,25 @@ export function useReadOnlyDigest({
 				"Failed to load archived digest",
 			),
 		enabled: enabled && Boolean(effectiveDate),
-		refetchInterval: running ? 2_000 : false,
+		refetchInterval: polling ? 2_000 : false,
 	});
+
+	useEffect(() => {
+		const wasRunning = previousRunningRef.current;
+		previousRunningRef.current = running;
+		if (!wasRunning || running) return;
+
+		let cancelled = false;
+		setFinalizing(true);
+		void Promise.all([datesQuery.refetch(), entryQuery.refetch()]).finally(
+			() => {
+				if (!cancelled) setFinalizing(false);
+			},
+		);
+		return () => {
+			cancelled = true;
+		};
+	}, [datesQuery.refetch, entryQuery.refetch, running]);
 
 	const result = (entryQuery.data?.result ??
 		null) as PeriodDigestRunResult | null;
@@ -123,7 +153,8 @@ export function useReadOnlyDigest({
 		dates,
 		effectiveDate,
 		completedSources,
-		sourcePending: running && !result,
+		sourcePending: polling && !result,
+		finalizing: finalizing || finishingTransition,
 		// Distinguishes "this period has never been archived at all" (no
 		// dates exist yet) from "this date exists but this content source
 		// wasn't archived that day" (dates exist, but the fetched entry for

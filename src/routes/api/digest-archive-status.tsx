@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
-import { peekDigestArchiveRunningPeriodsEffect } from "#/lib/digest-archive-job";
+import { peekDigestArchiveRunningRunsEffect } from "#/lib/digest-archive-job";
 import {
 	jsonResponse,
 	runRouteEffect,
@@ -16,9 +16,12 @@ export const Route = createFileRoute("/api/digest-archive-status")({
 						const denied = sensitiveRequestErrorResponse(request);
 						if (denied) return denied;
 
-						const runningPeriods =
-							yield* peekDigestArchiveRunningPeriodsEffect();
-						return jsonResponse({ ok: true, runningPeriods });
+						const activeRuns = yield* peekDigestArchiveRunningRunsEffect();
+						return jsonResponse({
+							ok: true,
+							runningPeriods: activeRuns.map(({ period }) => period),
+							activeRuns,
+						});
 					}),
 				),
 		},

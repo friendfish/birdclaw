@@ -3,17 +3,23 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 import { listTimelineItems } from "./queries";
 
 const listHomeTimelineViaBirdMock = vi.fn();
 const listHomeTimelineViaXurlMock = vi.fn();
+const getAuthenticatedBirdAccountMock = vi.fn();
 
 vi.mock("./bird", async () => {
 	const { Effect } = await import("effect");
 	return {
+		getAuthenticatedBirdAccountEffect: () =>
+			Effect.tryPromise({
+				try: () => getAuthenticatedBirdAccountMock(),
+				catch: (error) => error,
+			}),
 		listHomeTimelineViaBird: (...args: unknown[]) =>
 			listHomeTimelineViaBirdMock(...args),
 		listHomeTimelineViaBirdEffect: (...args: unknown[]) =>
@@ -37,6 +43,14 @@ vi.mock("./xurl", async () => {
 
 const tempDirs: string[] = [];
 
+beforeEach(() => {
+	getAuthenticatedBirdAccountMock.mockReset();
+	getAuthenticatedBirdAccountMock.mockResolvedValue({
+		id: "25401953",
+		username: "steipete",
+	});
+});
+
 function makeTempHome() {
 	const tempDir = mkdtempSync(
 		path.join(os.tmpdir(), "birdclaw-timeline-live-"),
@@ -52,6 +66,7 @@ afterEach(() => {
 	delete process.env.BIRDCLAW_HOME;
 	listHomeTimelineViaBirdMock.mockReset();
 	listHomeTimelineViaXurlMock.mockReset();
+	getAuthenticatedBirdAccountMock.mockReset();
 
 	for (const dir of tempDirs.splice(0)) {
 		rmSync(dir, { recursive: true, force: true });
@@ -94,6 +109,9 @@ describe("live home timeline sync", () => {
 	it("stores account-scoped home timeline edges without moving canonical tweets", async () => {
 		makeTempHome();
 		const db = getNativeDb();
+		getAuthenticatedBirdAccountMock.mockResolvedValueOnce({
+			username: "birdclaw_lab",
+		});
 		listHomeTimelineViaBirdMock.mockResolvedValueOnce({
 			data: [
 				{
@@ -170,6 +188,32 @@ describe("live home timeline sync", () => {
 				.all("tweet_001"),
 		).toEqual([{ feed: "following" }]);
 	});
+
+	it.each([
+		["Following", true],
+		["For You", false],
+	])(
+		"rejects %s bird sync when the authenticated account does not match the selected account",
+		async (_label, following) => {
+			makeTempHome();
+			listHomeTimelineViaBirdMock.mockResolvedValueOnce({
+				data: [],
+				meta: { result_count: 0 },
+			});
+			const { syncHomeTimeline } = await import("./timeline-live");
+
+			await expect(
+				syncHomeTimeline({
+					account: "acct_studio",
+					mode: "bird",
+					following,
+					limit: 5,
+					refresh: true,
+				}),
+			).rejects.toThrow("refusing to sync");
+			expect(listHomeTimelineViaBirdMock).not.toHaveBeenCalled();
+		},
+	);
 
 	it("tags for-you syncs with the for_you feed edge instead of following", async () => {
 		makeTempHome();
