@@ -40,10 +40,14 @@ vi.mock("./bird", async () => {
 
 describe("profile hydration", () => {
 	let homeDir = "";
+	const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	const originalConfig = process.env.BIRDCLAW_CONFIG;
 
 	beforeEach(() => {
 		homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-hydrate-"));
 		process.env.BIRDCLAW_HOME = homeDir;
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "birdclaw";
+		delete process.env.BIRDCLAW_CONFIG;
 		resetBirdclawPathsForTests();
 		resetDatabaseForTests();
 		mocks.getTransportStatus.mockReset();
@@ -59,6 +63,17 @@ describe("profile hydration", () => {
 		resetDatabaseForTests();
 		resetBirdclawPathsForTests();
 		delete process.env.BIRDCLAW_HOME;
+		if (originalMentionsDataSource === undefined) {
+			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+		}
+		if (originalConfig === undefined) {
+			delete process.env.BIRDCLAW_CONFIG;
+		} else {
+			process.env.BIRDCLAW_CONFIG = originalConfig;
+		}
+		resetBirdclawPathsForTests();
 		rmSync(homeDir, { recursive: true, force: true });
 	});
 

@@ -2426,6 +2426,65 @@ describe("cli", () => {
 		expect(formatWhoisMock).toHaveBeenCalled();
 	});
 
+	it("preserves omitted xurl fallback options for DM and whois commands", async () => {
+		listDmConversationsMock.mockReturnValue([
+			{
+				id: "dm_1",
+				lastMessagePreview: "hello",
+				participant: { id: "profile_user_42" },
+			},
+		]);
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "dms", "list", "--resolve-profiles"]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"search",
+			"dms",
+			"blacksmith",
+			"--resolve-profiles",
+		]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"dms",
+			"list",
+			"--resolve-profiles",
+			"--no-xurl-fallback",
+		]);
+		await runCli(["node", "birdclaw", "whois", "blacksmith"]);
+
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			1,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: undefined,
+			},
+		);
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			2,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: undefined,
+			},
+		);
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			3,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: false,
+			},
+		);
+		expect(runWhoisMock).toHaveBeenCalledWith(
+			"blacksmith",
+			expect.objectContaining({ xurlFallback: undefined }),
+		);
+	});
+
 	it("prints quality reasons for tweet search when requested", async () => {
 		listTimelineItemsMock.mockReturnValue([
 			{ id: "tweet_1", qualityReason: "keep:high-likes" },

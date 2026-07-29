@@ -43,6 +43,8 @@ vi.mock("./xurl", () => ({
 }));
 
 let homeDir = "";
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+const originalConfig = process.env.BIRDCLAW_CONFIG;
 
 function resetStore() {
 	const db = getNativeDb();
@@ -76,6 +78,8 @@ describe("profile resolver", () => {
 	beforeEach(() => {
 		homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-profile-resolver-"));
 		process.env.BIRDCLAW_HOME = homeDir;
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "birdclaw";
+		delete process.env.BIRDCLAW_CONFIG;
 		resetBirdclawPathsForTests();
 		resetDatabaseForTests();
 		mocks.lookupProfileViaBird.mockReset();
@@ -97,6 +101,17 @@ describe("profile resolver", () => {
 		resetDatabaseForTests();
 		resetBirdclawPathsForTests();
 		delete process.env.BIRDCLAW_HOME;
+		if (originalMentionsDataSource === undefined) {
+			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+		}
+		if (originalConfig === undefined) {
+			delete process.env.BIRDCLAW_CONFIG;
+		} else {
+			process.env.BIRDCLAW_CONFIG = originalConfig;
+		}
+		resetBirdclawPathsForTests();
 		rmSync(homeDir, { recursive: true, force: true });
 	});
 

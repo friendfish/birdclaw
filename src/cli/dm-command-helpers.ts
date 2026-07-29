@@ -49,7 +49,7 @@ export async function enrichDmItems(
 				items.map((item) => item.participant.id),
 				{
 					refresh: options.refreshProfileCache,
-					xurlFallback: options.xurlFallback ?? true,
+					xurlFallback: options.xurlFallback,
 				},
 			)
 		: undefined;
