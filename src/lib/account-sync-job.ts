@@ -245,6 +245,9 @@ async function runStep({
 		}
 		if (kind === "mention-threads") {
 			const threadMode = mode === "bird" ? "bird" : "xurl";
+			if (threadMode === "bird" && !allowBirdAccount) {
+				return { kind, ok: false, count: 0, error: birdAccountError(kind) };
+			}
 			const result = await syncMentionThreads({
 				account,
 				mode: threadMode,
@@ -420,7 +423,7 @@ function buildProgramArguments({
 	program = "birdclaw",
 	account,
 	steps,
-	mode = "auto",
+	mode,
 	limit = DEFAULT_ACCOUNT_SYNC_LIMIT,
 	maxPages = DEFAULT_ACCOUNT_SYNC_MAX_PAGES,
 	refresh = true,
@@ -433,8 +436,6 @@ function buildProgramArguments({
 		"--json",
 		"jobs",
 		"sync-account",
-		"--mode",
-		mode,
 		"--limit",
 		String(limit),
 		"--max-pages",
@@ -447,6 +448,9 @@ function buildProgramArguments({
 	}
 	if (steps?.length) {
 		args.push("--steps", steps.join(","));
+	}
+	if (mode) {
+		args.push("--mode", mode);
 	}
 	if (refresh) {
 		args.push("--refresh");
