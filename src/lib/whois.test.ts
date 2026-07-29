@@ -35,11 +35,15 @@ vi.mock("./xurl", () => ({
 }));
 
 let homeDir = "";
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 
 describe("whois", () => {
 	beforeEach(() => {
 		homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-whois-"));
 		process.env.BIRDCLAW_HOME = homeDir;
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 		resetBirdclawPathsForTests();
 		resetDatabaseForTests();
 		mocks.lookupProfileViaBird.mockReset();
@@ -238,8 +242,18 @@ describe("whois", () => {
 
 	afterEach(() => {
 		resetDatabaseForTests();
-		resetBirdclawPathsForTests();
 		delete process.env.BIRDCLAW_HOME;
+		if (originalLiveDataSource === undefined) {
+			delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+		}
+		if (originalMentionsDataSource === undefined) {
+			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+		}
+		resetBirdclawPathsForTests();
 		rmSync(homeDir, { recursive: true, force: true });
 	});
 

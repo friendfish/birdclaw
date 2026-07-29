@@ -92,6 +92,7 @@ const tempRoots: string[] = [];
 const queryEnvKeys = [
 	"BIRDCLAW_HOME",
 	"BIRDCLAW_CONFIG",
+	"BIRDCLAW_LIVE_DATA_SOURCE",
 	"BIRDCLAW_MENTIONS_DATA_SOURCE",
 	"BIRDCLAW_ACTIONS_TRANSPORT",
 ] as const;

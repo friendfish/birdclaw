@@ -31,6 +31,8 @@ vi.mock("./xurl", async () => {
 });
 
 const tempDirs: string[] = [];
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 
 function makeTempHome() {
 	const tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-authored-"));
@@ -162,6 +164,9 @@ function insertAuthoredEdge(
 
 describe("live authored tweet sync", () => {
 	beforeEach(() => {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		resetBirdclawPathsForTests();
 		mocks.getTransportStatus.mockResolvedValue({
 			installed: true,
 			availableTransport: "xurl",
@@ -176,8 +181,18 @@ describe("live authored tweet sync", () => {
 
 	afterEach(() => {
 		resetDatabaseForTests();
-		resetBirdclawPathsForTests();
 		vi.unstubAllEnvs();
+		if (originalLiveDataSource === undefined) {
+			delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+		}
+		if (originalMentionsDataSource === undefined) {
+			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+		}
+		resetBirdclawPathsForTests();
 		for (const mock of Object.values(mocks)) {
 			mock.mockReset();
 		}
@@ -239,6 +254,7 @@ describe("live authored tweet sync", () => {
 	it("rejects configured Bird mode before touching xurl or local sync state", async () => {
 		makeTempHome();
 		vi.stubEnv("BIRDCLAW_MENTIONS_DATA_SOURCE", "bird");
+		resetBirdclawPathsForTests();
 		const dbPath = getBirdclawPaths().dbPath;
 		const { syncAuthoredTweetsEffect } = await import("./authored-live");
 

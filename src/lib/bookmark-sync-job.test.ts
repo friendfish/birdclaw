@@ -19,6 +19,7 @@ const syncTimelineCollectionMock = vi.hoisted(() => vi.fn());
 const maybeAutoSyncBackupMock = vi.hoisted(() => vi.fn());
 const execFileAsyncMock = vi.hoisted(() => vi.fn());
 const execFileMock = vi.hoisted(() => vi.fn());
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 
 Object.defineProperty(
@@ -66,18 +67,25 @@ function makeTempDir(prefix: string) {
 }
 
 beforeEach(() => {
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 	process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "auto";
+	resetBirdclawPathsForTests();
 });
 
 afterEach(() => {
 	resetDatabaseForTests();
-	resetBirdclawPathsForTests();
 	delete process.env.BIRDCLAW_HOME;
+	if (originalLiveDataSource === undefined) {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+	}
 	if (originalMentionsDataSource === undefined) {
 		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 	} else {
 		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
 	}
+	resetBirdclawPathsForTests();
 	syncTimelineCollectionMock.mockReset();
 	maybeAutoSyncBackupMock.mockReset();
 	execFileAsyncMock.mockReset();

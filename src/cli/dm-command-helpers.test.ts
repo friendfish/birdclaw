@@ -35,11 +35,14 @@ vi.mock("#/lib/xurl", () => ({
 }));
 
 let homeDir = "";
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 
 describe("DM profile enrichment", () => {
 	beforeEach(() => {
 		homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-dm-enrichment-"));
 		process.env.BIRDCLAW_HOME = homeDir;
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
 		resetBirdclawPathsForTests();
 		resetDatabaseForTests();
@@ -67,9 +70,18 @@ describe("DM profile enrichment", () => {
 
 	afterEach(() => {
 		resetDatabaseForTests();
-		resetBirdclawPathsForTests();
 		delete process.env.BIRDCLAW_HOME;
-		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		if (originalLiveDataSource === undefined) {
+			delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+		}
+		if (originalMentionsDataSource === undefined) {
+			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+		}
+		resetBirdclawPathsForTests();
 		rmSync(homeDir, { recursive: true, force: true });
 	});
 
