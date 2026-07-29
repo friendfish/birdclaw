@@ -2,6 +2,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Command } from "commander";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBirdclawPathsForTests } from "./config";
@@ -245,15 +246,18 @@ describe("blocklist", () => {
 		expect(listBlocks({ account: "acct_primary" })).toHaveLength(0);
 	});
 
-	it("rejects an invalid explicit transport before lookup, live action, or persistence", async () => {
+	it("rejects invalid and blank explicit transports before lookup, live action, or persistence", async () => {
 		setupTempHome();
+		vi.stubEnv("BIRDCLAW_ACTIONS_TRANSPORT", "bird");
 		const { addBlock, listBlocks } = await import("./blocks");
 
-		await expect(
-			addBlock("acct_primary", "@amelia", {
-				transport: "invalid" as "bird",
-			}),
-		).rejects.toThrow("--transport must be auto, bird, or xurl");
+		for (const transport of ["invalid", "", " \t "]) {
+			await expect(
+				addBlock("acct_primary", "@amelia", {
+					transport: transport as "bird",
+				}),
+			).rejects.toThrow("--transport must be auto, bird, or xurl");
+		}
 
 		expect(mocks.lookupProfileViaBird).not.toHaveBeenCalled();
 		expect(mocks.lookupUsersByHandles).not.toHaveBeenCalled();
@@ -261,6 +265,60 @@ describe("blocklist", () => {
 		expect(mocks.blockUserViaBird).not.toHaveBeenCalled();
 		expect(mocks.blockUserViaXurl).not.toHaveBeenCalled();
 		expect(listBlocks({ account: "acct_primary" })).toHaveLength(0);
+	});
+
+	it("rejects blank CLI transport before lookup, live action, or database mutation", async () => {
+		setupTempHome();
+		vi.stubEnv("BIRDCLAW_ACTIONS_TRANSPORT", "bird");
+		const db = getNativeDb();
+		const counts = () => ({
+			profiles: (
+				db.prepare("select count(*) as count from profiles").get() as {
+					count: number;
+				}
+			).count,
+			blocks: (
+				db.prepare("select count(*) as count from blocks").get() as {
+					count: number;
+				}
+			).count,
+		});
+		const before = counts();
+		const print = vi.fn();
+		const program = new Command();
+		const { registerModerationCommands } =
+			await import("../cli/register-moderation");
+		registerModerationCommands({
+			program,
+			print,
+			asJson: () => false,
+			autoSyncAfterWrite: vi.fn(),
+			autoUpdateBeforeRead: vi.fn(),
+			parseNonNegativeIntegerOption: vi.fn(),
+			parsePositiveIntegerOption: vi.fn(),
+		});
+
+		await expect(
+			program.parseAsync([
+				"node",
+				"birdclaw",
+				"blocks",
+				"add",
+				"@amelia",
+				"--transport",
+				"   ",
+			]),
+		).rejects.toThrow("--transport must be auto, bird, or xurl");
+
+		expect(mocks.lookupProfileViaBird).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByHandles).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
+		expect(mocks.getAuthenticatedBirdAccount).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.blockUserViaBird).not.toHaveBeenCalled();
+		expect(mocks.blockUserViaXurl).not.toHaveBeenCalled();
+		expect(counts()).toEqual(before);
+		expect(print).not.toHaveBeenCalled();
 	});
 
 	it("rejects blocking the current account", async () => {
