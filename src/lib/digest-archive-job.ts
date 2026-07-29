@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Effect } from "effect";
@@ -10,6 +11,10 @@ import {
 } from "./config";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
 import {
+	runDigestArchivePreSyncEffect,
+	type DigestArchiveSyncResult,
+} from "./digest-archive-sync";
+import {
 	buildLaunchAgent,
 	buildLaunchProgramArguments,
 	installLaunchAgentEffect,
@@ -20,12 +25,13 @@ import {
 import {
 	acquireScheduledJobLockEffect,
 	appendScheduledJobAuditEffect,
-	peekScheduledJobLock,
-	peekScheduledJobLockEffect,
+	peekScheduledJobLockMetadata,
+	peekScheduledJobLockMetadataEffect,
 	startScheduledJobRun,
 } from "./scheduled-job";
 import {
 	streamPeriodDigest,
+	normalizeDigestLanguage,
 	type PeriodDigestContentSource,
 	type PeriodDigestContext,
 	type PeriodDigestPreset,
@@ -65,6 +71,7 @@ export interface DigestArchiveJobOptions {
 	archiveDir?: string;
 	retries?: number;
 	retryDelayMs?: number;
+	language?: string;
 	logPath?: string;
 	lockPath?: string;
 	now?: () => Date;
@@ -91,10 +98,13 @@ export interface DigestArchiveStepResult {
 	error?: string;
 }
 
+export type DigestArchiveBatchStatus = "ok" | "degraded" | "failed";
+
 export interface DigestArchiveAuditEntry {
 	job: "digest-archive";
 	period: PeriodDigestPreset;
 	ok: boolean;
+	status: DigestArchiveBatchStatus;
 	startedAt: string;
 	finishedAt: string;
 	durationMs: number;
@@ -109,14 +119,28 @@ export interface DigestArchiveAuditEntry {
 		archiveDir: string;
 		retries: number;
 		retryDelayMs: number;
+		language?: string;
 	};
+	sync: DigestArchiveSyncResult;
 	steps: DigestArchiveStepResult[];
 	skipped?: "already-running";
 	error?: string;
+	persistenceErrors?: DigestArchivePersistenceError[];
 }
 
-export interface PeriodDigestArchiveFile {
-	schemaVersion: 1;
+export interface DigestArchivePersistenceError {
+	jsonPath: string;
+	error: string;
+}
+
+export interface DigestArchiveJobDependencies {
+	updateArchiveBatchStatus?: (
+		steps: DigestArchiveStepResult[],
+		status: DigestArchiveBatchStatus,
+	) => Effect.Effect<DigestArchivePersistenceError[], never>;
+}
+
+interface PeriodDigestArchiveFileBase {
 	period: PeriodDigestPreset;
 	contentSource: PeriodDigestContentSource;
 	runDate: string;
@@ -129,6 +153,21 @@ export interface PeriodDigestArchiveFile {
 	serviceTier: string;
 	cached: boolean;
 }
+
+export interface PeriodDigestArchiveFileV1 extends PeriodDigestArchiveFileBase {
+	schemaVersion: 1;
+}
+
+export interface PeriodDigestArchiveFileV2 extends PeriodDigestArchiveFileBase {
+	schemaVersion: 2;
+	language?: string;
+	batchStatus: DigestArchiveBatchStatus;
+	sync: DigestArchiveSyncResult;
+}
+
+export type PeriodDigestArchiveFile =
+	| PeriodDigestArchiveFileV1
+	| PeriodDigestArchiveFileV2;
 
 function messageFromError(error: unknown) {
 	return error instanceof Error ? error.message : String(error);
@@ -143,6 +182,33 @@ function formatLocalDateFolder(date: Date) {
 	const mm = String(date.getMonth() + 1).padStart(2, "0");
 	const dd = String(date.getDate()).padStart(2, "0");
 	return `${yyyy}-${mm}-${dd}`;
+}
+
+export function resolveDigestArchiveLanguage(requested?: string) {
+	return normalizeDigestLanguage(selectDigestArchiveLanguage(requested));
+}
+
+function selectDigestArchiveLanguage(requested?: string) {
+	return (
+		requested?.trim() ||
+		process.env.BIRDCLAW_DIGEST_LANGUAGE?.trim() ||
+		getBirdclawConfig().language?.aiLanguage?.trim() ||
+		undefined
+	);
+}
+
+async function writeJsonAtomically(jsonPath: string, value: unknown) {
+	const temporaryPath = `${jsonPath}.${process.pid}.${randomUUID()}.tmp`;
+	try {
+		await fs.writeFile(
+			temporaryPath,
+			JSON.stringify(value, null, "\t"),
+			"utf8",
+		);
+		await fs.rename(temporaryPath, jsonPath);
+	} finally {
+		await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+	}
 }
 
 export function getDefaultDigestArchiveAuditLogPath() {
@@ -218,6 +284,8 @@ function runOneContentSourceEffect({
 	since,
 	until,
 	liveSync,
+	language,
+	sync,
 }: {
 	period: PeriodDigestPreset;
 	contentSource: PeriodDigestContentSource;
@@ -230,6 +298,8 @@ function runOneContentSourceEffect({
 	since?: string;
 	until?: string;
 	liveSync: boolean;
+	language?: string;
+	sync: DigestArchiveSyncResult;
 }): Effect.Effect<DigestArchiveStepResult, never> {
 	let attempts = 0;
 	const attempt = () =>
@@ -243,6 +313,7 @@ function runOneContentSourceEffect({
 					includeDms,
 					refresh: true,
 					liveSync,
+					language,
 					since,
 					until,
 				}),
@@ -256,8 +327,8 @@ function runOneContentSourceEffect({
 			yield* tryPromise(() =>
 				fs.mkdir(path.dirname(markdownPath), { recursive: true }),
 			);
-			const archiveFile: PeriodDigestArchiveFile = {
-				schemaVersion: 1,
+			const archiveFile: PeriodDigestArchiveFileV2 = {
+				schemaVersion: 2,
 				period,
 				contentSource,
 				runDate,
@@ -269,13 +340,14 @@ function runOneContentSourceEffect({
 				reasoningEffort: result.reasoningEffort,
 				serviceTier: result.serviceTier,
 				cached: result.cached,
+				...(language ? { language } : {}),
+				batchStatus: sync.status === "degraded" ? "degraded" : "ok",
+				sync,
 			};
 			yield* tryPromise(() =>
 				fs.writeFile(markdownPath, result.markdown, "utf8"),
 			);
-			yield* tryPromise(() =>
-				fs.writeFile(jsonPath, JSON.stringify(archiveFile, null, "\t"), "utf8"),
-			);
+			yield* tryPromise(() => writeJsonAtomically(jsonPath, archiveFile));
 			return {
 				contentSource,
 				ok: true,
@@ -300,8 +372,45 @@ function runOneContentSourceEffect({
 	);
 }
 
+function updateArchiveBatchStatusEffect(
+	steps: DigestArchiveStepResult[],
+	status: DigestArchiveBatchStatus,
+): Effect.Effect<DigestArchivePersistenceError[], never> {
+	return Effect.forEach(
+		steps,
+		(step) => {
+			if (!step.ok || !step.jsonPath) return Effect.succeed(undefined);
+			return tryPromise(async () => {
+				const raw = await fs.readFile(step.jsonPath as string, "utf8");
+				const archive = JSON.parse(raw) as PeriodDigestArchiveFile;
+				if (archive.schemaVersion !== 2) return;
+				await writeJsonAtomically(step.jsonPath as string, {
+					...archive,
+					batchStatus: status,
+				});
+			}).pipe(
+				Effect.as(undefined),
+				Effect.catchAll((error) =>
+					Effect.succeed({
+						jsonPath: step.jsonPath as string,
+						error: messageFromError(error),
+					} satisfies DigestArchivePersistenceError),
+				),
+			);
+		},
+		{ concurrency: 1 },
+	).pipe(
+		Effect.map((results) =>
+			results.filter(
+				(error): error is DigestArchivePersistenceError => error !== undefined,
+			),
+		),
+	);
+}
+
 export function runDigestArchiveJobEffect(
 	options: DigestArchiveJobOptions,
+	dependencies: DigestArchiveJobDependencies = {},
 ): Effect.Effect<DigestArchiveAuditEntry, unknown> {
 	return Effect.gen(function* () {
 		const { period } = options;
@@ -323,7 +432,10 @@ export function runDigestArchiveJobEffect(
 		const runDate = yield* trySync(() =>
 			formatLocalDateFolder(options.now?.() ?? new Date()),
 		);
-		const auditOptions = {
+		const selectedLanguage = yield* trySync(() =>
+			selectDigestArchiveLanguage(options.language),
+		);
+		const auditOptionsBase = {
 			period,
 			...(options.account ? { account: options.account } : {}),
 			includeDms,
@@ -331,20 +443,49 @@ export function runDigestArchiveJobEffect(
 			archiveDir,
 			retries,
 			retryDelayMs,
+			...(selectedLanguage ? { language: selectedLanguage } : {}),
+		};
+		const languageResult = yield* Effect.either(
+			trySync(() => normalizeDigestLanguage(selectedLanguage)),
+		);
+		if (languageResult._tag === "Left") {
+			const error = messageFromError(languageResult.left);
+			const entry: DigestArchiveAuditEntry = {
+				job: "digest-archive",
+				period,
+				ok: false,
+				status: "failed",
+				...run.finish(),
+				runDate,
+				options: auditOptionsBase,
+				sync: { status: "skipped", steps: [] },
+				steps: [],
+				error,
+			};
+			yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
+			return yield* Effect.fail(languageResult.left);
+		}
+		const language = languageResult.right;
+		const auditOptions = {
+			...auditOptionsBase,
+			...(language ? { language } : {}),
 		};
 
 		const releaseLock = yield* acquireScheduledJobLockEffect(
 			resolvedLockPath,
 			DEFAULT_LOCK_STALE_MS,
+			{ runDate, totalSources: contentSources.length },
 		);
 		if (!releaseLock) {
 			const entry: DigestArchiveAuditEntry = {
 				job: "digest-archive",
 				period,
 				ok: true,
+				status: "ok",
 				...run.finish(),
 				runDate,
 				options: auditOptions,
+				sync: { status: "skipped", steps: [] },
 				steps: [],
 				skipped: "already-running",
 			};
@@ -353,6 +494,15 @@ export function runDigestArchiveJobEffect(
 		}
 
 		return yield* Effect.gen(function* () {
+			const sync: DigestArchiveSyncResult =
+				yield* runDigestArchivePreSyncEffect({
+					period,
+					contentSources,
+					account: options.account,
+					since: options.since,
+					until: options.until,
+					liveSync: options.liveSync ?? true,
+				});
 			const steps: DigestArchiveStepResult[] = [];
 			for (const contentSource of contentSources) {
 				const step = yield* runOneContentSourceEffect({
@@ -366,18 +516,36 @@ export function runDigestArchiveJobEffect(
 					retryDelayMs,
 					since: options.since,
 					until: options.until,
-					liveSync: options.liveSync ?? true,
+					liveSync: false,
+					language,
+					sync,
 				});
 				steps.push(step);
 			}
+			const generationOk = steps.every((step) => step.ok);
+			const generatedStatus: DigestArchiveBatchStatus = !generationOk
+				? "failed"
+				: sync.status === "degraded"
+					? "degraded"
+					: "ok";
+			const persistenceErrors = yield* (
+				dependencies.updateArchiveBatchStatus ?? updateArchiveBatchStatusEffect
+			)(steps, generatedStatus);
+			const ok = generationOk && persistenceErrors.length === 0;
+			const status: DigestArchiveBatchStatus = persistenceErrors.length
+				? "failed"
+				: generatedStatus;
 			const entry: DigestArchiveAuditEntry = {
 				job: "digest-archive",
 				period,
-				ok: steps.every((step) => step.ok),
+				ok,
+				status,
 				...run.finish(),
 				runDate,
 				options: auditOptions,
+				sync,
 				steps,
+				...(persistenceErrors.length ? { persistenceErrors } : {}),
 			};
 			yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
 			return entry;
@@ -687,13 +855,33 @@ export function readDigestArchiveEntryEffect(options: {
 export async function peekDigestArchiveRunningPeriods(): Promise<
 	PeriodDigestPreset[]
 > {
-	const running: PeriodDigestPreset[] = [];
+	return (await peekDigestArchiveRunningRuns()).map(({ period }) => period);
+}
+
+export interface DigestArchiveActiveRun {
+	period: PeriodDigestPreset;
+	runDate: string;
+	totalSources: number;
+}
+
+export async function peekDigestArchiveRunningRuns(): Promise<
+	DigestArchiveActiveRun[]
+> {
+	const running: DigestArchiveActiveRun[] = [];
 	for (const period of ALL_PERIODS) {
-		const isRunning = await peekScheduledJobLock(
+		const metadata = await peekScheduledJobLockMetadata(
 			digestArchiveLockPath(period),
 			DEFAULT_LOCK_STALE_MS,
 		);
-		if (isRunning) running.push(period);
+		if (metadata) {
+			running.push({
+				period,
+				runDate:
+					metadata.runDate ??
+					formatLocalDateFolder(new Date(metadata.startedAt)),
+				totalSources: metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
+			});
+		}
 	}
 	return running;
 }
@@ -702,16 +890,38 @@ export function peekDigestArchiveRunningPeriodsEffect(): Effect.Effect<
 	PeriodDigestPreset[],
 	unknown
 > {
+	return peekDigestArchiveRunningRunsEffect().pipe(
+		Effect.map((runs) => runs.map(({ period }) => period)),
+	);
+}
+
+export function peekDigestArchiveRunningRunsEffect(): Effect.Effect<
+	DigestArchiveActiveRun[],
+	unknown
+> {
 	return Effect.all(
 		ALL_PERIODS.map((period) =>
-			peekScheduledJobLockEffect(
+			peekScheduledJobLockMetadataEffect(
 				digestArchiveLockPath(period),
 				DEFAULT_LOCK_STALE_MS,
-			).pipe(Effect.map((isRunning) => (isRunning ? period : undefined))),
+			).pipe(
+				Effect.map((metadata) =>
+					metadata
+						? {
+								period,
+								runDate:
+									metadata.runDate ??
+									formatLocalDateFolder(new Date(metadata.startedAt)),
+								totalSources:
+									metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
+							}
+						: undefined,
+				),
+			),
 		),
 	).pipe(
 		Effect.map((values) =>
-			values.filter((v): v is PeriodDigestPreset => v !== undefined),
+			values.filter((v): v is DigestArchiveActiveRun => v !== undefined),
 		),
 	);
 }

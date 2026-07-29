@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./bird", () => ({
+	getAuthenticatedBirdAccountEffect: () =>
+		Effect.succeed({ id: "25401953", username: "steipete" }),
 	listBookmarkedTweetsViaBird: mocks.listBookmarkedTweetsViaBird,
 	listBookmarkedTweetsViaBirdEffect: (options: unknown) =>
 		Effect.tryPromise({

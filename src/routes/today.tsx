@@ -12,7 +12,7 @@ import { DigestArchiveCalendarPicker } from "#/components/DigestArchiveCalendarP
 import { DigestArchiveWeekPicker } from "#/components/DigestArchiveWeekPicker";
 import { MarkdownViewer } from "#/components/MarkdownViewer";
 import { useBirdAvailable } from "#/components/useBirdAvailable";
-import { useDigestArchiveRunningPeriods } from "#/components/useDigestArchiveStatus";
+import { useDigestArchiveStatus } from "#/components/useDigestArchiveStatus";
 import { useNdjsonRun } from "#/components/useNdjsonRun";
 import { usePeriodDigestMetadata } from "#/components/usePeriodDigestMetadata";
 import { useReadOnlyDigest } from "#/components/useReadOnlyDigest";
@@ -469,20 +469,30 @@ export function TodayRouteView({
 		effectiveContentSource,
 		!isArchivedPeriod,
 	);
+	const archiveStatus = useDigestArchiveStatus();
+	const archiveRunning =
+		isArchivedPeriod && archiveStatus.runningPeriods.has(period);
+	const activeArchiveRun = archiveStatus.activeRuns.get(period);
 	const archived = useReadOnlyDigest({
 		period,
 		contentSource: effectiveContentSource,
 		archiveDate,
 		enabled: isArchivedPeriod,
+		running: archiveRunning,
+		activeRunDate: activeArchiveRun?.runDate,
 	});
-	const runningPeriods = useDigestArchiveRunningPeriods();
+	const archiveBusy = archived.activeRunInProgress;
 	const context = isArchivedPeriod ? archived.context : live.context;
 	const markdown = isArchivedPeriod ? archived.markdown : live.markdown;
 	const result = isArchivedPeriod ? archived.result : live.result;
 	const loading = isArchivedPeriod ? archived.loading : live.loading;
 	const error = isArchivedPeriod ? archived.error : live.error;
 	const retry = isArchivedPeriod ? archived.retry : () => live.run(true);
-	const status = isArchivedPeriod ? "Loading archive" : live.status;
+	const status = isArchivedPeriod
+		? archiveBusy
+			? `Generating scheduled digest ${String(archived.completedSources)}/${String(activeArchiveRun?.totalSources ?? 3)}`
+			: "Loading archive"
+		: live.status;
 	useEffect(() => {
 		const root = document.documentElement;
 		root.classList.add("today-pdf-route");
@@ -533,7 +543,7 @@ export function TodayRouteView({
 								type="button"
 								className={secondaryButtonClass}
 								onClick={() => live.run(true)}
-								disabled={loading || runningPeriods.has(period)}
+								disabled={loading || archiveStatus.runningPeriods.has(period)}
 							>
 								<RefreshCw
 									className={cx("size-4", loading && "animate-spin")}
@@ -662,20 +672,22 @@ export function TodayRouteView({
 
 			<div className="today-screen-only border-b border-[var(--line)] px-4 py-2 text-[13px] text-[var(--ink-soft)]">
 				<span className="inline-flex items-center gap-1">
-					{loading ? (
+					{loading || archiveBusy ? (
 						<Loader2 className="size-4 animate-spin" aria-hidden="true" />
 					) : markdown ? (
 						<CheckCircle2 className="size-4" aria-hidden="true" />
 					) : (
 						<Sparkles className="size-4" aria-hidden="true" />
 					)}
-					{loading
+					{archiveBusy
 						? status
-						: result
-							? `${result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
-							: error
-								? "Digest failed"
-								: "Ready"}
+						: loading
+							? status
+							: result
+								? `${result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
+								: error
+									? "Digest failed"
+									: "Ready"}
 				</span>
 			</div>
 
@@ -686,17 +698,19 @@ export function TodayRouteView({
 				/>
 			) : (
 				<div className="px-4 py-5 text-[14px] text-[var(--ink-soft)]">
-					{loading
-						? status
-						: error
-							? isArchivedPeriod
-								? "No digest was generated. Retry to load the archive again."
-								: "No digest was generated. Retry to start a new run."
-							: isArchivedPeriod
-								? archived.neverArchived
-									? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
-									: `No archived ${effectiveContentSource === "all" ? "" : `${effectiveContentSource} `}digest for this date. Try a different content-source tab.`
-								: "Waiting for the first tokens..."}
+					{archiveBusy && archived.sourcePending
+						? "This source is still being generated."
+						: loading
+							? status
+							: error
+								? isArchivedPeriod
+									? "No digest was generated. Retry to load the archive again."
+									: "No digest was generated. Retry to start a new run."
+								: isArchivedPeriod
+									? archived.neverArchived
+										? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
+										: `No archived ${effectiveContentSource === "all" ? "" : `${effectiveContentSource} `}digest for this date. Try a different content-source tab.`
+									: "Waiting for the first tokens..."}
 				</div>
 			)}
 		</div>

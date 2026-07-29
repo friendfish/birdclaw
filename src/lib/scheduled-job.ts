@@ -17,6 +17,14 @@ export interface ScheduledJobRun {
 	finish(): ScheduledJobRunMetadata;
 }
 
+export interface ScheduledJobLockMetadata {
+	startedAt: string;
+	host: string;
+	pid: number;
+	runDate?: string;
+	totalSources?: number;
+}
+
 export type ScheduledJobLockRelease = () => Promise<void>;
 
 function isFileExistsError(error: unknown) {
@@ -57,6 +65,7 @@ export function appendScheduledJobAuditEffect(logPath: string, entry: unknown) {
 export async function acquireScheduledJobLock(
 	lockPath: string,
 	staleMs: number,
+	metadata: Pick<ScheduledJobLockMetadata, "runDate" | "totalSources"> = {},
 ): Promise<ScheduledJobLockRelease | undefined> {
 	await fs.mkdir(path.dirname(lockPath), { recursive: true });
 	try {
@@ -67,6 +76,11 @@ export async function acquireScheduledJobLock(
 					pid: process.pid,
 					host: os.hostname(),
 					startedAt: new Date().toISOString(),
+					...(metadata.runDate ? { runDate: metadata.runDate } : {}),
+					...(Number.isInteger(metadata.totalSources) &&
+					(metadata.totalSources ?? 0) > 0
+						? { totalSources: metadata.totalSources }
+						: {}),
 				})}\n`,
 				"utf8",
 			);
@@ -79,7 +93,7 @@ export async function acquireScheduledJobLock(
 		const stats = await fs.stat(lockPath).catch(() => undefined);
 		if (stats && Date.now() - stats.mtimeMs > staleMs) {
 			await fs.rm(lockPath, { force: true });
-			return acquireScheduledJobLock(lockPath, staleMs);
+			return acquireScheduledJobLock(lockPath, staleMs, metadata);
 		}
 		return undefined;
 	}
@@ -88,8 +102,11 @@ export async function acquireScheduledJobLock(
 export function acquireScheduledJobLockEffect(
 	lockPath: string,
 	staleMs: number,
+	metadata: Pick<ScheduledJobLockMetadata, "runDate" | "totalSources"> = {},
 ): Effect.Effect<(() => Effect.Effect<void>) | undefined, unknown> {
-	return tryPromise(() => acquireScheduledJobLock(lockPath, staleMs)).pipe(
+	return tryPromise(() =>
+		acquireScheduledJobLock(lockPath, staleMs, metadata),
+	).pipe(
 		Effect.map((release) =>
 			release
 				? () =>
@@ -110,9 +127,51 @@ export async function peekScheduledJobLock(
 	lockPath: string,
 	staleMs: number,
 ): Promise<boolean> {
+	return (await peekScheduledJobLockMetadata(lockPath, staleMs)) !== undefined;
+}
+
+export async function peekScheduledJobLockMetadata(
+	lockPath: string,
+	staleMs: number,
+): Promise<ScheduledJobLockMetadata | undefined> {
 	const stats = await fs.stat(lockPath).catch(() => undefined);
-	if (!stats) return false;
-	return Date.now() - stats.mtimeMs <= staleMs;
+	if (!stats || Date.now() - stats.mtimeMs > staleMs) return undefined;
+	const raw = await fs.readFile(lockPath, "utf8").catch(() => undefined);
+	if (raw === undefined) return undefined;
+	try {
+		const parsed = JSON.parse(raw) as Partial<ScheduledJobLockMetadata>;
+		const startedAt = new Date(parsed.startedAt ?? "");
+		if (
+			!Number.isFinite(startedAt.getTime()) ||
+			typeof parsed.host !== "string" ||
+			typeof parsed.pid !== "number" ||
+			!Number.isInteger(parsed.pid)
+		) {
+			throw new Error("invalid scheduled job lock metadata");
+		}
+		return {
+			startedAt: startedAt.toISOString(),
+			host: parsed.host,
+			pid: parsed.pid,
+			...(typeof parsed.runDate === "string" &&
+			/^\d{4}-\d{2}-\d{2}$/.test(parsed.runDate)
+				? { runDate: parsed.runDate }
+				: {}),
+			...(typeof parsed.totalSources === "number" &&
+			Number.isInteger(parsed.totalSources) &&
+			parsed.totalSources > 0
+				? { totalSources: parsed.totalSources }
+				: {}),
+		};
+	} catch {
+		// Older or partially-written locks still represent active work. Their
+		// mtime gives status readers a stable date without mutating the lock.
+		return {
+			startedAt: stats.mtime.toISOString(),
+			host: "unknown",
+			pid: 0,
+		};
+	}
 }
 
 export function peekScheduledJobLockEffect(
@@ -120,4 +179,11 @@ export function peekScheduledJobLockEffect(
 	staleMs: number,
 ): Effect.Effect<boolean, unknown> {
 	return tryPromise(() => peekScheduledJobLock(lockPath, staleMs));
+}
+
+export function peekScheduledJobLockMetadataEffect(
+	lockPath: string,
+	staleMs: number,
+): Effect.Effect<ScheduledJobLockMetadata | undefined, unknown> {
+	return tryPromise(() => peekScheduledJobLockMetadata(lockPath, staleMs));
 }

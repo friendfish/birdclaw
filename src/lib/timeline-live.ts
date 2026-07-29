@@ -4,6 +4,7 @@ import { getNativeDb } from "./db";
 import { runEffectPromise } from "./effect-runtime";
 import { liveTransportGateway } from "./live-transport-gateway";
 import {
+	assertLiveAccountMatches,
 	createLiveTransportAdapter,
 	normalizeCacheTtlMs,
 	resolveLiveSyncAccount,
@@ -244,14 +245,29 @@ export function syncHomeTimelineEffect({
 			maxResults: finiteFallbackLimit,
 			following,
 		});
+		const verifiedFetchViaBird = Effect.gen(function* () {
+			const authenticated =
+				yield* liveTransportGateway.bird.getAuthenticatedAccount();
+			yield* Effect.try({
+				try: () =>
+					assertLiveAccountMatches({
+						source: "bird",
+						account: resolvedAccount,
+						liveUsername: authenticated.username,
+						liveExternalUserId: authenticated.id,
+					}),
+				catch: (error) => error,
+			});
+			return yield* fetchViaBird;
+		});
 		const transports =
 			effectiveMode === "xurl"
 				? [createLiveTransportAdapter("xurl", fetchViaXurl)]
 				: effectiveMode === "bird"
-					? [createLiveTransportAdapter("bird", fetchViaBird)]
+					? [createLiveTransportAdapter("bird", verifiedFetchViaBird)]
 					: [
 							createLiveTransportAdapter("xurl", fetchViaXurl),
-							createLiveTransportAdapter("bird", fetchViaBird),
+							createLiveTransportAdapter("bird", verifiedFetchViaBird),
 						];
 		const syncResult = yield* runCachedLiveSyncEffect({
 			db,

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { fetchJson } from "#/lib/api-client";
 import { queryKeys } from "#/lib/query-client";
@@ -44,6 +45,7 @@ export interface DigestArchiveDateOption {
 export function useDigestArchiveDates(
 	period: PeriodRouteSearch,
 	enabled: boolean,
+	running = false,
 ) {
 	return useQuery({
 		queryKey: [...queryKeys.digestArchiveDates, period],
@@ -55,6 +57,7 @@ export function useDigestArchiveDates(
 				"Failed to load archived dates",
 			),
 		enabled,
+		refetchInterval: running ? 2_000 : false,
 	});
 }
 
@@ -63,15 +66,46 @@ export function useReadOnlyDigest({
 	contentSource,
 	archiveDate,
 	enabled,
+	running = false,
+	activeRunDate,
 }: {
 	period: PeriodRouteSearch;
 	contentSource: PeriodDigestContentSource;
 	archiveDate: string;
 	enabled: boolean;
+	running?: boolean;
+	activeRunDate?: string;
 }) {
-	const datesQuery = useDigestArchiveDates(period, enabled);
+	const previousRunRef = useRef({ period, running: false });
+	const lastActiveRunRef = useRef<
+		{ period: PeriodRouteSearch; runDate: string } | undefined
+	>(undefined);
+	const [finalizingState, setFinalizingState] = useState({
+		period,
+		active: false,
+	});
+	const previousRun = previousRunRef.current;
+	const finishingTransition =
+		previousRun.period === period && previousRun.running && !running;
+	const finalizing =
+		finalizingState.period === period && finalizingState.active;
+	const polling = running || finalizing || finishingTransition;
+	const datesQuery = useDigestArchiveDates(period, enabled, polling);
 	const dates = (datesQuery.data?.dates ?? []) as DigestArchiveDateOption[];
-	const effectiveDate = archiveDate || dates[0]?.date;
+	const currentRunDate =
+		activeRunDate ||
+		(polling && lastActiveRunRef.current?.period === period
+			? lastActiveRunRef.current.runDate
+			: undefined);
+	const effectiveDate = archiveDate || currentRunDate || dates[0]?.date;
+	const currentRunDateOption = dates.find(
+		(option) => option.date === currentRunDate,
+	);
+	const completedSources = currentRunDateOption?.contentSources.length ?? 0;
+	const viewingActiveRun = Boolean(
+		currentRunDate && effectiveDate === currentRunDate,
+	);
+	const activeRunInProgress = polling && viewingActiveRun;
 
 	const entryQuery = useQuery({
 		queryKey: [
@@ -88,7 +122,41 @@ export function useReadOnlyDigest({
 				"Failed to load archived digest",
 			),
 		enabled: enabled && Boolean(effectiveDate),
+		refetchInterval: activeRunInProgress ? 2_000 : false,
 	});
+
+	useEffect(() => {
+		if (running && activeRunDate) {
+			lastActiveRunRef.current = { period, runDate: activeRunDate };
+		}
+	}, [activeRunDate, period, running]);
+
+	useEffect(() => {
+		const previous = previousRunRef.current;
+		previousRunRef.current = { period, running };
+		if (previous.period !== period) {
+			setFinalizingState({ period, active: false });
+			return;
+		}
+		if (!previous.running || running) return;
+
+		let cancelled = false;
+		setFinalizingState({ period, active: true });
+		const refetches: Promise<unknown>[] = [datesQuery.refetch()];
+		if (viewingActiveRun) refetches.push(entryQuery.refetch());
+		void Promise.all(refetches).finally(() => {
+			if (!cancelled) setFinalizingState({ period, active: false });
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [
+		datesQuery.refetch,
+		entryQuery.refetch,
+		period,
+		running,
+		viewingActiveRun,
+	]);
 
 	const result = (entryQuery.data?.result ??
 		null) as PeriodDigestRunResult | null;
@@ -113,6 +181,10 @@ export function useReadOnlyDigest({
 		retry,
 		dates,
 		effectiveDate,
+		completedSources,
+		sourcePending: activeRunInProgress && !result,
+		activeRunInProgress,
+		finalizing: finalizing || finishingTransition,
 		// Distinguishes "this period has never been archived at all" (no
 		// dates exist yet) from "this date exists but this content source
 		// wasn't archived that day" (dates exist, but the fetched entry for
