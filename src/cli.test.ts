@@ -71,6 +71,10 @@ const maybeAutoSyncBackupMock = vi.fn();
 const runAccountSyncJobMock = vi.hoisted(() => vi.fn());
 const installAccountSyncLaunchAgentMock = vi.hoisted(() => vi.fn());
 const parseAccountSyncStepsMock = vi.hoisted(() => vi.fn());
+const runBookmarkSyncJobMock = vi.hoisted(() => vi.fn());
+const installBookmarkSyncLaunchAgentMock = vi.hoisted(() => vi.fn());
+const syncHomeTimelineMock = vi.hoisted(() => vi.fn());
+const syncXListsMock = vi.hoisted(() => vi.fn());
 const exportBackupMock = vi.fn();
 const importBackupMock = vi.fn();
 const syncBackupMock = vi.fn();
@@ -113,6 +117,12 @@ vi.mock("#/lib/account-sync-job", () => ({
 		installAccountSyncLaunchAgentMock(...args),
 	parseAccountSyncSteps: (...args: unknown[]) =>
 		parseAccountSyncStepsMock(...args),
+}));
+
+vi.mock("#/lib/bookmark-sync-job", () => ({
+	runBookmarkSyncJob: (...args: unknown[]) => runBookmarkSyncJobMock(...args),
+	installBookmarkSyncLaunchAgent: (...args: unknown[]) =>
+		installBookmarkSyncLaunchAgentMock(...args),
 }));
 
 vi.mock("#/lib/db", () => ({
@@ -319,6 +329,14 @@ vi.mock("#/lib/timeline-collections-live", () => ({
 		syncTimelineCollectionMock(...args),
 }));
 
+vi.mock("#/lib/timeline-live", () => ({
+	syncHomeTimeline: (...args: unknown[]) => syncHomeTimelineMock(...args),
+}));
+
+vi.mock("#/lib/x-lists", () => ({
+	syncXLists: (...args: unknown[]) => syncXListsMock(...args),
+}));
+
 vi.mock("#/lib/url-expansion", () => ({
 	expandUrlsFromTexts: (...args: unknown[]) => expandUrlsFromTextsMock(...args),
 }));
@@ -410,6 +428,10 @@ describe("cli", () => {
 		runAccountSyncJobMock.mockReset();
 		installAccountSyncLaunchAgentMock.mockReset();
 		parseAccountSyncStepsMock.mockReset();
+		runBookmarkSyncJobMock.mockReset();
+		installBookmarkSyncLaunchAgentMock.mockReset();
+		syncHomeTimelineMock.mockReset();
+		syncXListsMock.mockReset();
 		exportBackupMock.mockReset();
 		importBackupMock.mockReset();
 		syncBackupMock.mockReset();
@@ -657,6 +679,14 @@ describe("cli", () => {
 		runAccountSyncJobMock.mockResolvedValue({ ok: true });
 		installAccountSyncLaunchAgentMock.mockResolvedValue({ ok: true });
 		parseAccountSyncStepsMock.mockReturnValue(undefined);
+		runBookmarkSyncJobMock.mockResolvedValue({ ok: true });
+		installBookmarkSyncLaunchAgentMock.mockResolvedValue({ ok: true });
+		syncHomeTimelineMock.mockResolvedValue({
+			ok: true,
+			source: "bird",
+			count: 1,
+		});
+		syncXListsMock.mockResolvedValue({ ok: true, source: "bird", count: 1 });
 		exportBackupMock.mockResolvedValue({ ok: true, exported: 1 });
 		importBackupMock.mockResolvedValue({ ok: true, imported: 1 });
 		syncBackupMock.mockResolvedValue({ ok: true, synced: true });
@@ -741,6 +771,101 @@ describe("cli", () => {
 				expect.objectContaining({ mode }),
 			);
 		}
+	});
+
+	it("forwards bookmark job mode only when explicitly selected", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "jobs", "sync-bookmarks"]);
+		expect(runBookmarkSyncJobMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ mode: undefined }),
+		);
+
+		await runCli(["node", "birdclaw", "jobs", "install-bookmarks-launchd"]);
+		expect(installBookmarkSyncLaunchAgentMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ mode: undefined }),
+		);
+
+		for (const mode of ["auto", "xurl", "bird"]) {
+			await runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"sync-bookmarks",
+				"--mode",
+				mode,
+			]);
+			expect(runBookmarkSyncJobMock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ mode }),
+			);
+
+			await runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"install-bookmarks-launchd",
+				"--mode",
+				mode,
+			]);
+			expect(installBookmarkSyncLaunchAgentMock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ mode }),
+			);
+		}
+	});
+
+	it("resolves omitted sync command modes through the live-read policy", async () => {
+		resolveLiveReadModeMock.mockReturnValue("bird");
+		syncMentionsMock.mockResolvedValue({
+			ok: true,
+			source: "bird",
+			kind: "mentions",
+			count: 1,
+			partial: false,
+		});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "sync", "lists"]);
+		await runCli(["node", "birdclaw", "sync", "timeline"]);
+		await runCli(["node", "birdclaw", "sync", "mentions"]);
+		await runCli(["node", "birdclaw", "sync", "bookmarks"]);
+		await runCli(["node", "birdclaw", "sync", "followers"]);
+
+		expect(syncXListsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncHomeTimelineMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncMentionsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncTimelineCollectionMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncFollowGraphMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+	});
+
+	it("reports the resolved sync mode when an omitted mode fails", async () => {
+		resolveLiveReadModeMock.mockReturnValue("bird");
+		syncMentionsMock.mockRejectedValueOnce(new Error("bird unavailable"));
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "sync", "mentions"]);
+
+		expect(consoleLogMock).toHaveBeenCalledWith(
+			JSON.stringify(
+				{
+					ok: false,
+					kind: "mentions",
+					mode: "bird",
+					error: "bird unavailable",
+				},
+				null,
+				2,
+			),
+		);
 	});
 
 	it("seeds and explains an offline demo only when requested", async () => {
@@ -2181,7 +2306,7 @@ describe("cli", () => {
 		expect(syncFollowGraphMock).toHaveBeenNthCalledWith(1, {
 			direction: "followers",
 			account: undefined,
-			mode: "auto",
+			mode: "bird",
 			limit: 1000,
 			maxPages: undefined,
 			maxResources: undefined,

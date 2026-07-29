@@ -14,7 +14,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./config", () => ({
 	getBirdclawConfig: () => mocks.getBirdclawConfig(),
-	resolveMentionsDataSource: () => mocks.resolveMentionsDataSource(),
+	resolveMentionsDataSource: (...args: unknown[]) =>
+		mocks.resolveMentionsDataSource(...args),
 }));
 
 vi.mock("./period-digest", () => ({
@@ -94,6 +95,31 @@ describe("digest archive pre-sync", () => {
 
 	afterEach(() => {
 		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	});
+
+	it("honors environment-resolved Bird over an xurl config", async () => {
+		mocks.getBirdclawConfig.mockReturnValue({
+			mentions: { dataSource: "xurl" },
+		});
+		mocks.resolveMentionsDataSource.mockReturnValue("bird");
+
+		await runEffectPromise(
+			runDigestArchivePreSyncEffect({
+				period: "yesterday",
+				contentSources: ["all"],
+				liveSync: true,
+			}),
+		);
+
+		expect(mocks.syncHomeTimelineEffect).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird", following: true }),
+		);
+		expect(mocks.syncMentionsEffect).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(mocks.syncMentionThreadsEffect).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
 	});
 
 	it("syncs each required input once and in a stable order", async () => {

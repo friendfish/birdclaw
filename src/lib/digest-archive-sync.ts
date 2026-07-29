@@ -72,7 +72,9 @@ function durableErrorMessage(error: unknown) {
 
 function configuredTransport(): DigestArchiveSyncTransport {
 	const source = resolveMentionsDataSource();
-	return source === "birdclaw" ? "local" : source;
+	return source === "bird" || source === "xurl" || source === "auto"
+		? source
+		: "local";
 }
 
 function floorIsoToHour(value: string) {
