@@ -2282,6 +2282,48 @@ describe("cli", () => {
 		);
 	});
 
+	it("rejects invalid DM list modes before refreshing or listing", async () => {
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"dms",
+			"list",
+			"--refresh",
+			"--mode",
+			"invalid",
+		]);
+
+		expect(process.exitCode).toBe(1);
+		expect(consoleErrorMock).toHaveBeenCalledWith(
+			expect.stringContaining("--mode must be auto, bird, or xurl"),
+		);
+		expect(syncDirectMessagesViaCachedBirdMock).not.toHaveBeenCalled();
+		expect(listDmConversationsMock).not.toHaveBeenCalled();
+		consoleErrorMock.mockRestore();
+	});
+
+	it("rejects invalid DM sync modes before syncing", async () => {
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "dms", "sync", "--mode", "invalid"]);
+
+		expect(process.exitCode).toBe(1);
+		expect(consoleErrorMock).toHaveBeenCalledWith(
+			expect.stringContaining("--mode must be auto, bird, or xurl"),
+		);
+		expect(syncDirectMessagesViaCachedBirdMock).not.toHaveBeenCalled();
+		expect(listDmConversationsMock).not.toHaveBeenCalled();
+		consoleErrorMock.mockRestore();
+	});
+
 	it("updates local DM request state after live mutations", async () => {
 		const { runCli } = await loadCli();
 

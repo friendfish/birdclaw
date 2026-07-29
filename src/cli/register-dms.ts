@@ -62,6 +62,7 @@ export function registerDirectMessageCommands({
 					: "all";
 			const inbox = parseDmInboxOption(options.inbox);
 			const mode = parseDmSyncModeOption(options.mode);
+			if (options.mode !== undefined && mode === undefined) return;
 			const maxPages = parseNonNegativeIntegerOption(
 				options.maxPages,
 				"--max-pages",
@@ -145,6 +146,7 @@ export function registerDirectMessageCommands({
 		.action(async (options) => {
 			const inbox = parseDmInboxOption(options.inbox);
 			const mode = parseDmSyncModeOption(options.mode);
+			if (options.mode !== undefined && mode === undefined) return;
 			const maxPages = parseNonNegativeIntegerOption(
 				options.maxPages,
 				"--max-pages",
