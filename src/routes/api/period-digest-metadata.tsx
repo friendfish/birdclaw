@@ -16,6 +16,7 @@ import {
 	type PeriodDigestRunResult,
 } from "#/lib/period-digest";
 import { parsePeriodDigestRequestOptions } from "#/lib/period-digest-request";
+import { resolveEffectivePrompt } from "#/lib/prompt-templates";
 import { readSyncCache } from "#/lib/sync-cache";
 
 export const Route = createFileRoute("/api/period-digest-metadata")({
@@ -29,6 +30,7 @@ export const Route = createFileRoute("/api/period-digest-metadata")({
 
 						const url = new URL(request.url);
 						const options = parsePeriodDigestRequestOptions(url);
+						const effectivePrompt = resolveEffectivePrompt("period-digest");
 						const registryKey = periodDigestRegistryKey(options);
 
 						const registry = activePeriodDigestsRegistry();
@@ -39,7 +41,10 @@ export const Route = createFileRoute("/api/period-digest-metadata")({
 						// embeds the *current* model/language/reasoningEffort/
 						// serviceTier config, matching how streamPeriodDigestEffect
 						// itself keys the "latest" sync_cache row it writes.
-						const resultCacheKey = latestDigestCacheKey(options);
+						const resultCacheKey = latestDigestCacheKey(
+							options,
+							effectivePrompt.promptHash,
+						);
 						const cached =
 							readSyncCache<CachedPeriodDigestValue>(resultCacheKey);
 						const cachedUpdatedAt =
@@ -58,6 +63,7 @@ export const Route = createFileRoute("/api/period-digest-metadata")({
 										model: cached.value.model,
 										reasoningEffort: cached.value.reasoningEffort,
 										serviceTier: cached.value.serviceTier,
+										parseStatus: cached.value.parseStatus,
 										cached: true,
 										updatedAt: cachedUpdatedAt ?? cached.updatedAt,
 									}

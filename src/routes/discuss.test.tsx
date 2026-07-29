@@ -74,6 +74,7 @@ function discussionResult(markdown: string) {
 		model: "gpt-5.5",
 		reasoningEffort: "medium",
 		serviceTier: "priority",
+		parseStatus: "structured" as const,
 		cached: false,
 		updatedAt: "2026-05-23T08:20:00.000Z",
 	};

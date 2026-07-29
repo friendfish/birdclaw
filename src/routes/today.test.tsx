@@ -102,6 +102,7 @@ function digestResult(label: string, markdown: string, includeDms = false) {
 		model: "gpt-5.5",
 		reasoningEffort: "medium",
 		serviceTier: "priority",
+		parseStatus: "structured" as const,
 		cached: false,
 		updatedAt: "2026-05-16T12:00:00.000Z",
 	};
@@ -816,6 +817,95 @@ describe("today route", () => {
 			expect(
 				await screen.findByText(/hasn't run on a schedule yet/i),
 			).toBeInTheDocument();
+		});
+
+		it("polls an active archive run and replaces the pending source automatically", async () => {
+			let datesCalls = 0;
+			let entryCalls = 0;
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [
+							{
+								source: "bird",
+								label: "bird",
+								works: true,
+								status: "ok",
+								detail: "ready",
+								accounts: [],
+							},
+						],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({
+						ok: true,
+						runningPeriods: ["yesterday"],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					datesCalls += 1;
+					return jsonResponse({
+						ok: true,
+						dates: [
+							{
+								date: "2026-07-29",
+								contentSources: datesCalls === 1 ? ["all"] : ["all", "for_you"],
+							},
+						],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-entry") {
+					entryCalls += 1;
+					return jsonResponse({
+						ok: true,
+						result:
+							entryCalls === 1
+								? null
+								: digestResult(
+										"Yesterday For You",
+										"# Scheduled For You is ready",
+									),
+					});
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(
+				<TodayRoute
+					searchState={{
+						period: "yesterday",
+						includeDms: false,
+						contentSource: "for_you",
+						archiveDate: "",
+					}}
+				/>,
+			);
+
+			expect(
+				await screen.findByText("Generating scheduled digest 1/3"),
+			).toBeInTheDocument();
+			expect(
+				screen.getByText("This source is still being generated."),
+			).toBeInTheDocument();
+			expect(screen.queryByText(/^Ready/)).toBeNull();
+			expect(
+				screen.queryByText(/No archived .*digest for this date/i),
+			).toBeNull();
+
+			expect(
+				await screen.findByRole(
+					"heading",
+					{ name: "Scheduled For You is ready", level: 1 },
+					{ timeout: 4_000 },
+				),
+			).toBeInTheDocument();
+			expect(datesCalls).toBeGreaterThanOrEqual(2);
+			expect(entryCalls).toBeGreaterThanOrEqual(2);
 		});
 
 		it("disables Today's refresh button while a scheduled archive job holds the lock", async () => {

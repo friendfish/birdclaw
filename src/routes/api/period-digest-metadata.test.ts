@@ -1,9 +1,14 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getRouteHandler } from "#/test/route-handlers";
 
 vi.mock("#/lib/config", () => ({
 	getBirdclawConfig: () => ({}),
+}));
+
+const resolveEffectivePromptMock = vi.hoisted(() => vi.fn());
+vi.mock("#/lib/prompt-templates", () => ({
+	resolveEffectivePrompt: () => resolveEffectivePromptMock(),
 }));
 
 const readSyncCacheMock = vi.fn();
@@ -14,8 +19,10 @@ vi.mock("#/lib/sync-cache", () => ({
 const isFreshDigestCacheMock = vi.fn();
 vi.mock("#/lib/period-digest", () => ({
 	normalizeDigestLanguage: (value: string | undefined) => value,
-	latestDigestCacheKey: (options: Record<string, unknown>) =>
-		`period-digest-latest:test:${JSON.stringify(options)}`,
+	latestDigestCacheKey: (
+		options: Record<string, unknown>,
+		promptHash: string,
+	) => `period-digest-latest:test:${promptHash}:${JSON.stringify(options)}`,
 	periodDigestGenerationKey: (options: Record<string, unknown>) =>
 		`period-digest-generation:test:${JSON.stringify(options)}`,
 	isFreshDigestCache: (...args: unknown[]) => isFreshDigestCacheMock(...args),
@@ -44,6 +51,11 @@ const baseParams = {
 };
 
 describe("api period-digest-metadata route", () => {
+	beforeEach(() => {
+		resolveEffectivePromptMock.mockReset();
+		resolveEffectivePromptMock.mockReturnValue({ promptHash: "prompt_hash" });
+	});
+
 	afterEach(() => {
 		activePeriodDigestsRegistry().clear();
 		readSyncCacheMock.mockReset();
@@ -91,6 +103,7 @@ describe("api period-digest-metadata route", () => {
 				model: "gpt-5.5",
 				reasoningEffort: "medium",
 				serviceTier: "priority",
+				parseStatus: "structured",
 				updatedAt: "2026-07-27T08:00:00.000Z",
 			},
 			updatedAt: "2026-07-27T08:00:00.000Z",
@@ -110,6 +123,7 @@ describe("api period-digest-metadata route", () => {
 				model: "gpt-5.5",
 				reasoningEffort: "medium",
 				serviceTier: "priority",
+				parseStatus: "structured",
 				cached: true,
 				updatedAt: "2026-07-27T08:00:00.000Z",
 			},
@@ -125,6 +139,7 @@ describe("api period-digest-metadata route", () => {
 				model: "gpt-5.5",
 				reasoningEffort: "medium",
 				serviceTier: "priority",
+				parseStatus: "structured",
 				updatedAt: "2020-01-01T00:00:00.000Z",
 			},
 			updatedAt: "2020-01-01T00:00:00.000Z",
@@ -152,5 +167,23 @@ describe("api period-digest-metadata route", () => {
 			activeStatus: null,
 			result: null,
 		});
+	});
+
+	it("does not return a cache row stored under an older prompt hash", async () => {
+		resolveEffectivePromptMock.mockReturnValue({
+			promptHash: "new_prompt_hash",
+		});
+		readSyncCacheMock.mockImplementation((key: string) =>
+			key.includes("old_prompt_hash")
+				? { value: { markdown: "# Old" }, updatedAt: "2026-07-27" }
+				: null,
+		);
+
+		const response = await GET({ request: requestFor(baseParams) });
+
+		expect(readSyncCacheMock).toHaveBeenCalledWith(
+			expect.stringContaining("new_prompt_hash"),
+		);
+		expect(await response.json()).toMatchObject({ result: null });
 	});
 });

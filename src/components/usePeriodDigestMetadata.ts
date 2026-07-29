@@ -24,6 +24,7 @@ const periodDigestMetadataResponseSchema = z.object({
 			model: z.string(),
 			reasoningEffort: z.string(),
 			serviceTier: z.string(),
+			parseStatus: z.enum(["structured", "fallback"]),
 			cached: z.boolean(),
 			updatedAt: z.string(),
 		})

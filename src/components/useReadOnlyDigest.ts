@@ -44,6 +44,7 @@ export interface DigestArchiveDateOption {
 export function useDigestArchiveDates(
 	period: PeriodRouteSearch,
 	enabled: boolean,
+	running = false,
 ) {
 	return useQuery({
 		queryKey: [...queryKeys.digestArchiveDates, period],
@@ -55,6 +56,7 @@ export function useDigestArchiveDates(
 				"Failed to load archived dates",
 			),
 		enabled,
+		refetchInterval: running ? 2_000 : false,
 	});
 }
 
@@ -63,15 +65,21 @@ export function useReadOnlyDigest({
 	contentSource,
 	archiveDate,
 	enabled,
+	running = false,
 }: {
 	period: PeriodRouteSearch;
 	contentSource: PeriodDigestContentSource;
 	archiveDate: string;
 	enabled: boolean;
+	running?: boolean;
 }) {
-	const datesQuery = useDigestArchiveDates(period, enabled);
+	const datesQuery = useDigestArchiveDates(period, enabled, running);
 	const dates = (datesQuery.data?.dates ?? []) as DigestArchiveDateOption[];
 	const effectiveDate = archiveDate || dates[0]?.date;
+	const effectiveDateOption = dates.find(
+		(option) => option.date === effectiveDate,
+	);
+	const completedSources = effectiveDateOption?.contentSources.length ?? 0;
 
 	const entryQuery = useQuery({
 		queryKey: [
@@ -88,6 +96,7 @@ export function useReadOnlyDigest({
 				"Failed to load archived digest",
 			),
 		enabled: enabled && Boolean(effectiveDate),
+		refetchInterval: running ? 2_000 : false,
 	});
 
 	const result = (entryQuery.data?.result ??
@@ -113,6 +122,8 @@ export function useReadOnlyDigest({
 		retry,
 		dates,
 		effectiveDate,
+		completedSources,
+		sourcePending: running && !result,
 		// Distinguishes "this period has never been archived at all" (no
 		// dates exist yet) from "this date exists but this content source
 		// wasn't archived that day" (dates exist, but the fetched entry for

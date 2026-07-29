@@ -17,6 +17,16 @@ import {
 	processOpenAIResponseSseChunk,
 } from "./openai-response-runtime";
 import { parseJsonField } from "./query-read-model-shared";
+import {
+	type EffectivePrompt,
+	materializeEffectivePrompt,
+	PROMPT_TEMPLATE_DEFINITIONS,
+	resolveEffectivePrompt,
+} from "./prompt-templates";
+import type {
+	PlaygroundResultBase,
+	PlaygroundStreamHandlers,
+} from "./prompt-playground";
 import { listTimelineItems } from "./timeline-read-model";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
 import {
@@ -130,6 +140,7 @@ export interface SearchDiscussionRunResult {
 	model: string;
 	reasoningEffort: string;
 	serviceTier: string;
+	parseStatus: "structured" | "fallback";
 	cached: boolean;
 	updatedAt: string;
 }
@@ -139,6 +150,21 @@ export type SearchDiscussionStreamEvent =
 	| { type: "delta"; delta: string }
 	| { type: "done"; result: SearchDiscussionRunResult }
 	| { type: "error"; error: string };
+
+export interface SearchDiscussionPlaygroundOptions {
+	query: string;
+	account?: string;
+	source?: SearchDiscussionSource;
+	includeDms?: boolean;
+	question?: string;
+	system: string;
+	requirements: string;
+	signal?: AbortSignal;
+}
+
+export interface SearchDiscussionPlaygroundResult extends PlaygroundResultBase {
+	discussion: SearchDiscussion;
+}
 
 const DEFAULT_LIMIT = 20_000;
 const DEFAULT_MAX_PAGES = 200;
@@ -532,9 +558,11 @@ function serviceTierFromOptions(options: SearchDiscussionOptions) {
 function cacheKey(
 	context: SearchDiscussionContext,
 	options: SearchDiscussionOptions,
+	promptHash: string,
 ) {
 	return [
 		"search-discussion:v1",
+		promptHash,
 		modelFromOptions(options),
 		reasoningEffortFromOptions(options),
 		serviceTierFromOptions(options),
@@ -542,7 +570,10 @@ function cacheKey(
 	].join(":");
 }
 
-function buildPrompt(context: SearchDiscussionContext) {
+function buildPrompt(
+	context: SearchDiscussionContext,
+	effectivePrompt: EffectivePrompt,
+) {
 	const promptTweets = context.tweets.map((tweet) => ({
 		id: tweet.id,
 		url: tweet.url,
@@ -611,16 +642,7 @@ Prompt tweets: ${String(tweetCount)} of ${String(context.tweets.length)} selecte
 Write a high-signal Markdown discussion from this local Twitter/X search result set.
 
 Requirements:
-- Start with a concise summary of what the matching posts are really about.
-- Then write sections named "Themes", "Discussion", and "Follow-ups".
-- Use bullets when grouping multiple points.
-- Compare agreement, disagreement, shifts over time, and recurring people or links when visible.
-- Cite claims with tweet ids or DM conversation ids at the end of the sentence, e.g. (tweet_123) or (dm_456).
-- DMs are private context and only present when explicitly included; do not quote private text at length.
-- If there is no data, say that plainly in one short paragraph.
-- After the Markdown, output a blank line, then a line containing only three hyphens, then one compact JSON object.
-- Put every cited tweet id in sourceTweetIds and every cited DM conversation id in sourceDmConversationIds.
-- JSON shape: { "title": string, "summary": string, "themes": [{ "title": string, "summary": string, "tweetIds": string[], "dmConversationIds": string[], "handles": string[] }], "tensions": string[], "followUps": string[], "sourceTweetIds": string[], "sourceDmConversationIds": string[] }
+${effectivePrompt.requirements}
 
 Dataset:
 ${JSON.stringify(dataset)}`;
@@ -646,14 +668,22 @@ function fallbackDiscussion(
 function parseDiscussionFromHybridText(
 	context: SearchDiscussionContext,
 	rawText: string,
-): { discussion: SearchDiscussion; markdown: string } {
+): {
+	discussion: SearchDiscussion;
+	markdown: string;
+	parseStatus: "structured" | "fallback";
+} {
 	const parsed = parseHybridAnalysis({
 		rawText,
 		parse: (value) => SearchDiscussionSchema.parse(value),
 		fallback: (markdown) => fallbackDiscussion(context, markdown),
 		delimiterPattern: DELIMITER_PATTERN,
 	});
-	return { markdown: parsed.markdown, discussion: parsed.value };
+	return {
+		markdown: parsed.markdown,
+		discussion: parsed.value,
+		parseStatus: parsed.parseStatus,
+	};
 }
 
 function processSseChunk(
@@ -673,12 +703,12 @@ function processSseChunk(
 function createOpenAIRequestBody(
 	context: SearchDiscussionContext,
 	options: SearchDiscussionOptions,
+	effectivePrompt: EffectivePrompt,
 ) {
 	return createAnalysisRequestBody({
 		settings: resolveAnalysisModelSettings(options),
-		system:
-			"You are a precise local Twitter archive analyst. Stream Markdown first, then emit the requested JSON object after the delimiter. Do not invent events not present in the dataset.",
-		prompt: buildPrompt(context),
+		system: effectivePrompt.system,
+		prompt: buildPrompt(context, effectivePrompt),
 		stream: true,
 	});
 }
@@ -687,18 +717,29 @@ function completeOpenAIStreamEffect(
 	stream: HybridAnalysisResult<SearchDiscussion>,
 	context: SearchDiscussionContext,
 	options: SearchDiscussionOptions,
+	effectivePrompt: EffectivePrompt,
 	handlers: SearchDiscussionStreamHandlers,
 ): Effect.Effect<SearchDiscussionRunResult, Error> {
 	return Effect.gen(function* () {
 		const updatedAt = yield* trySearchSync(() =>
-			writeSyncCache(cacheKey(context, options), {
+			writeSyncCache(cacheKey(context, options, effectivePrompt.promptHash), {
 				discussion: stream.value,
 				markdown: stream.markdown,
 				model: modelFromOptions(options),
 				reasoningEffort: reasoningEffortFromOptions(options),
 				serviceTier: serviceTierFromOptions(options),
+				parseStatus: stream.parseStatus,
 				usage: stream.usage,
 				responseId: stream.responseId,
+			} satisfies {
+				discussion: SearchDiscussion;
+				markdown: string;
+				model: string;
+				reasoningEffort: string;
+				serviceTier: string;
+				parseStatus: "structured" | "fallback";
+				usage?: unknown;
+				responseId?: string;
 			}),
 		);
 		const result = {
@@ -708,6 +749,7 @@ function completeOpenAIStreamEffect(
 			model: modelFromOptions(options),
 			reasoningEffort: reasoningEffortFromOptions(options),
 			serviceTier: serviceTierFromOptions(options),
+			parseStatus: stream.parseStatus,
 			cached: false,
 			updatedAt,
 		};
@@ -721,6 +763,9 @@ export function streamSearchDiscussionEffect(
 	handlers: SearchDiscussionStreamHandlers = {},
 ): Effect.Effect<SearchDiscussionRunResult, Error> {
 	return Effect.gen(function* () {
+		const effectivePrompt = yield* trySearchSync(() =>
+			resolveEffectivePrompt("search-discussion"),
+		);
 		const mode = options.mode ?? "auto";
 		const liveSearch =
 			mode === "local"
@@ -762,7 +807,8 @@ export function streamSearchDiscussionEffect(
 						model: string;
 						reasoningEffort: string;
 						serviceTier: string;
-					}>(cacheKey(context, options)),
+						parseStatus: "structured" | "fallback";
+					}>(cacheKey(context, options, effectivePrompt.promptHash)),
 				);
 		if (cached) {
 			const result: SearchDiscussionRunResult = yield* trySearchSync(() => ({
@@ -772,6 +818,7 @@ export function streamSearchDiscussionEffect(
 				model: cached.value.model,
 				reasoningEffort: cached.value.reasoningEffort,
 				serviceTier: cached.value.serviceTier,
+				parseStatus: cached.value.parseStatus,
 				cached: true,
 				updatedAt: cached.updatedAt,
 			}));
@@ -784,7 +831,7 @@ export function streamSearchDiscussionEffect(
 
 		handlers.onEvent?.({ type: "start", context, cached: false });
 		const stream = yield* streamHybridAnalysisEffect({
-			body: createOpenAIRequestBody(context, options),
+			body: createOpenAIRequestBody(context, options, effectivePrompt),
 			signal: options.signal,
 			parse: (value) => SearchDiscussionSchema.parse(value),
 			fallback: (markdown) => fallbackDiscussion(context, markdown),
@@ -798,6 +845,7 @@ export function streamSearchDiscussionEffect(
 			stream,
 			context,
 			options,
+			effectivePrompt,
 			handlers,
 		);
 	});
@@ -810,9 +858,71 @@ export function streamSearchDiscussion(
 	return runEffectPromise(streamSearchDiscussionEffect(options, handlers));
 }
 
+export function streamSearchDiscussionPlaygroundEffect(
+	options: SearchDiscussionPlaygroundOptions,
+	handlers: PlaygroundStreamHandlers<SearchDiscussionPlaygroundResult> = {},
+): Effect.Effect<SearchDiscussionPlaygroundResult, Error> {
+	return Effect.gen(function* () {
+		const effectivePrompt = yield* trySearchSync(() =>
+			materializeEffectivePrompt(
+				{ system: options.system, requirements: options.requirements },
+				PROMPT_TEMPLATE_DEFINITIONS["search-discussion"].protocol,
+			),
+		);
+		const runOptions: SearchDiscussionOptions = {
+			query: options.query,
+			account: options.account,
+			source: options.source ?? "search",
+			includeDms: options.includeDms,
+			question: options.question,
+			mode: "local",
+			prefetchAvatars: false,
+			signal: options.signal,
+		};
+		const context = yield* trySearchSync(() =>
+			collectSearchDiscussionContext({ ...runOptions, liveSearch: undefined }),
+		);
+		if (context.tweets.length === 0 && context.dms.length === 0) {
+			return yield* Effect.fail(
+				new Error("本地数据为空：没有找到与查询匹配的推文或私信。"),
+			);
+		}
+		const stream = yield* streamHybridAnalysisEffect({
+			body: createOpenAIRequestBody(context, runOptions, effectivePrompt),
+			signal: options.signal,
+			parse: (value) => SearchDiscussionSchema.parse(value),
+			fallback: (markdown) => fallbackDiscussion(context, markdown),
+			delimiterPattern: DELIMITER_PATTERN,
+			onDelta: (delta) => {
+				handlers.onDelta?.(delta);
+				handlers.onEvent?.({ type: "delta", delta });
+			},
+		});
+		const result: SearchDiscussionPlaygroundResult = {
+			markdown: stream.markdown,
+			discussion: stream.value,
+			parseStatus: stream.parseStatus,
+			generatedAt: new Date().toISOString(),
+		};
+		handlers.onEvent?.({ type: "done", result });
+		return result;
+	});
+}
+
+export function streamSearchDiscussionPlayground(
+	options: SearchDiscussionPlaygroundOptions,
+	handlers: PlaygroundStreamHandlers<SearchDiscussionPlaygroundResult> = {},
+) {
+	return runEffectPromise(
+		streamSearchDiscussionPlaygroundEffect(options, handlers),
+	);
+}
+
 export const __test__ = {
 	SearchDiscussionSchema,
 	buildPrompt,
+	cacheKey,
+	createOpenAIRequestBody,
 	parseDiscussionFromHybridText,
 	processSseChunk,
 };

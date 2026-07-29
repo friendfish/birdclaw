@@ -40,6 +40,7 @@ describe("api profile analysis route", () => {
 						model: "gpt-5.5",
 						cached: false,
 						serviceTier: "priority",
+						parseStatus: "structured",
 						context: {
 							handle: "alice",
 							profile: { handle: "alice" },
@@ -80,7 +81,8 @@ describe("api profile analysis route", () => {
 				maxConversations: 3,
 				maxConversationPages: 2,
 				account: undefined,
-				signal: expect.any(AbortSignal),
+				language: undefined,
+				signal: undefined,
 			},
 			expect.objectContaining({ onEvent: expect.any(Function) }),
 		);

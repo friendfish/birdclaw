@@ -58,6 +58,7 @@ const runResultSchema = <T extends z.ZodType>(context: T) =>
 		context,
 		markdown: z.string(),
 		cached: z.boolean(),
+		parseStatus: z.enum(["structured", "fallback"]),
 	});
 
 export const periodDigestStreamEventSchema = z.discriminatedUnion("type", [

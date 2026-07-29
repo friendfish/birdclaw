@@ -6,7 +6,11 @@ import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
-import { streamProfileAnalysis } from "./profile-analysis";
+import {
+	runProfileAnalysisPlayground,
+	streamProfileAnalysis,
+} from "./profile-analysis";
+import { resolveEffectivePrompt } from "./prompt-templates";
 import { listTimelineItems } from "./queries";
 
 const mocks = vi.hoisted(() => ({
@@ -200,6 +204,49 @@ describe("profile analysis", () => {
 		expect(cached.cached).toBe(true);
 		expect(mocks.listUserTweetsEffect).toHaveBeenCalledTimes(1);
 		expect(fetch).toHaveBeenCalledTimes(1);
+	});
+
+	it("uses only local profile data in playground and does not write caches", async () => {
+		await streamProfileAnalysis({
+			handle: "alice",
+			maxPages: 1,
+			maxTweets: 10,
+			maxConversations: 1,
+			maxConversationPages: 1,
+			refresh: true,
+		});
+		mocks.lookupUsersByHandlesEffect.mockClear();
+		mocks.listUserTweetsEffect.mockClear();
+		mocks.searchRecentByConversationIdEffect.mockClear();
+		const db = getNativeDb();
+		const before = db
+			.prepare("select count(*) as count from sync_cache")
+			.get() as { count: number };
+		const changesBefore = db
+			.prepare("select total_changes() as count")
+			.get() as { count: number };
+		const prompt = resolveEffectivePrompt("profile-analysis");
+
+		const result = await runProfileAnalysisPlayground({
+			handle: "alice",
+			system: prompt.system,
+			requirements: prompt.requirements,
+		});
+
+		const after = db
+			.prepare("select count(*) as count from sync_cache")
+			.get() as { count: number };
+		const changesAfter = db
+			.prepare("select total_changes() as count")
+			.get() as { count: number };
+		expect(result.analysis.title).toBe("Alice");
+		expect(result.parseStatus).toBe("structured");
+		expect(after.count).toBe(before.count);
+		expect(changesAfter.count).toBe(changesBefore.count);
+		expect(mocks.lookupUsersByHandlesEffect).not.toHaveBeenCalled();
+		expect(mocks.listUserTweetsEffect).not.toHaveBeenCalled();
+		expect(mocks.searchRecentByConversationIdEffect).not.toHaveBeenCalled();
+		expect(fetch).toHaveBeenCalledTimes(2);
 	});
 
 	it("keeps unchanged backfilled tweets to one FTS row", async () => {
