@@ -89,8 +89,36 @@ vi.mock("./xurl", async () => {
 });
 
 const tempRoots: string[] = [];
+const queryEnvKeys = [
+	"BIRDCLAW_HOME",
+	"BIRDCLAW_CONFIG",
+	"BIRDCLAW_MENTIONS_DATA_SOURCE",
+] as const;
+const queryEnvSnapshot = new Map(
+	queryEnvKeys.map((key) => [key, process.env[key]] as const),
+);
+
+function clearQueryEnvironment() {
+	for (const key of queryEnvKeys) {
+		delete process.env[key];
+	}
+	resetBirdclawPathsForTests();
+}
+
+function restoreQueryEnvironment() {
+	for (const key of queryEnvKeys) {
+		const value = queryEnvSnapshot.get(key);
+		if (value === undefined) {
+			delete process.env[key];
+		} else {
+			process.env[key] = value;
+		}
+	}
+	resetBirdclawPathsForTests();
+}
 
 function setupTempHome() {
+	clearQueryEnvironment();
 	const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-test-"));
 	tempRoots.push(tempRoot);
 	process.env.BIRDCLAW_HOME = tempRoot;
@@ -176,8 +204,7 @@ function insertTestCollection(
 
 afterEach(() => {
 	resetDatabaseForTests();
-	resetBirdclawPathsForTests();
-	delete process.env.BIRDCLAW_HOME;
+	restoreQueryEnvironment();
 	mocks.findArchives.mockReset();
 	mocks.getTransportStatus.mockReset();
 	mocks.postViaXurl.mockReset();
@@ -2124,6 +2151,35 @@ describe("birdclaw queries", () => {
 		]);
 		expect(envelope.archives).toHaveLength(1);
 		expect(envelope.transport.availableTransport).toBe("xurl");
+	});
+
+	it("uses disabled xurl transport status when Bird is configured", async () => {
+		setupTempHome();
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+
+		await expect(
+			Effect.runPromise(getQueryEnvelopeEffect({ includeArchives: false })),
+		).resolves.toMatchObject({
+			transport: {
+				availableTransport: "local",
+				statusText: "xurl disabled by bird transport selection",
+			},
+		});
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+	});
+
+	it("keeps the xurl transport probe when auto is configured", async () => {
+		setupTempHome();
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "auto";
+		resetBirdclawPathsForTests();
+
+		await expect(
+			Effect.runPromise(getQueryEnvelopeEffect({ includeArchives: false })),
+		).resolves.toMatchObject({
+			transport: { availableTransport: "xurl" },
+		});
+		expect(mocks.getTransportStatus).toHaveBeenCalledTimes(1);
 	});
 
 	it("counts home items per feed independently of the total", async () => {

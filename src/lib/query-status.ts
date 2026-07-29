@@ -4,6 +4,10 @@ import type { Database } from "./sqlite";
 import { findArchivesCachedEffect } from "./archive-finder";
 import { getReadDb } from "./db";
 import { runEffectPromise } from "./effect-runtime";
+import {
+	resolveLiveReadMode,
+	xurlDisabledTransportStatus,
+} from "./live-transport-policy";
 import type { AccountRecord } from "./types";
 import { getTransportStatusEffect } from "./xurl";
 
@@ -109,6 +113,10 @@ export function getQueryEnvelopeEffect({
 		const homeFollowingCount = yield* trySync(() =>
 			countFeedEdges(nativeDb, "following"),
 		);
+		const transport =
+			resolveLiveReadMode() === "bird"
+				? Effect.succeed(xurlDisabledTransportStatus())
+				: getTransportStatusEffect();
 		const counts = yield* Effect.all({
 			dms: trySync(
 				() =>
@@ -143,7 +151,7 @@ export function getQueryEnvelopeEffect({
 			archives: includeArchives
 				? findArchivesCachedEffect()
 				: Effect.succeed([]),
-			transport: getTransportStatusEffect(),
+			transport,
 		});
 
 		return {
