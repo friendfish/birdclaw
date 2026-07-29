@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { profileAnalysisStreamEventSchema } from "#/lib/client-stream-contracts";
 import { maybeAutoUpdateBackupEffect } from "#/lib/backup";
 import {
+	jsonResponse,
 	parseBoundedInteger,
 	runRouteEffect,
 	sensitiveRequestErrorResponse,
@@ -78,7 +79,21 @@ export const Route = createFileRoute("/api/profile-analysis")({
 						if (denied) return denied;
 
 						const url = new URL(request.url);
-						const options = parseOptions(url);
+						let options: ProfileAnalysisOptions;
+						try {
+							options = parseOptions(url);
+						} catch (error) {
+							return jsonResponse(
+								{
+									ok: false,
+									error:
+										error instanceof Error
+											? error.message
+											: "Invalid profile analysis options",
+								},
+								{ status: 400 },
+							);
+						}
 						return createEffectNdjsonResponse<ProfileAnalysisStreamEvent>({
 							request,
 							schema: profileAnalysisStreamEventSchema,

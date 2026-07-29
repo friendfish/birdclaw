@@ -389,12 +389,12 @@ function refreshTweetFts(
 	);
 }
 
-function mergeXurlTweetsIntoLocalStore(
+function mergeLiveTweetsIntoLocalStore(
 	db: Database,
 	accountId: string,
 	payload: XurlTweetsResponse,
 	edgeKind: TweetAccountEdgeKind,
-	source: "xurl" | "cache",
+	source: "bird" | "xurl",
 ) {
 	const usersById = new Map(
 		(payload.includes?.users ?? []).map((user) => [user.id, user]),
@@ -1066,6 +1066,8 @@ export function collectProfileAnalysisContextEffect(
 			liveMode === "bird"
 				? xurlDisabledTransportStatus()
 				: yield* getTransportStatusEffect();
+		const liveSource =
+			transport.availableTransport === "xurl" ? "xurl" : "bird";
 
 		if (transport.availableTransport === "xurl") {
 			const [xurlUser] = yield* lookupUsersByHandlesEffect([handle], {
@@ -1182,12 +1184,12 @@ export function collectProfileAnalysisContextEffect(
 			tweetPages = 1;
 		}
 		yield* tryProfileSync(() =>
-			mergeXurlTweetsIntoLocalStore(
+			mergeLiveTweetsIntoLocalStore(
 				db,
 				account.id,
 				profilePayload,
 				"profile",
-				"xurl",
+				liveSource,
 			),
 		);
 
@@ -1311,12 +1313,12 @@ export function collectProfileAnalysisContextEffect(
 		}
 		const conversationPayload = mergeResponses(conversationResponses);
 		yield* tryProfileSync(() =>
-			mergeXurlTweetsIntoLocalStore(
+			mergeLiveTweetsIntoLocalStore(
 				db,
 				account.id,
 				conversationPayload,
 				"thread_context",
-				"xurl",
+				liveSource,
 			),
 		);
 

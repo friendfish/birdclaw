@@ -843,7 +843,7 @@ export function syncAuthoredTweetsEffect({
 			);
 		}
 		const resolvedMode = resolveLiveReadMode(mode);
-		if (resolvedMode !== "xurl") {
+		if (resolvedMode === "bird") {
 			return yield* Effect.fail(
 				new Error(
 					"authored sync requires an explicit --mode xurl in Bird mode",

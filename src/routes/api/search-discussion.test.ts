@@ -128,7 +128,7 @@ describe("api search discussion route", () => {
 
 		const response = await GET({
 			request: new Request(
-				"http://localhost/api/search-discussion?source=bad&mode=bad&includeDms=no&limit=50000&maxPages=nope",
+				"http://localhost/api/search-discussion?source=bad&mode=auto&includeDms=no&limit=50000&maxPages=nope",
 			),
 		});
 
@@ -145,5 +145,22 @@ describe("api search discussion route", () => {
 			}),
 			expect.any(Object),
 		);
+	});
+
+	it("returns HTTP 400 for an invalid explicit mode without starting work", async () => {
+		const response = await GET({
+			request: new Request(
+				"http://localhost/api/search-discussion?query=ChatGPT&mode=bad",
+			),
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toEqual({
+			ok: false,
+			error: "mode must be auto, bird, xurl, or local",
+		});
+		expect(resolveLiveReadModeMock).not.toHaveBeenCalled();
+		expect(maybeAutoUpdateBackupMock).not.toHaveBeenCalled();
+		expect(streamSearchDiscussionMock).not.toHaveBeenCalled();
 	});
 });
