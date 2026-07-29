@@ -9,6 +9,10 @@ import { databaseWriteEffect } from "./database-writer";
 import { getNativeDb } from "./db";
 import { runEffectPromise, trySync } from "./effect-runtime";
 import { liveTransportGateway } from "./live-transport-gateway";
+import {
+	type LiveReadMode,
+	resolveLiveReadMode,
+} from "./live-transport-policy";
 import { resolveLiveSyncAccount } from "./live-sync-engine";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
 import { runSyncPlanEffect } from "./sync-plan";
@@ -31,7 +35,7 @@ import {
 	upsertProfileFromXUser,
 } from "./x-profile";
 
-export type AuthoredSyncMode = "xurl";
+export type AuthoredSyncMode = LiveReadMode;
 
 export interface SyncAuthoredTweetsOptions {
 	account?: string;
@@ -821,16 +825,29 @@ function buildResult({
 
 export function syncAuthoredTweetsEffect({
 	account,
-	mode = "xurl",
+	mode,
 	limit = DEFAULT_LIMIT,
 	maxPages,
 	sinceId,
 	untilId,
 }: SyncAuthoredTweetsOptions) {
 	return Effect.gen(function* () {
-		if (mode !== "xurl") {
+		if (
+			mode !== undefined &&
+			mode !== "auto" &&
+			mode !== "bird" &&
+			mode !== "xurl"
+		) {
 			return yield* Effect.fail(
 				new Error("authored sync only supports --mode xurl"),
+			);
+		}
+		const resolvedMode = resolveLiveReadMode(mode);
+		if (resolvedMode !== "xurl") {
+			return yield* Effect.fail(
+				new Error(
+					"authored sync requires an explicit --mode xurl in Bird mode",
+				),
 			);
 		}
 

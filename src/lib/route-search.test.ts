@@ -25,6 +25,7 @@ describe("route search schemas", () => {
 			range: "week",
 		});
 		expect(validateDiscussSearch({ mode: "bad" }).mode).toBe("xurl");
+		expect(validateDiscussSearch({}).mode).toBe("bird");
 		expect(validateTodaySearch({ period: "bad" }).period).toBe("today");
 		expect(validateTodaySearch({ contentSource: "bad" }).contentSource).toBe(
 			"all",

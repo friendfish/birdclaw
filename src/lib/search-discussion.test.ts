@@ -15,6 +15,25 @@ import {
 } from "./search-discussion";
 import { resolveEffectivePrompt } from "./prompt-templates";
 
+const liveMocks = vi.hoisted(() => ({
+	resolveLiveReadMode: vi.fn(),
+	syncTweetSearchEffect: vi.fn(),
+}));
+
+vi.mock("./live-transport-policy", () => ({
+	resolveLiveReadMode: (...args: unknown[]) =>
+		liveMocks.resolveLiveReadMode(...args),
+}));
+
+vi.mock("./tweet-search-live", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("./tweet-search-live")>();
+	return {
+		...actual,
+		syncTweetSearchEffect: (...args: unknown[]) =>
+			Effect.sync(() => liveMocks.syncTweetSearchEffect(...args)),
+	};
+});
+
 const tempRoots: string[] = [];
 
 function effectivePrompt() {
@@ -54,6 +73,18 @@ beforeEach(() => {
 	originalBirdclawOpenaiBaseUrl = process.env.BIRDCLAW_OPENAI_BASE_URL;
 	delete process.env.OPENAI_BASE_URL;
 	delete process.env.BIRDCLAW_OPENAI_BASE_URL;
+	liveMocks.resolveLiveReadMode.mockReset();
+	liveMocks.resolveLiveReadMode.mockReturnValue("bird");
+	liveMocks.syncTweetSearchEffect.mockReset();
+	liveMocks.syncTweetSearchEffect.mockReturnValue({
+		ok: true,
+		source: "bird",
+		accountId: "acct_primary",
+		query: "local-first",
+		count: 0,
+		pageCount: 1,
+		tweetIds: [],
+	});
 });
 
 afterEach(() => {
@@ -83,6 +114,29 @@ afterEach(() => {
 });
 
 describe("search discussion", () => {
+	it("uses the configured live transport when mode is omitted", async () => {
+		const streamed = [
+			sseFrame({
+				type: "response.output_text.delta",
+				delta:
+					'# Policy\n\nBird search.\n\n---\n{"title":"Policy","summary":"Bird search","themes":[],"tensions":[],"followUps":[],"sourceTweetIds":[],"sourceDmConversationIds":[]}',
+			}),
+			"data: [DONE]\n\n",
+		].join("");
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamResponse(streamed)));
+
+		await streamSearchDiscussion({
+			query: "local-first",
+			refresh: true,
+			limit: 20,
+		});
+
+		expect(liveMocks.resolveLiveReadMode).toHaveBeenCalledWith();
+		expect(liveMocks.syncTweetSearchEffect).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+	});
+
 	it("collects keyword matches from tweets and optional DMs", () => {
 		const context = collectSearchDiscussionContext({
 			query: "local-first",

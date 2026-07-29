@@ -213,6 +213,19 @@ describe("live authored tweet sync", () => {
 		expect(mocks.listUserTweets).not.toHaveBeenCalled();
 	});
 
+	it("rejects Bird mode before touching xurl or local sync state", async () => {
+		const { syncAuthoredTweetsEffect } = await import("./authored-live");
+
+		await expect(
+			Effect.runPromise(syncAuthoredTweetsEffect({ mode: "bird", limit: 5 })),
+		).rejects.toThrow(
+			"authored sync requires an explicit --mode xurl in Bird mode",
+		);
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listUserTweets).not.toHaveBeenCalled();
+	});
+
 	it("handles an empty authored response without moving the cursor", async () => {
 		makeTempHome();
 		mocks.listUserTweets.mockResolvedValueOnce({

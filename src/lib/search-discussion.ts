@@ -10,6 +10,7 @@ import {
 } from "./analysis-runtime";
 import { prefetchCachedAvatarsForProfileIdsEffect } from "./avatar-cache";
 import { runEffectBackground, runEffectPromise } from "./effect-runtime";
+import { resolveLiveReadMode } from "./live-transport-policy";
 import { getNativeDb } from "./db";
 import { listDmConversations } from "./dm-read-model";
 import {
@@ -766,7 +767,7 @@ export function streamSearchDiscussionEffect(
 		const effectivePrompt = yield* trySearchSync(() =>
 			resolveEffectivePrompt("search-discussion"),
 		);
-		const mode = options.mode ?? "auto";
+		const mode = options.mode ?? resolveLiveReadMode();
 		const liveSearch =
 			mode === "local"
 				? undefined
