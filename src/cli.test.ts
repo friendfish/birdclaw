@@ -68,6 +68,9 @@ const removeBlockMock = vi.fn();
 const removeMuteMock = vi.fn();
 const maybeAutoUpdateBackupMock = vi.fn();
 const maybeAutoSyncBackupMock = vi.fn();
+const runAccountSyncJobMock = vi.hoisted(() => vi.fn());
+const installAccountSyncLaunchAgentMock = vi.hoisted(() => vi.fn());
+const parseAccountSyncStepsMock = vi.hoisted(() => vi.fn());
 const exportBackupMock = vi.fn();
 const importBackupMock = vi.fn();
 const syncBackupMock = vi.fn();
@@ -102,6 +105,14 @@ vi.mock("#/lib/config", () => ({
 
 vi.mock("#/lib/live-transport-policy", () => ({
 	resolveLiveReadMode: (...args: unknown[]) => resolveLiveReadModeMock(...args),
+}));
+
+vi.mock("#/lib/account-sync-job", () => ({
+	runAccountSyncJob: (...args: unknown[]) => runAccountSyncJobMock(...args),
+	installAccountSyncLaunchAgent: (...args: unknown[]) =>
+		installAccountSyncLaunchAgentMock(...args),
+	parseAccountSyncSteps: (...args: unknown[]) =>
+		parseAccountSyncStepsMock(...args),
 }));
 
 vi.mock("#/lib/db", () => ({
@@ -396,6 +407,9 @@ describe("cli", () => {
 		removeMuteMock.mockReset();
 		maybeAutoUpdateBackupMock.mockReset();
 		maybeAutoSyncBackupMock.mockReset();
+		runAccountSyncJobMock.mockReset();
+		installAccountSyncLaunchAgentMock.mockReset();
+		parseAccountSyncStepsMock.mockReset();
 		exportBackupMock.mockReset();
 		importBackupMock.mockReset();
 		syncBackupMock.mockReset();
@@ -640,6 +654,9 @@ describe("cli", () => {
 			enabled: false,
 			skipped: true,
 		});
+		runAccountSyncJobMock.mockResolvedValue({ ok: true });
+		installAccountSyncLaunchAgentMock.mockResolvedValue({ ok: true });
+		parseAccountSyncStepsMock.mockReturnValue(undefined);
 		exportBackupMock.mockResolvedValue({ ok: true, exported: 1 });
 		importBackupMock.mockResolvedValue({ ok: true, imported: 1 });
 		syncBackupMock.mockResolvedValue({ ok: true, synced: true });
@@ -684,6 +701,46 @@ describe("cli", () => {
 		});
 		expect(getNativeDbMock).toHaveBeenCalledWith({ seedDemoData: false });
 		expect(seedDemoDataMock).not.toHaveBeenCalled();
+	});
+
+	it("forwards account job mode only when explicitly selected", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "jobs", "sync-account"]);
+		expect(runAccountSyncJobMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ mode: undefined }),
+		);
+
+		await runCli(["node", "birdclaw", "jobs", "install-account-launchd"]);
+		expect(installAccountSyncLaunchAgentMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ mode: undefined }),
+		);
+
+		for (const mode of ["auto", "xurl", "bird"]) {
+			await runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"sync-account",
+				"--mode",
+				mode,
+			]);
+			expect(runAccountSyncJobMock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ mode }),
+			);
+
+			await runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"install-account-launchd",
+				"--mode",
+				mode,
+			]);
+			expect(installAccountSyncLaunchAgentMock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ mode }),
+			);
+		}
 	});
 
 	it("seeds and explains an offline demo only when requested", async () => {

@@ -135,6 +135,23 @@ describe("account sync job", () => {
 		expect(agent.envFile).toBeUndefined();
 	});
 
+	it("omits LaunchAgent mode unless it was explicitly selected", () => {
+		const omitted = buildAccountSyncLaunchAgentPlist({
+			program: "/opt/homebrew/bin/birdclaw",
+		});
+		expect(omitted.programArguments.join(" ")).not.toContain("--mode");
+
+		for (const mode of ["auto", "xurl", "bird"] as const) {
+			const agent = buildAccountSyncLaunchAgentPlist({
+				program: "/opt/homebrew/bin/birdclaw",
+				mode,
+			});
+			const modeIndex = agent.programArguments.indexOf("--mode");
+			expect(modeIndex).toBeGreaterThanOrEqual(0);
+			expect(agent.programArguments[modeIndex + 1]).toBe(mode);
+		}
+	});
+
 	it("treats empty step lists as the default selection", () => {
 		expect(parseAccountSyncSteps(undefined)).toBeUndefined();
 		expect(parseAccountSyncSteps(" , ")).toBeUndefined();
@@ -448,6 +465,66 @@ describe("account sync job", () => {
 		expect(result).toMatchObject({
 			steps: [{ kind: "mention-threads", ok: true, count: 4, source: "bird" }],
 		});
+	});
+
+	it("refuses non-default Bird mention-thread syncs without an assertion", async () => {
+		tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-account-job-"));
+		const logPath = path.join(tempDir, "audit.jsonl");
+		const lockPath = path.join(tempDir, "sync.lock");
+		const db = {
+			prepare: () => ({
+				get: () => ({ id: "acct_primary" }),
+			}),
+		} as never;
+
+		const result = await runAccountSyncJob({
+			account: "acct_openclaw",
+			steps: ["mention-threads"],
+			mode: "bird",
+			logPath,
+			lockPath,
+			db,
+		});
+
+		expect(syncMentionThreadsMock).not.toHaveBeenCalled();
+		expect(result).toMatchObject({
+			ok: false,
+			steps: [
+				{
+					kind: "mention-threads",
+					ok: false,
+					error: expect.stringContaining("--allow-bird-account"),
+				},
+			],
+		});
+	});
+
+	it("runs non-default Bird mention-thread syncs when asserted", async () => {
+		tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-account-job-"));
+		const logPath = path.join(tempDir, "audit.jsonl");
+		const lockPath = path.join(tempDir, "sync.lock");
+		syncMentionThreadsMock.mockResolvedValue({
+			source: "bird",
+			mergedTweets: 4,
+		});
+
+		await runAccountSyncJob({
+			account: "acct_openclaw",
+			steps: ["mention-threads"],
+			mode: "bird",
+			allowBirdAccount: true,
+			logPath,
+			lockPath,
+			db: {
+				prepare: () => ({
+					get: () => ({ id: "acct_primary" }),
+				}),
+			} as never,
+		});
+
+		expect(syncMentionThreadsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ account: "acct_openclaw", mode: "bird" }),
+		);
 	});
 
 	it("uses configured Bird mode for mention-thread syncs when mode is omitted", async () => {

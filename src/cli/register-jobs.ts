@@ -44,7 +44,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			"--steps <steps>",
 			"Comma list: timeline,mentions,mention-threads,likes,bookmarks,dms",
 		)
-		.option("--mode <mode>", "auto, xurl, or bird for likes/bookmarks", "auto")
+		.option("--mode <mode>", "auto, xurl, or bird for likes/bookmarks")
 		.option("--limit <n>", "Per-page/result limit", "100")
 		.option("--max-pages <n>", "Stop after N pages", "3")
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
@@ -81,7 +81,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			"--steps <steps>",
 			"Comma list: timeline,mentions,mention-threads,likes,bookmarks,dms",
 		)
-		.option("--mode <mode>", "auto, xurl, or bird for likes/bookmarks", "auto")
+		.option("--mode <mode>", "auto, xurl, or bird for likes/bookmarks")
 		.option("--limit <n>", "Per-page/result limit", "100")
 		.option("--max-pages <n>", "Stop after N pages", "3")
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
