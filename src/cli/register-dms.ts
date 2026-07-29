@@ -26,7 +26,7 @@ export function registerDirectMessageCommands({
 	dmsCommand
 		.command("list")
 		.option("--account <username>", "Account username or id")
-		.option("--mode <mode>", "auto, bird, or xurl", "bird")
+		.option("--mode <mode>", "auto, bird, or xurl")
 		.option("--refresh", "Refresh live DMs before listing")
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
 		.option("--inbox <kind>", "all, accepted, or requests", "all")
@@ -72,7 +72,6 @@ export function registerDirectMessageCommands({
 			);
 			if (
 				inbox === undefined ||
-				mode === undefined ||
 				maxPages === undefined ||
 				pageDelayMs === undefined
 			)
@@ -135,7 +134,7 @@ export function registerDirectMessageCommands({
 		.command("sync")
 		.description("Refresh live direct messages into the local store")
 		.option("--account <username>", "Account username or id")
-		.option("--mode <mode>", "auto, bird, or xurl", "bird")
+		.option("--mode <mode>", "auto, bird, or xurl")
 		.option("--limit <n>", "Limit messages", "20")
 		.option("--inbox <kind>", "all, accepted, or requests", "all")
 		.option("--max-pages <n>", "Additional accepted/request pages to sync", "0")
@@ -156,7 +155,6 @@ export function registerDirectMessageCommands({
 			);
 			if (
 				inbox === undefined ||
-				mode === undefined ||
 				maxPages === undefined ||
 				pageDelayMs === undefined
 			)

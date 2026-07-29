@@ -7,6 +7,7 @@ import {
 } from "./bird";
 import { getNativeDb } from "./db";
 import { runEffectPromise } from "./effect-runtime";
+import { resolveDirectMessagesReadMode } from "./live-transport-policy";
 import { liveTransportGateway } from "./live-transport-gateway";
 import {
 	assertLiveAccountMatches,
@@ -60,10 +61,7 @@ function assertXurlLimit(limit: number) {
 }
 
 function parseSyncMode(mode: DirectMessagesSyncMode | undefined) {
-	if (!mode || mode === "bird" || mode === "xurl" || mode === "auto") {
-		return mode ?? "bird";
-	}
-	throw new Error("--mode must be auto, bird, or xurl");
+	return resolveDirectMessagesReadMode(mode);
 }
 
 function makePreviewMessageId(conversationId: string): string {

@@ -3,12 +3,17 @@ import type { LiveDataSourceStatus, TransportStatus } from "./types";
 
 export type LiveReadMode = LiveDataSource;
 
-type LiveReadCapability = "xurl-first" | "sync" | "mention-threads";
+type LiveReadCapability =
+	| "xurl-first"
+	| "sync"
+	| "mention-threads"
+	| "direct-messages";
 
 const capabilityDefaults: Record<LiveReadCapability, LiveReadMode> = {
 	"xurl-first": "xurl",
 	sync: "auto",
 	"mention-threads": "bird",
+	"direct-messages": "bird",
 };
 
 function resolveModeForCapability(
@@ -38,6 +43,12 @@ export function resolveLiveReadMode(requestedMode?: string): LiveReadMode {
 
 export function resolveLiveSyncMode(requestedMode?: string): LiveReadMode {
 	return resolveModeForCapability(requestedMode, "sync");
+}
+
+export function resolveDirectMessagesReadMode(
+	requestedMode?: string,
+): LiveReadMode {
+	return resolveModeForCapability(requestedMode, "direct-messages");
 }
 
 export function resolveMentionThreadReadMode(

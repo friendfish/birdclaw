@@ -70,7 +70,7 @@ Selection is per operation. Birdclaw resolves the existing account row, routes x
 ### `actions.transport`
 
 - Controls every live write. `auto` and `xurl` allow the implemented xurl write path.
-- `bird` explicitly rejects post, reply, and DM compose: Bird has no write implementation.
+- `bird` explicitly rejects post, reply, and DM compose: those writes have no Bird implementation.
 
 `BIRDCLAW_ACTIONS_TRANSPORT` overrides this setting for one process. For
 block/unblock/mute, `auto` tries Bird first and then falls back to verified xurl;
@@ -101,7 +101,7 @@ See [Backup](backup.md). When `autoSync` is enabled, read commands pull + merge 
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BIRDCLAW_HOME`                | Override the storage root (`~/.birdclaw` by default)                                                                                                 |
 | `BIRDCLAW_CONFIG`              | Read and write config at a non-default path                                                                                                          |
-| `BIRDCLAW_ACTIONS_TRANSPORT`   | Override moderation action transport with `auto`, `xurl`, or `bird` for one process                                                                  |
+| `BIRDCLAW_ACTIONS_TRANSPORT`   | Override the transport for all live writes with `auto`, `xurl`, or `bird` for one process                                                            |
 | `BIRDCLAW_LIVE_DATA_SOURCE`    | Override global live read/sync transport with `auto`, `xurl`, or `bird` for one process                                                              |
 | `BIRDCLAW_MENTIONS_DATA_SOURCE`| Legacy alias for `BIRDCLAW_LIVE_DATA_SOURCE`; lower precedence than the new variable                                                                |
 | `BIRDCLAW_BIRD_COMMAND`        | Override the `bird` executable used by live Bird transports                                                                                          |

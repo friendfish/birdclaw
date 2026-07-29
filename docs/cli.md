@@ -631,12 +631,13 @@ birdclaw media fetch --no-include-video --parallel 3 --pacing-ms 250 --json
 Flags:
 
 - `--account <username>` — account username or stored ID
+- `--mode <mode>` — override the configured live read transport
 - `--limit <n>`
 
 Examples:
 
 ```bash
-birdclaw profiles replies @jpctan --limit 12 --json
+birdclaw profiles replies @jpctan --mode xurl --limit 12 --json
 ```
 
 ### `dms list`
@@ -649,6 +650,7 @@ Flags:
 
 - `--refresh`
 - `--mode bird|xurl|auto`
+- `--[no-]xurl-fallback` — allow or forbid xurl profile fallback; when omitted, configuration and the operation default decide
 - `--cache-ttl <seconds>`
 - `--participant <handle-or-id>`
 - `--min-followers <n>`
@@ -675,7 +677,12 @@ Flags:
 - `--refresh`
 - `--cache-ttl <seconds>`
 
-`--mode bird` is the default and the only mode that can sync message requests. `--mode xurl` reads recent OAuth2 `/2/dm_events` as accepted conversations; `--mode auto` tries xurl first for accepted DMs and falls back to bird.
+With no configured live source, `--mode bird` remains the default and the only
+mode that can sync message requests. `live.dataSource` and
+`BIRDCLAW_LIVE_DATA_SOURCE` can select `bird`, `xurl`, or `auto` when the flag
+is omitted. `--mode xurl` reads recent OAuth2 `/2/dm_events` as accepted
+conversations; `--mode auto` tries xurl first for accepted DMs and falls back to
+bird.
 
 ### `inbox`
 

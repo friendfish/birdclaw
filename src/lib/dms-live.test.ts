@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetBirdclawPathsForTests } from "./config";
+import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import { getConversationThread, listDmConversations } from "./queries";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 
@@ -87,6 +87,7 @@ describe("cached live DMs", () => {
 		resetDatabaseForTests();
 		resetBirdclawPathsForTests();
 		delete process.env.BIRDCLAW_HOME;
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 
 		for (const dir of tempDirs.splice(0)) {
 			rmSync(dir, { recursive: true, force: true });
@@ -116,6 +117,57 @@ describe("cached live DMs", () => {
 			messages: 0,
 		});
 		expect(listDirectMessagesViaBirdMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("uses configured xurl for an omitted mode", async () => {
+		makeTempHome();
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "xurl";
+		listDirectMessageEventsViaXurlMock.mockResolvedValue({
+			data: [],
+			includes: { users: [] },
+			meta: {},
+		});
+		const { syncDirectMessagesViaCachedBird } = await import("./dms-live");
+
+		await expect(
+			syncDirectMessagesViaCachedBird({ limit: 5, refresh: true }),
+		).resolves.toMatchObject({ source: "xurl" });
+		expect(listDirectMessagesViaBirdMock).not.toHaveBeenCalled();
+		expect(listDirectMessageEventsViaXurlMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("uses configured xurl from config for an omitted mode", async () => {
+		makeTempHome();
+		writeBirdclawConfig({ live: { dataSource: "xurl" } });
+		listDirectMessageEventsViaXurlMock.mockResolvedValue({
+			data: [],
+			includes: { users: [] },
+			meta: {},
+		});
+		const { syncDirectMessagesViaCachedBird } = await import("./dms-live");
+
+		await expect(
+			syncDirectMessagesViaCachedBird({ limit: 5, refresh: true }),
+		).resolves.toMatchObject({ source: "xurl" });
+		expect(listDirectMessagesViaBirdMock).not.toHaveBeenCalled();
+		expect(listDirectMessageEventsViaXurlMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps configured Bird entirely off xurl for an omitted mode", async () => {
+		makeTempHome();
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "bird";
+		listDirectMessagesViaBirdMock.mockResolvedValue({
+			success: true,
+			conversations: [],
+			events: [],
+		});
+		const { syncDirectMessagesViaCachedBird } = await import("./dms-live");
+
+		await expect(
+			syncDirectMessagesViaCachedBird({ limit: 5, refresh: true }),
+		).resolves.toMatchObject({ source: "bird" });
+		expect(lookupAuthenticatedUserMock).not.toHaveBeenCalled();
+		expect(listDirectMessageEventsViaXurlMock).not.toHaveBeenCalled();
 	});
 
 	it("fetches bird DMs, caches them, and syncs them into the local store", async () => {
