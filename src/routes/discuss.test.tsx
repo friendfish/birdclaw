@@ -5,8 +5,14 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import {
+	createMemoryHistory,
+	createRouter,
+	RouterProvider,
+} from "@tanstack/react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ndjsonResponse } from "#/test/ndjson";
+import { routeTree } from "../routeTree.gen";
 import { DiscussRouteView as DiscussRoute } from "./discuss";
 
 function discussionResult(markdown: string) {
@@ -85,6 +91,7 @@ describe("discuss route", () => {
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		cleanup();
 		vi.unstubAllGlobals();
 	});
@@ -114,16 +121,13 @@ describe("discuss route", () => {
 			screen.getByRole("heading", { name: "Discuss", level: 1 }),
 		).toBeInTheDocument();
 		expect(screen.getByText("Search to begin.")).toBeInTheDocument();
-		expect(screen.getByLabelText("Mode")).toHaveValue("xurl");
+		expect(screen.getByLabelText("Mode")).toHaveValue("");
 
 		fireEvent.change(screen.getByPlaceholderText("Keywords"), {
 			target: { value: "ChatGPT" },
 		});
 		fireEvent.change(screen.getByPlaceholderText("Optional question"), {
 			target: { value: "Useful takeaways" },
-		});
-		fireEvent.change(screen.getByLabelText("Mode"), {
-			target: { value: "bird" },
 		});
 		fireEvent.change(screen.getByLabelText("Source"), {
 			target: { value: "all" },
@@ -141,20 +145,90 @@ describe("discuss route", () => {
 			),
 		).toBeInTheDocument();
 		expect(urls[0]?.searchParams.get("source")).toBe("all");
-		expect(urls[0]?.searchParams.get("mode")).toBe("bird");
+		expect(urls[0]?.searchParams.has("mode")).toBe(false);
 		expect(urls[0]?.searchParams.get("includeDms")).toBe("true");
 		expect(urls[0]?.searchParams.get("question")).toBe("Useful takeaways");
 		expect(urls[0]?.searchParams.get("limit")).toBe("20000");
 		expect(urls[0]?.searchParams.get("maxPages")).toBe("200");
 		expect(urls[0]?.searchParams.has("refresh")).toBe(false);
 
-		fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+		fireEvent.change(screen.getByLabelText("Mode"), {
+			target: { value: "xurl" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Discuss" }));
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-		expect(urls[1]?.searchParams.get("refresh")).toBe("true");
+		expect(urls[1]?.searchParams.get("mode")).toBe("xurl");
+
+		fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		expect(urls[2]?.searchParams.get("refresh")).toBe("true");
 
 		fireEvent.click(screen.getByRole("button", { name: "Discuss" }));
-		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-		expect(urls[2]?.searchParams.has("refresh")).toBe(false);
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+		expect(urls[3]?.searchParams.has("refresh")).toBe(false);
+	});
+
+	it("round-trips configured and explicit modes through the real router", async () => {
+		vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+		const discussionRequests: URL[] = [];
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const url = new URL(
+				input instanceof Request ? input.url : String(input),
+				window.location.origin,
+			);
+			if (url.pathname === "/api/search-discussion") {
+				discussionRequests.push(url);
+			}
+			return ndjsonResponse([
+				{
+					type: "start",
+					context: discussionResult("# ChatGPT").context,
+					cached: false,
+				},
+				{ type: "done", result: discussionResult("# ChatGPT") },
+			]);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		const router = createRouter({
+			routeTree,
+			history: createMemoryHistory({ initialEntries: ["/discuss"] }),
+		});
+
+		render(<RouterProvider router={router} />);
+
+		expect(await screen.findByLabelText("Mode")).toHaveValue("");
+		expect(router.state.location.search).toMatchObject({ mode: "" });
+
+		fireEvent.change(screen.getByLabelText("Mode"), {
+			target: { value: "xurl" },
+		});
+		await waitFor(() =>
+			expect(router.state.location.search).toMatchObject({ mode: "xurl" }),
+		);
+
+		fireEvent.change(screen.getByLabelText("Mode"), {
+			target: { value: "bird" },
+		});
+		await waitFor(() =>
+			expect(router.state.location.search).toMatchObject({ mode: "bird" }),
+		);
+
+		fireEvent.change(screen.getByLabelText("Mode"), {
+			target: { value: "" },
+		});
+		await waitFor(() =>
+			expect(router.state.location.search).toMatchObject({ mode: "" }),
+		);
+
+		fireEvent.change(screen.getByPlaceholderText("Keywords"), {
+			target: { value: "ChatGPT" },
+		});
+		await waitFor(() =>
+			expect(router.state.location.search).toMatchObject({ q: "ChatGPT" }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Discuss" }));
+		await waitFor(() => expect(discussionRequests).toHaveLength(1));
+		expect(discussionRequests[0]?.searchParams.has("mode")).toBe(false);
 	});
 
 	it("renders request and stream errors", async () => {

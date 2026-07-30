@@ -61,7 +61,7 @@ describe("api profile analysis route", () => {
 	it("streams NDJSON and passes profile backfill options", async () => {
 		const response = await GET({
 			request: new Request(
-				"http://localhost/api/profile-analysis?handle=alice&refresh=1&model=gpt-5.5&maxTweets=42&maxPages=7&maxConversations=3&maxConversationPages=2",
+				"http://localhost/api/profile-analysis?handle=alice&mode=bird&refresh=1&model=gpt-5.5&maxTweets=42&maxPages=7&maxConversations=3&maxConversationPages=2",
 			),
 		});
 
@@ -73,6 +73,7 @@ describe("api profile analysis route", () => {
 		expect(streamProfileAnalysisMock).toHaveBeenCalledWith(
 			{
 				handle: "alice",
+				mode: "bird",
 				refresh: true,
 				model: "gpt-5.5",
 				maxTweets: 42,
@@ -85,6 +86,22 @@ describe("api profile analysis route", () => {
 			},
 			expect.objectContaining({ onEvent: expect.any(Function) }),
 		);
+	});
+
+	it("rejects an invalid explicit transport mode", async () => {
+		const response = await GET({
+			request: new Request(
+				"http://localhost/api/profile-analysis?handle=alice&mode=invalid",
+			),
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toEqual({
+			ok: false,
+			error: "mode must be auto, bird, or xurl",
+		});
+		expect(maybeAutoUpdateBackupMock).not.toHaveBeenCalled();
+		expect(streamProfileAnalysisMock).not.toHaveBeenCalled();
 	});
 
 	it("passes zero-valued throttle controls through", async () => {

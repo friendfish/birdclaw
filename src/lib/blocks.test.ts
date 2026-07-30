@@ -1,7 +1,8 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Command } from "commander";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBirdclawPathsForTests } from "./config";
@@ -63,6 +64,7 @@ function setupTempHome() {
 	process.env.BIRDCLAW_HOME = tempRoot;
 	resetBirdclawPathsForTests();
 	resetDatabaseForTests();
+	return tempRoot;
 }
 
 afterEach(() => {
@@ -70,6 +72,7 @@ afterEach(() => {
 	resetBirdclawPathsForTests();
 	delete process.env.BIRDCLAW_HOME;
 	delete process.env.BIRDCLAW_DISABLE_LIVE_WRITES;
+	vi.unstubAllEnvs();
 	mocks.blockUserViaBird.mockReset();
 	mocks.lookupProfileViaBird.mockReset();
 	mocks.readBirdStatusViaBird.mockReset();
@@ -244,6 +247,83 @@ describe("blocklist", () => {
 		expect(listBlocks({ account: "acct_primary" })).toHaveLength(0);
 	});
 
+	it("rejects invalid and blank explicit transports before lookup, live action, or persistence", async () => {
+		setupTempHome();
+		vi.stubEnv("BIRDCLAW_ACTIONS_TRANSPORT", "bird");
+		const { addBlock, listBlocks } = await import("./blocks");
+
+		for (const transport of ["invalid", "", " \t "]) {
+			await expect(
+				addBlock("acct_primary", "@amelia", {
+					transport: transport as "bird",
+				}),
+			).rejects.toThrow(
+				"Invalid action transport; expected auto, bird, or xurl",
+			);
+		}
+
+		expect(mocks.lookupProfileViaBird).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByHandles).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
+		expect(mocks.blockUserViaBird).not.toHaveBeenCalled();
+		expect(mocks.blockUserViaXurl).not.toHaveBeenCalled();
+		expect(listBlocks({ account: "acct_primary" })).toHaveLength(0);
+	});
+
+	it("rejects blank CLI transport before lookup, live action, or database mutation", async () => {
+		setupTempHome();
+		vi.stubEnv("BIRDCLAW_ACTIONS_TRANSPORT", "bird");
+		const db = getNativeDb();
+		const counts = () => ({
+			profiles: (
+				db.prepare("select count(*) as count from profiles").get() as {
+					count: number;
+				}
+			).count,
+			blocks: (
+				db.prepare("select count(*) as count from blocks").get() as {
+					count: number;
+				}
+			).count,
+		});
+		const before = counts();
+		const print = vi.fn();
+		const program = new Command();
+		const { registerModerationCommands } =
+			await import("../cli/register-moderation");
+		registerModerationCommands({
+			program,
+			print,
+			asJson: () => false,
+			autoSyncAfterWrite: vi.fn(),
+			autoUpdateBeforeRead: vi.fn(),
+			parseNonNegativeIntegerOption: vi.fn(),
+			parsePositiveIntegerOption: vi.fn(),
+		});
+
+		await expect(
+			program.parseAsync([
+				"node",
+				"birdclaw",
+				"blocks",
+				"add",
+				"@amelia",
+				"--transport",
+				"   ",
+			]),
+		).rejects.toThrow("Invalid action transport; expected auto, bird, or xurl");
+
+		expect(mocks.lookupProfileViaBird).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByHandles).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
+		expect(mocks.getAuthenticatedBirdAccount).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.blockUserViaBird).not.toHaveBeenCalled();
+		expect(mocks.blockUserViaXurl).not.toHaveBeenCalled();
+		expect(counts()).toEqual(before);
+		expect(print).not.toHaveBeenCalled();
+	});
+
 	it("rejects blocking the current account", async () => {
 		setupTempHome();
 		const { addBlock } = await import("./blocks");
@@ -377,6 +457,119 @@ describe("blocklist", () => {
 		expect(
 			listed.find((item) => item.profile.handle === "amelia")?.source,
 		).toBe("manual");
+	});
+
+	it("skips xurl block sync before probing status when live source uses Bird", async () => {
+		setupTempHome();
+		vi.stubEnv("BIRDCLAW_LIVE_DATA_SOURCE", "bird");
+		vi.stubEnv("BIRDCLAW_ACTIONS_TRANSPORT", "auto");
+		const { syncBlocks } = await import("./blocks");
+
+		const result = await syncBlocks("acct_primary");
+
+		expect(result).toEqual({
+			ok: true,
+			accountId: "acct_primary",
+			synced: false,
+			syncedCount: 0,
+			transport: {
+				ok: true,
+				output:
+					"remote block sync skipped (xurl disabled by bird transport selection)",
+			},
+		});
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
+	});
+
+	it("uses xurl block sync when live source is xurl despite Bird actions", async () => {
+		setupTempHome();
+		vi.stubEnv("BIRDCLAW_LIVE_DATA_SOURCE", "xurl");
+		vi.stubEnv("BIRDCLAW_ACTIONS_TRANSPORT", "bird");
+		const { syncBlocks } = await import("./blocks");
+
+		const result = await syncBlocks("acct_primary");
+
+		expect(result).toMatchObject({ ok: true, synced: true, syncedCount: 0 });
+		expect(mocks.getTransportStatus).toHaveBeenCalledWith();
+		expect(mocks.lookupAuthenticatedUser).toHaveBeenCalledWith();
+		expect(mocks.listBlockedUsers).toHaveBeenCalledWith("25401953", undefined);
+	});
+
+	it("uses an explicit Bird mode instead of a configured xurl source", async () => {
+		setupTempHome();
+		vi.stubEnv("BIRDCLAW_LIVE_DATA_SOURCE", "xurl");
+		const { syncBlocks } = await import("./blocks");
+
+		const result = await syncBlocks("acct_primary", { mode: "bird" });
+
+		expect(result).toMatchObject({ ok: true, synced: false, syncedCount: 0 });
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
+	});
+
+	it("skips configured and explicit Bird block syncs without opening the database", async () => {
+		const tempRoot = setupTempHome();
+		const dbPath = path.join(tempRoot, "birdclaw.sqlite");
+		vi.stubEnv("BIRDCLAW_LIVE_DATA_SOURCE", "bird");
+		const { syncBlocks, syncBlocksEffect } = await import("./blocks");
+
+		const effect = syncBlocksEffect("acct_explicit", { mode: "bird" });
+		expect(existsSync(dbPath)).toBe(false);
+
+		await expect(Effect.runPromise(effect)).resolves.toMatchObject({
+			ok: true,
+			accountId: "acct_explicit",
+			synced: false,
+		});
+		await expect(syncBlocks("")).resolves.toMatchObject({
+			ok: true,
+			accountId: "default",
+			synced: false,
+		});
+
+		expect(existsSync(dbPath)).toBe(false);
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
+	});
+
+	it("rejects invalid explicit block sync modes before xurl work or database mutation", async () => {
+		const tempRoot = setupTempHome();
+		const dbPath = path.join(tempRoot, "birdclaw.sqlite");
+		const { syncBlocks } = await import("./blocks");
+		expect(existsSync(dbPath)).toBe(false);
+
+		for (const mode of ["invalid", ""]) {
+			await expect(syncBlocks("acct_primary", { mode })).rejects.toThrow(
+				"Invalid live-read mode; expected auto, bird, or xurl",
+			);
+		}
+
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
+		expect(existsSync(dbPath)).toBe(false);
+	});
+
+	it("constructs block sync Effects without database or xurl side effects", async () => {
+		const tempRoot = setupTempHome();
+		const dbPath = path.join(tempRoot, "birdclaw.sqlite");
+		const { syncBlocksEffect } = await import("./blocks");
+
+		const effect = syncBlocksEffect("acct_primary", { mode: "xurl" });
+
+		expect(existsSync(dbPath)).toBe(false);
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listBlockedUsers).not.toHaveBeenCalled();
+
+		await Effect.runPromise(effect);
+
+		expect(existsSync(dbPath)).toBe(true);
+		expect(mocks.getTransportStatus).toHaveBeenCalledWith();
 	});
 
 	it("exposes remote block sync as an Effect program", async () => {

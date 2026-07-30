@@ -1,19 +1,34 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
-import { streamProfileAnalysis } from "./profile-analysis";
+import {
+	collectProfileAnalysisContextEffect,
+	streamProfileAnalysis,
+} from "./profile-analysis";
 import { listTimelineItems } from "./queries";
 
 const mocks = vi.hoisted(() => ({
+	listThreadViaBirdEffect: vi.fn(),
+	listUserTweetsViaBirdEffect: vi.fn(),
+	lookupProfileViaBirdEffect: vi.fn(),
 	listUserTweetsEffect: vi.fn(),
 	lookupUsersByHandlesEffect: vi.fn(),
 	searchRecentByConversationIdEffect: vi.fn(),
 	getTransportStatusEffect: vi.fn(),
+}));
+
+vi.mock("./bird", () => ({
+	listThreadViaBirdEffect: (...args: unknown[]) =>
+		mocks.listThreadViaBirdEffect(...args),
+	listUserTweetsViaBirdEffect: (...args: unknown[]) =>
+		mocks.listUserTweetsViaBirdEffect(...args),
+	lookupProfileViaBirdEffect: (...args: unknown[]) =>
+		mocks.lookupProfileViaBirdEffect(...args),
 }));
 
 vi.mock("./xurl", () => ({
@@ -28,6 +43,8 @@ vi.mock("./xurl", () => ({
 }));
 
 const tempRoots: string[] = [];
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 
 function setupTempHome() {
 	const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-profile-ai-"));
@@ -48,12 +65,19 @@ const profileUser = {
 };
 
 beforeEach(() => {
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	resetBirdclawPathsForTests();
 	setupTempHome();
 	process.env.OPENAI_API_KEY = "test-key";
 	process.env.BIRDCLAW_PROFILE_ANALYSIS_CONVERSATION_DELAY_MS = "0";
 	process.env.BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_RETRY_MS = "0";
 	process.env.BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_MAX_RETRIES = "0";
+	vi.stubEnv("BIRDCLAW_MENTIONS_DATA_SOURCE", "");
 	mocks.lookupUsersByHandlesEffect.mockReset();
+	mocks.lookupProfileViaBirdEffect.mockReset();
+	mocks.listUserTweetsViaBirdEffect.mockReset();
+	mocks.listThreadViaBirdEffect.mockReset();
 	mocks.listUserTweetsEffect.mockReset();
 	mocks.searchRecentByConversationIdEffect.mockReset();
 	mocks.getTransportStatusEffect.mockReset();
@@ -66,6 +90,54 @@ beforeEach(() => {
 	);
 	mocks.lookupUsersByHandlesEffect.mockReturnValue(
 		Effect.succeed([profileUser]),
+	);
+	mocks.lookupProfileViaBirdEffect.mockReturnValue(Effect.succeed(profileUser));
+	mocks.listUserTweetsViaBirdEffect.mockReturnValue(
+		Effect.succeed({
+			data: [
+				{
+					id: "tweet_1",
+					author_id: "42",
+					text: "Local tools should remember context.",
+					created_at: "2026-05-20T10:00:00.000Z",
+					conversation_id: "tweet_1",
+					public_metrics: {
+						like_count: 10,
+						reply_count: 2,
+						retweet_count: 1,
+						quote_count: 0,
+					},
+				},
+			],
+			includes: { users: [profileUser], media: [] },
+		}),
+	);
+	mocks.listThreadViaBirdEffect.mockReturnValue(
+		Effect.succeed({
+			data: [
+				{
+					id: "reply_1",
+					author_id: "99",
+					text: "The memory part matters.",
+					created_at: "2026-05-20T10:02:00.000Z",
+					conversation_id: "tweet_1",
+					public_metrics: { like_count: 3 },
+				},
+			],
+			includes: {
+				users: [
+					profileUser,
+					{
+						id: "99",
+						username: "bob",
+						name: "Bob",
+						description: "Replies to tools.",
+						public_metrics: { followers_count: 40 },
+					},
+				],
+				media: [],
+			},
+		}),
 	);
 	mocks.listUserTweetsEffect.mockReturnValue(
 		Effect.succeed({
@@ -129,13 +201,24 @@ beforeEach(() => {
 
 afterEach(() => {
 	resetDatabaseForTests();
-	resetBirdclawPathsForTests();
 	delete process.env.BIRDCLAW_HOME;
 	delete process.env.OPENAI_API_KEY;
 	delete process.env.BIRDCLAW_PROFILE_ANALYSIS_CONVERSATION_DELAY_MS;
 	delete process.env.BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_RETRY_MS;
 	delete process.env.BIRDCLAW_PROFILE_ANALYSIS_RATE_LIMIT_MAX_RETRIES;
 	delete process.env.BIRDCLAW_PROFILE_ANALYSIS_ACCOUNT;
+	vi.unstubAllEnvs();
+	if (originalLiveDataSource === undefined) {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+	}
+	if (originalMentionsDataSource === undefined) {
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+	}
+	resetBirdclawPathsForTests();
 	vi.unstubAllGlobals();
 	for (const tempRoot of tempRoots.splice(0)) {
 		rmSync(tempRoot, { recursive: true, force: true });
@@ -143,6 +226,111 @@ afterEach(() => {
 });
 
 describe("profile analysis", () => {
+	it("rejects invalid profile analysis modes before opening the database", async () => {
+		for (const mode of ["invalid", " \t "]) {
+			const tempRoot = mkdtempSync(
+				path.join(os.tmpdir(), "birdclaw-profile-ai-"),
+			);
+			tempRoots.push(tempRoot);
+			process.env.BIRDCLAW_HOME = tempRoot;
+			resetBirdclawPathsForTests();
+			resetDatabaseForTests();
+			const dbPath = path.join(tempRoot, "birdclaw.sqlite");
+
+			const effect = collectProfileAnalysisContextEffect({
+				handle: "alice",
+				mode: mode as never,
+			});
+			expect(existsSync(dbPath)).toBe(false);
+
+			await expect(Effect.runPromise(effect)).rejects.toThrow(
+				"Invalid live-read mode; expected auto, bird, or xurl",
+			);
+			expect(existsSync(dbPath)).toBe(false);
+		}
+		expect(mocks.lookupProfileViaBirdEffect).not.toHaveBeenCalled();
+		expect(mocks.listUserTweetsViaBirdEffect).not.toHaveBeenCalled();
+		expect(mocks.listThreadViaBirdEffect).not.toHaveBeenCalled();
+		expect(mocks.getTransportStatusEffect).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByHandlesEffect).not.toHaveBeenCalled();
+		expect(mocks.listUserTweetsEffect).not.toHaveBeenCalled();
+		expect(mocks.searchRecentByConversationIdEffect).not.toHaveBeenCalled();
+	});
+
+	it("uses Bird for profile, tweets, and threads without probing xurl in Bird mode", async () => {
+		const result = await streamProfileAnalysis({
+			handle: "@alice",
+			mode: "bird",
+			refresh: true,
+			maxPages: 1,
+			maxTweets: 1,
+			maxConversations: 1,
+			maxConversationPages: 1,
+		});
+
+		expect(result.context.counts).toMatchObject({
+			tweets: 1,
+			conversationsScanned: 1,
+			conversationTweets: 1,
+		});
+		expect(mocks.lookupProfileViaBirdEffect).toHaveBeenCalledWith("alice");
+		expect(mocks.listUserTweetsViaBirdEffect).toHaveBeenCalledWith({
+			handle: "alice",
+			maxResults: 1,
+		});
+		expect(mocks.listThreadViaBirdEffect).toHaveBeenCalledWith({
+			tweetId: "tweet_1",
+			timeoutMs: 30_000,
+		});
+		expect(mocks.getTransportStatusEffect).not.toHaveBeenCalled();
+		expect(mocks.lookupUsersByHandlesEffect).not.toHaveBeenCalled();
+		expect(mocks.listUserTweetsEffect).not.toHaveBeenCalled();
+		expect(mocks.searchRecentByConversationIdEffect).not.toHaveBeenCalled();
+		expect(
+			getNativeDb()
+				.prepare(
+					"select tweet_id, kind, source from tweet_account_edges where tweet_id in ('tweet_1', 'reply_1') order by tweet_id",
+				)
+				.all(),
+		).toEqual([
+			{ tweet_id: "reply_1", kind: "thread_context", source: "bird" },
+			{ tweet_id: "tweet_1", kind: "profile", source: "bird" },
+		]);
+		expect(
+			getNativeDb()
+				.prepare(
+					"select revision_id, source from tweet_revisions where revision_id in ('tweet_1', 'reply_1') order by revision_id",
+				)
+				.all(),
+		).toEqual([
+			{ revision_id: "reply_1", source: "bird" },
+			{ revision_id: "tweet_1", source: "bird" },
+		]);
+	});
+
+	it("does not reuse xurl profile context cache for Bird mode", async () => {
+		await streamProfileAnalysis({
+			handle: "alice",
+			mode: "xurl",
+			maxPages: 1,
+			maxTweets: 1,
+			maxConversations: 1,
+			maxConversationPages: 1,
+		});
+		mocks.lookupProfileViaBirdEffect.mockClear();
+
+		await streamProfileAnalysis({
+			handle: "alice",
+			mode: "bird",
+			maxPages: 1,
+			maxTweets: 1,
+			maxConversations: 1,
+			maxConversationPages: 1,
+		});
+
+		expect(mocks.lookupProfileViaBirdEffect).toHaveBeenCalledWith("alice");
+	});
+
 	it("backfills profile tweets and conversation context before caching the AI result", async () => {
 		const events: string[] = [];
 		const result = await streamProfileAnalysis(
@@ -182,6 +370,26 @@ describe("profile analysis", () => {
 				)
 				.get(),
 		).toEqual({ count: 1 });
+		expect(
+			getNativeDb()
+				.prepare(
+					"select tweet_id, kind, source from tweet_account_edges where tweet_id in ('tweet_1', 'reply_1') order by tweet_id",
+				)
+				.all(),
+		).toEqual([
+			{ tweet_id: "reply_1", kind: "thread_context", source: "xurl" },
+			{ tweet_id: "tweet_1", kind: "profile", source: "xurl" },
+		]);
+		expect(
+			getNativeDb()
+				.prepare(
+					"select revision_id, source from tweet_revisions where revision_id in ('tweet_1', 'reply_1') order by revision_id",
+				)
+				.all(),
+		).toEqual([
+			{ revision_id: "reply_1", source: "xurl" },
+			{ revision_id: "tweet_1", source: "xurl" },
+		]);
 		expect(
 			listTimelineItems({
 				resource: "search",

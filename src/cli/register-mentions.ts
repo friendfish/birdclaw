@@ -36,6 +36,7 @@ export function registerMentionCommands({
 		)
 		.option("--limit <n>", "Limit results", "20")
 		.action(async (query, options) => {
+			const mode = resolveMentionsDataSource(options.mode);
 			await autoUpdateBeforeRead();
 			const replyFilter = options.replied
 				? "replied"
@@ -43,7 +44,6 @@ export function registerMentionCommands({
 					? "unreplied"
 					: "all";
 			const limit = Number(options.limit);
-			const mode = resolveMentionsDataSource(options.mode);
 			if (mode === "xurl" || mode === "bird" || mode === "auto") {
 				const exportFn =
 					mode === "xurl"
@@ -81,11 +81,16 @@ export function registerMentionCommands({
 		.command("replies <query>")
 		.description("Inspect recent authored replies for one profile")
 		.option("--account <username>", "Account username or id")
+		.option(
+			"--mode <mode>",
+			"auto, bird, or xurl (use xurl for reply inspection)",
+		)
 		.option("--limit <n>", "Limit replies", "12")
 		.action(async (query, options) => {
 			const result = await inspectProfileReplies(query, {
 				account: options.account,
 				limit: Number(options.limit),
+				mode: options.mode,
 			});
 			print(result, asJson());
 		});

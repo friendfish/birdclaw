@@ -8,6 +8,7 @@ import {
 import { ensureBirdclawDirs, getBirdclawPaths } from "./config";
 import { getNativeDb } from "./db";
 import { runEffectPromise } from "./effect-runtime";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import {
 	buildLaunchAgent,
 	buildLaunchProgramArguments,
@@ -131,7 +132,7 @@ function messageFromError(error: unknown) {
 
 export function runBookmarkSyncJobEffect({
 	account,
-	mode = "auto",
+	mode,
 	limit = DEFAULT_BOOKMARK_SYNC_LIMIT,
 	all,
 	maxPages = DEFAULT_BOOKMARK_SYNC_MAX_PAGES,
@@ -145,6 +146,7 @@ export function runBookmarkSyncJobEffect({
 	unknown
 > {
 	return Effect.gen(function* () {
+		const resolvedMode = yield* trySync(() => resolveLiveSyncMode(mode));
 		yield* trySync(() => ensureBirdclawDirs());
 		const database =
 			db ?? (yield* trySync(() => getNativeDb({ seedDemoData: false })));
@@ -161,7 +163,7 @@ export function runBookmarkSyncJobEffect({
 		}));
 		const options = {
 			...(account ? { account } : {}),
-			mode,
+			mode: resolvedMode,
 			limit,
 			all: effectiveAll,
 			...(maxPages === undefined ? {} : { maxPages }),
@@ -193,7 +195,7 @@ export function runBookmarkSyncJobEffect({
 				const sync = yield* syncTimelineCollectionEffect({
 					kind: "bookmarks",
 					account,
-					mode,
+					mode: resolvedMode,
 					limit,
 					all: effectiveAll,
 					maxPages,
@@ -253,7 +255,7 @@ export function runBookmarkSyncJob(
 function buildProgramArguments({
 	program = "birdclaw",
 	account,
-	mode = "auto",
+	mode,
 	limit = DEFAULT_BOOKMARK_SYNC_LIMIT,
 	all = false,
 	maxPages = DEFAULT_BOOKMARK_SYNC_MAX_PAGES,
@@ -262,17 +264,18 @@ function buildProgramArguments({
 	logPath,
 	envFile,
 }: BookmarkSyncLaunchAgentOptions) {
-	const args = [
-		"--json",
-		"jobs",
-		"sync-bookmarks",
-		"--mode",
-		mode,
+	const resolvedMode =
+		mode === undefined ? undefined : resolveLiveSyncMode(mode);
+	const args = ["--json", "jobs", "sync-bookmarks"];
+	if (resolvedMode) {
+		args.push("--mode", resolvedMode);
+	}
+	args.push(
 		"--limit",
 		String(limit),
 		"--log",
 		resolveUserPath(logPath ?? getDefaultBookmarkSyncAuditLogPath()),
-	];
+	);
 	if (account) {
 		args.push("--account", account);
 	}
@@ -324,10 +327,10 @@ export function installBookmarkSyncLaunchAgentEffect(
 	options: BookmarkSyncLaunchAgentOptions = {},
 ): Effect.Effect<BookmarkSyncLaunchAgentInstallResult, unknown> {
 	return Effect.gen(function* () {
-		yield* trySync(() => ensureBirdclawDirs());
 		const agent = yield* trySync(() =>
 			buildBookmarkSyncLaunchAgentPlist(options),
 		);
+		yield* trySync(() => ensureBirdclawDirs());
 		return yield* installLaunchAgentEffect(agent, options);
 	});
 }

@@ -11,6 +11,11 @@ import {
 import { getNativeDb } from "./db";
 import { getBirdclawConfig } from "./config";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
+import {
+	type LiveReadMode,
+	resolveLiveReadMode,
+	xurlDisabledTransportStatus,
+} from "./live-transport-policy";
 import { buildMediaJsonFromIncludes, countTweetMedia } from "./media-includes";
 import type { Database } from "./sqlite";
 import {
@@ -52,6 +57,7 @@ import {
 export interface ProfileAnalysisOptions {
 	handle: string;
 	account?: string;
+	mode?: LiveReadMode;
 	refresh?: boolean;
 	maxTweets?: number;
 	maxPages?: number;
@@ -357,12 +363,12 @@ function refreshTweetFts(
 	);
 }
 
-function mergeXurlTweetsIntoLocalStore(
+function mergeLiveTweetsIntoLocalStore(
 	db: Database,
 	accountId: string,
 	payload: XurlTweetsResponse,
 	edgeKind: TweetAccountEdgeKind,
-	source: "xurl" | "cache",
+	source: "bird" | "xurl",
 ) {
 	const usersById = new Map(
 		(payload.includes?.users ?? []).map((user) => [user.id, user]),
@@ -545,6 +551,7 @@ function compactConversationTweet(
 function contextCacheKey(options: {
 	accountId: string;
 	handle: string;
+	mode: LiveReadMode;
 	maxTweets: number;
 	maxPages: number;
 	maxConversations: number;
@@ -554,6 +561,7 @@ function contextCacheKey(options: {
 		"profile-analysis:context",
 		options.accountId,
 		options.handle.toLowerCase(),
+		options.mode,
 		String(options.maxTweets),
 		String(options.maxPages),
 		String(options.maxConversations),
@@ -736,6 +744,9 @@ export function collectProfileAnalysisContextEffect(
 	handlers: ProfileAnalysisStreamHandlers = {},
 ): Effect.Effect<ProfileAnalysisContext, Error> {
 	return Effect.gen(function* () {
+		const liveMode = yield* tryProfileSync(() =>
+			resolveLiveReadMode(options.mode),
+		);
 		const db = getNativeDb();
 		const handle = yield* tryProfileSync(() => normalizeHandle(options.handle));
 		const account = yield* tryProfileSync(() =>
@@ -776,6 +787,7 @@ export function collectProfileAnalysisContextEffect(
 		const contextKey = contextCacheKey({
 			accountId: account.id,
 			handle,
+			mode: liveMode,
 			maxTweets,
 			maxPages,
 			maxConversations,
@@ -813,7 +825,12 @@ export function collectProfileAnalysisContextEffect(
 		yield* abortIfRequestedEffect(options.signal);
 
 		let user: XurlMentionUser | undefined;
-		const transport = yield* getTransportStatusEffect();
+		const transport =
+			liveMode === "bird"
+				? xurlDisabledTransportStatus()
+				: yield* getTransportStatusEffect();
+		const liveSource =
+			transport.availableTransport === "xurl" ? "xurl" : "bird";
 
 		if (transport.availableTransport === "xurl") {
 			const [xurlUser] = yield* lookupUsersByHandlesEffect([handle], {
@@ -930,12 +947,12 @@ export function collectProfileAnalysisContextEffect(
 			tweetPages = 1;
 		}
 		yield* tryProfileSync(() =>
-			mergeXurlTweetsIntoLocalStore(
+			mergeLiveTweetsIntoLocalStore(
 				db,
 				account.id,
 				profilePayload,
 				"profile",
-				"xurl",
+				liveSource,
 			),
 		);
 
@@ -1059,12 +1076,12 @@ export function collectProfileAnalysisContextEffect(
 		}
 		const conversationPayload = mergeResponses(conversationResponses);
 		yield* tryProfileSync(() =>
-			mergeXurlTweetsIntoLocalStore(
+			mergeLiveTweetsIntoLocalStore(
 				db,
 				account.id,
 				conversationPayload,
 				"thread_context",
-				"xurl",
+				liveSource,
 			),
 		);
 

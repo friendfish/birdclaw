@@ -21,6 +21,7 @@ Flags:
 
 - `--refresh` — refresh live DMs before listing
 - `--mode bird|xurl|auto` — choose the live transport for refreshes
+- `--[no-]xurl-fallback` — allow or forbid xurl fallback for profile resolution; when omitted, configuration and the operation default decide
 - `--cache-ttl <seconds>` — tune freshness
 - `--participant <handle-or-id>`
 - `--min-followers <n>` / `--max-followers <n>`
@@ -49,7 +50,7 @@ Flags:
 
 Sync is idempotent — re-running merges new events without disturbing already-imported message bodies.
 
-`--mode bird` remains the default because it can read accepted DMs and message requests with accept/reject state. `--mode xurl` imports recent OAuth2 `/2/dm_events` as accepted conversations only; use `--mode auto` to try xurl for accepted DMs and fall back to bird. Message-request inbox syncs always require `bird`.
+With no explicit or global live-data setting, `--mode bird` remains the capability default because it can read accepted DMs and message requests with accept/reject state. `--mode xurl` imports recent OAuth2 `/2/dm_events` as accepted conversations only; it does not overwrite an existing local request/accepted classification. Use `--mode auto` to try xurl for accepted DMs and fall back to bird. Message-request inbox syncs always require `bird`.
 
 ## Search
 
@@ -58,11 +59,15 @@ birdclaw search dms "prototype" --json
 birdclaw search dms "layout" --min-followers 1000 --min-influence-score 120 --sort followers --json
 birdclaw search dms "invoice" --participant @someone --replied --json
 birdclaw search dms "blacksmith" --context 4 --resolve-profiles --expand-urls --no-xurl-fallback --json
-birdclaw whois "blacksmith guy" --context 4 --no-xurl-fallback --json
+birdclaw whois "blacksmith guy" --context 4 --xurl-fallback --json
 birdclaw whois "blacksmith" --context 4 --no-xurl-fallback --json
 ```
 
 Same FTS5 backbone as tweet search, with the DM-specific filters layered on top. See [Search](search.md#search-dms) for the full flag list.
+
+`search dms` and `whois` both accept `--[no-]xurl-fallback`; without either
+flag, whether profile resolution may use xurl comes from configured transport
+policy and the operation default.
 
 For identity lookups, `whois` clusters matching conversations, includes nearby DM
 context, resolves numeric archive profiles through cache-backed `bird`/`xurl`

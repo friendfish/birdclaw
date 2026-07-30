@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetBirdclawPathsForTests } from "./config";
+import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import { getConversationThread, listDmConversations } from "./queries";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 
@@ -67,6 +67,39 @@ function makeTempHome() {
 	return tempDir;
 }
 
+function makeBirdDmClassificationPayload(
+	inboxKind: "accepted" | "request",
+	eventId: string,
+) {
+	const event = {
+		id: eventId,
+		conversationId: "25401953-42",
+		text: `${inboxKind} Bird DM`,
+		createdAt: "2026-05-20T11:00:00.000Z",
+		senderId: "42",
+		recipientId: "25401953",
+		sender: { id: "42", username: "sam", name: "Sam Altman" },
+		recipient: { id: "25401953", username: "steipete", name: "Peter" },
+	};
+	return {
+		success: true,
+		conversations: [
+			{
+				id: "25401953-42",
+				participants: [
+					{ id: "25401953", username: "steipete", name: "Peter" },
+					{ id: "42", username: "sam", name: "Sam Altman" },
+				],
+				messages: [event],
+				lastMessageAt: event.createdAt,
+				inboxKind,
+				isMessageRequest: inboxKind === "request",
+			},
+		],
+		events: [event],
+	};
+}
+
 describe("cached live DMs", () => {
 	beforeEach(() => {
 		listDirectMessagesViaBirdMock.mockReset();
@@ -87,6 +120,7 @@ describe("cached live DMs", () => {
 		resetDatabaseForTests();
 		resetBirdclawPathsForTests();
 		delete process.env.BIRDCLAW_HOME;
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 
 		for (const dir of tempDirs.splice(0)) {
 			rmSync(dir, { recursive: true, force: true });
@@ -116,6 +150,57 @@ describe("cached live DMs", () => {
 			messages: 0,
 		});
 		expect(listDirectMessagesViaBirdMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("uses configured xurl for an omitted mode", async () => {
+		makeTempHome();
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "xurl";
+		listDirectMessageEventsViaXurlMock.mockResolvedValue({
+			data: [],
+			includes: { users: [] },
+			meta: {},
+		});
+		const { syncDirectMessagesViaCachedBird } = await import("./dms-live");
+
+		await expect(
+			syncDirectMessagesViaCachedBird({ limit: 5, refresh: true }),
+		).resolves.toMatchObject({ source: "xurl" });
+		expect(listDirectMessagesViaBirdMock).not.toHaveBeenCalled();
+		expect(listDirectMessageEventsViaXurlMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("uses configured xurl from config for an omitted mode", async () => {
+		makeTempHome();
+		writeBirdclawConfig({ live: { dataSource: "xurl" } });
+		listDirectMessageEventsViaXurlMock.mockResolvedValue({
+			data: [],
+			includes: { users: [] },
+			meta: {},
+		});
+		const { syncDirectMessagesViaCachedBird } = await import("./dms-live");
+
+		await expect(
+			syncDirectMessagesViaCachedBird({ limit: 5, refresh: true }),
+		).resolves.toMatchObject({ source: "xurl" });
+		expect(listDirectMessagesViaBirdMock).not.toHaveBeenCalled();
+		expect(listDirectMessageEventsViaXurlMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps configured Bird entirely off xurl for an omitted mode", async () => {
+		makeTempHome();
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "bird";
+		listDirectMessagesViaBirdMock.mockResolvedValue({
+			success: true,
+			conversations: [],
+			events: [],
+		});
+		const { syncDirectMessagesViaCachedBird } = await import("./dms-live");
+
+		await expect(
+			syncDirectMessagesViaCachedBird({ limit: 5, refresh: true }),
+		).resolves.toMatchObject({ source: "bird" });
+		expect(lookupAuthenticatedUserMock).not.toHaveBeenCalled();
+		expect(listDirectMessageEventsViaXurlMock).not.toHaveBeenCalled();
 	});
 
 	it("fetches bird DMs, caches them, and syncs them into the local store", async () => {
@@ -280,6 +365,141 @@ describe("cached live DMs", () => {
 			}),
 		]);
 	});
+
+	it.each(["xurl", "auto"] as const)(
+		"preserves Bird message-request state when configured %s syncs through xurl",
+		async (dataSource) => {
+			makeTempHome();
+			writeBirdclawConfig({ live: { dataSource } });
+			listDirectMessagesViaBirdMock.mockResolvedValueOnce(
+				makeBirdDmClassificationPayload("request", "dm_request_1"),
+			);
+			listDirectMessageEventsViaXurlMock.mockResolvedValueOnce({
+				data: [
+					{
+						id: "dm_xurl_after_request",
+						event_type: "MessageCreate",
+						text: "New event without request metadata",
+						created_at: "2026-05-20T12:00:00.000Z",
+						dm_conversation_id: "25401953-42",
+						sender_id: "42",
+						participant_ids: ["25401953", "42"],
+					},
+				],
+				includes: {
+					users: [
+						{ id: "25401953", username: "steipete", name: "Peter" },
+						{ id: "42", username: "sam", name: "Sam Altman" },
+					],
+				},
+				meta: { result_count: 1 },
+			});
+			const { syncDirectMessagesViaCachedBird } = await import("./dms-live");
+
+			await syncDirectMessagesViaCachedBird({
+				account: "acct_primary",
+				mode: "bird",
+				limit: 5,
+				refresh: true,
+			});
+			await expect(
+				syncDirectMessagesViaCachedBird({
+					account: "acct_primary",
+					limit: 5,
+					refresh: true,
+				}),
+			).resolves.toMatchObject({ source: "xurl" });
+
+			expect(listDmConversations({ limit: 10 })).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						id: "25401953-42",
+						inboxKind: "request",
+						isMessageRequest: true,
+					}),
+				]),
+			);
+		},
+	);
+
+	it("preserves local classification when replaying a cached Bird payload", async () => {
+		makeTempHome();
+		listDirectMessagesViaBirdMock.mockResolvedValueOnce(
+			makeBirdDmClassificationPayload("request", "dm_cached_request"),
+		);
+		const { syncDirectMessagesViaCachedBird } = await import("./dms-live");
+
+		await syncDirectMessagesViaCachedBird({
+			account: "acct_primary",
+			mode: "bird",
+			limit: 5,
+			refresh: true,
+		});
+		getNativeDb()
+			.prepare(
+				"update dm_conversations set inbox_kind = 'accepted' where id = ?",
+			)
+			.run("25401953-42");
+
+		await expect(
+			syncDirectMessagesViaCachedBird({
+				account: "acct_primary",
+				mode: "bird",
+				limit: 5,
+			}),
+		).resolves.toMatchObject({ source: "cache" });
+		expect(listDirectMessagesViaBirdMock).toHaveBeenCalledTimes(1);
+		expect(listDmConversations({ limit: 10 })).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					id: "25401953-42",
+					inboxKind: "accepted",
+					isMessageRequest: false,
+				}),
+			]),
+		);
+	});
+
+	it.each([
+		["accepted", "request"],
+		["request", "accepted"],
+	] as const)(
+		"allows live Bird to update classification from %s to %s",
+		async (initialKind, updatedKind) => {
+			makeTempHome();
+			listDirectMessagesViaBirdMock
+				.mockResolvedValueOnce(
+					makeBirdDmClassificationPayload(initialKind, "dm_bird_initial"),
+				)
+				.mockResolvedValueOnce(
+					makeBirdDmClassificationPayload(updatedKind, "dm_bird_updated"),
+				);
+			const { syncDirectMessagesViaCachedBird } = await import("./dms-live");
+
+			await syncDirectMessagesViaCachedBird({
+				account: "acct_primary",
+				mode: "bird",
+				limit: 5,
+				refresh: true,
+			});
+			await syncDirectMessagesViaCachedBird({
+				account: "acct_primary",
+				mode: "bird",
+				limit: 5,
+				refresh: true,
+			});
+
+			expect(listDmConversations({ limit: 10 })).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						id: "25401953-42",
+						inboxKind: updatedKind,
+						isMessageRequest: updatedKind === "request",
+					}),
+				]),
+			);
+		},
+	);
 
 	it("paginates xurl DM events when requested", async () => {
 		makeTempHome();

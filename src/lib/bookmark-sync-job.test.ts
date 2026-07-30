@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	buildBookmarkSyncLaunchAgentPlist,
 	installBookmarkSyncLaunchAgent,
@@ -19,6 +19,8 @@ const syncTimelineCollectionMock = vi.hoisted(() => vi.fn());
 const maybeAutoSyncBackupMock = vi.hoisted(() => vi.fn());
 const execFileAsyncMock = vi.hoisted(() => vi.fn());
 const execFileMock = vi.hoisted(() => vi.fn());
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 
 Object.defineProperty(
 	execFileMock,
@@ -64,10 +66,26 @@ function makeTempDir(prefix: string) {
 	return dir;
 }
 
+beforeEach(() => {
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "auto";
+	resetBirdclawPathsForTests();
+});
+
 afterEach(() => {
 	resetDatabaseForTests();
-	resetBirdclawPathsForTests();
 	delete process.env.BIRDCLAW_HOME;
+	if (originalLiveDataSource === undefined) {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+	}
+	if (originalMentionsDataSource === undefined) {
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+	}
+	resetBirdclawPathsForTests();
 	syncTimelineCollectionMock.mockReset();
 	maybeAutoSyncBackupMock.mockReset();
 	execFileAsyncMock.mockReset();
@@ -77,6 +95,70 @@ afterEach(() => {
 });
 
 describe("bookmark sync job", () => {
+	it("resolves an omitted job mode to Bird without probing xurl", async () => {
+		process.env.BIRDCLAW_HOME = makeTempDir("birdclaw-job-bird-");
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		const logPath = path.join(process.env.BIRDCLAW_HOME, "audit.jsonl");
+		syncTimelineCollectionMock.mockResolvedValue({
+			ok: true,
+			source: "bird",
+			kind: "bookmarks",
+			accountId: "acct_primary",
+			count: 1,
+			payload: { data: [] },
+		});
+		maybeAutoSyncBackupMock.mockResolvedValue({
+			ok: true,
+			enabled: false,
+			skipped: true,
+		});
+
+		const result = await runBookmarkSyncJob({ logPath });
+
+		expect(result.options.mode).toBe("bird");
+		expect(syncTimelineCollectionMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+	});
+
+	it("omits launchd mode when no transport was explicitly selected", () => {
+		process.env.BIRDCLAW_HOME = makeTempDir("birdclaw-launchd-mode-");
+		resetBirdclawPathsForTests();
+
+		const agent = buildBookmarkSyncLaunchAgentPlist();
+
+		expect(agent.programArguments).not.toContain("--mode");
+	});
+
+	it("rejects invalid runtime and LaunchAgent modes before side effects", async () => {
+		const parentDir = makeTempDir("birdclaw-invalid-bookmark-job-");
+		const homeDir = path.join(parentDir, "home");
+		const launchAgentsDir = path.join(parentDir, "LaunchAgents");
+		process.env.BIRDCLAW_HOME = homeDir;
+		resetBirdclawPathsForTests();
+
+		await expect(
+			runBookmarkSyncJob({ mode: "invalid" as "auto", db: {} as never }),
+		).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
+		expect(existsSync(homeDir)).toBe(false);
+		expect(syncTimelineCollectionMock).not.toHaveBeenCalled();
+
+		expect(() =>
+			buildBookmarkSyncLaunchAgentPlist({ mode: "invalid" as "auto" }),
+		).toThrow("Invalid live-read mode; expected auto, bird, or xurl");
+
+		await expect(
+			installBookmarkSyncLaunchAgent({
+				mode: "invalid" as "auto",
+				launchAgentsDir,
+				load: false,
+			}),
+		).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
+		expect(existsSync(homeDir)).toBe(false);
+		expect(existsSync(launchAgentsDir)).toBe(false);
+	});
+
 	it("builds bookmark sync jobs lazily as Effect programs", async () => {
 		process.env.BIRDCLAW_HOME = makeTempDir("birdclaw-job-lazy-");
 		resetBirdclawPathsForTests();

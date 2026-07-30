@@ -24,7 +24,8 @@ export function parseDmInboxOption(
 export function parseDmSyncModeOption(
 	value: string | undefined,
 ): DirectMessagesSyncMode | undefined {
-	const normalized = (value ?? "bird").trim().toLowerCase();
+	if (value === undefined) return undefined;
+	const normalized = value.trim().toLowerCase();
 	if (normalized === "auto" || normalized === "bird" || normalized === "xurl") {
 		return normalized;
 	}
@@ -49,7 +50,7 @@ export async function enrichDmItems(
 				items.map((item) => item.participant.id),
 				{
 					refresh: options.refreshProfileCache,
-					xurlFallback: options.xurlFallback ?? true,
+					xurlFallback: options.xurlFallback,
 				},
 			)
 		: undefined;

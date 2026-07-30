@@ -10,6 +10,7 @@ import {
 	resolveUserPath,
 	type LaunchAgentInstallResult,
 } from "./launchd";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import { syncMentionThreads } from "./mention-threads-live";
 import { syncMentions } from "./mentions-live";
 import {
@@ -243,9 +244,13 @@ async function runStep({
 			};
 		}
 		if (kind === "mention-threads") {
+			const threadMode = mode === "bird" ? "bird" : "xurl";
+			if (threadMode === "bird" && !allowBirdAccount) {
+				return { kind, ok: false, count: 0, error: birdAccountError(kind) };
+			}
 			const result = await syncMentionThreads({
 				account,
-				mode: "xurl",
+				mode: threadMode,
 				limit: Math.min(30, limit),
 				delayMs: 1500,
 				timeoutMs: 15000,
@@ -320,7 +325,7 @@ async function runStep({
 export async function runAccountSyncJob({
 	account,
 	steps = DEFAULT_STEPS,
-	mode = "auto",
+	mode,
 	limit = DEFAULT_ACCOUNT_SYNC_LIMIT,
 	maxPages = DEFAULT_ACCOUNT_SYNC_MAX_PAGES,
 	refresh = true,
@@ -330,6 +335,7 @@ export async function runAccountSyncJob({
 	lockPath,
 	db,
 }: AccountSyncJobOptions = {}): Promise<AccountSyncAuditEntry> {
+	const resolvedMode = resolveLiveSyncMode(mode);
 	ensureBirdclawDirs();
 	const database = db ?? getNativeDb({ seedDemoData: false });
 	const resolvedLogPath = resolveUserPath(
@@ -342,7 +348,7 @@ export async function runAccountSyncJob({
 	const options = {
 		...(account ? { account } : {}),
 		steps,
-		mode,
+		mode: resolvedMode,
 		limit,
 		maxPages,
 		refresh,
@@ -377,7 +383,7 @@ export async function runAccountSyncJob({
 				await runStep({
 					kind,
 					account,
-					mode,
+					mode: resolvedMode,
 					limit,
 					maxPages,
 					refresh,
@@ -417,7 +423,7 @@ function buildProgramArguments({
 	program = "birdclaw",
 	account,
 	steps,
-	mode = "auto",
+	mode,
 	limit = DEFAULT_ACCOUNT_SYNC_LIMIT,
 	maxPages = DEFAULT_ACCOUNT_SYNC_MAX_PAGES,
 	refresh = true,
@@ -426,12 +432,12 @@ function buildProgramArguments({
 	logPath,
 	envFile,
 }: AccountSyncLaunchAgentOptions) {
+	const resolvedMode =
+		mode === undefined ? undefined : resolveLiveSyncMode(mode);
 	const args = [
 		"--json",
 		"jobs",
 		"sync-account",
-		"--mode",
-		mode,
 		"--limit",
 		String(limit),
 		"--max-pages",
@@ -444,6 +450,9 @@ function buildProgramArguments({
 	}
 	if (steps?.length) {
 		args.push("--steps", steps.join(","));
+	}
+	if (resolvedMode) {
+		args.push("--mode", resolvedMode);
 	}
 	if (refresh) {
 		args.push("--refresh");
@@ -489,8 +498,8 @@ export function buildAccountSyncLaunchAgentPlist(
 export async function installAccountSyncLaunchAgent(
 	options: AccountSyncLaunchAgentOptions = {},
 ): Promise<AccountSyncLaunchAgentInstallResult> {
-	ensureBirdclawDirs();
 	const agent = buildAccountSyncLaunchAgentPlist(options);
+	ensureBirdclawDirs();
 	return installLaunchAgent(agent, options);
 }
 

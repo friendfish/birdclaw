@@ -43,6 +43,9 @@ vi.mock("./xurl", () => ({
 }));
 
 let homeDir = "";
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+const originalConfig = process.env.BIRDCLAW_CONFIG;
 
 function resetStore() {
 	const db = getNativeDb();
@@ -76,6 +79,9 @@ describe("profile resolver", () => {
 	beforeEach(() => {
 		homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-profile-resolver-"));
 		process.env.BIRDCLAW_HOME = homeDir;
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "birdclaw";
+		delete process.env.BIRDCLAW_CONFIG;
 		resetBirdclawPathsForTests();
 		resetDatabaseForTests();
 		mocks.lookupProfileViaBird.mockReset();
@@ -95,8 +101,23 @@ describe("profile resolver", () => {
 
 	afterEach(() => {
 		resetDatabaseForTests();
-		resetBirdclawPathsForTests();
 		delete process.env.BIRDCLAW_HOME;
+		if (originalLiveDataSource === undefined) {
+			delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+		}
+		if (originalMentionsDataSource === undefined) {
+			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+		}
+		if (originalConfig === undefined) {
+			delete process.env.BIRDCLAW_CONFIG;
+		} else {
+			process.env.BIRDCLAW_CONFIG = originalConfig;
+		}
+		resetBirdclawPathsForTests();
 		rmSync(homeDir, { recursive: true, force: true });
 	});
 
@@ -246,6 +267,97 @@ describe("profile resolver", () => {
 		expect(mocks.lookupUsersByIds).toHaveBeenCalledTimes(1);
 	});
 
+	it.each(["miss", "error"] as const)(
+		"ignores a cached xurl %s after switching to Bird mode",
+		async (negativeStatus) => {
+			mocks.lookupProfileViaBird.mockResolvedValueOnce(null);
+			if (negativeStatus === "error") {
+				mocks.lookupUsersByIds.mockRejectedValueOnce(new Error("xurl down"));
+			} else {
+				mocks.lookupUsersByIds.mockResolvedValueOnce([]);
+			}
+			const { resolveProfilesForIds } = await import("./profile-resolver");
+
+			await expect(resolveProfilesForIds(["profile_user_42"])).resolves.toEqual(
+				[
+					expect.objectContaining({
+						status: negativeStatus,
+						source: "xurl",
+					}),
+				],
+			);
+
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+			resetBirdclawPathsForTests();
+			mocks.lookupProfileViaBird.mockResolvedValueOnce({
+				id: "42",
+				username: "sam",
+				name: "Sam Altman",
+				public_metrics: { followers_count: 123, following_count: 45 },
+			});
+
+			await expect(resolveProfilesForIds(["profile_user_42"])).resolves.toEqual(
+				[
+					expect.objectContaining({
+						status: "hit",
+						source: "bird",
+						profile: expect.objectContaining({ handle: "sam" }),
+					}),
+				],
+			);
+			expect(mocks.lookupProfileViaBird).toHaveBeenCalledTimes(2);
+			expect(mocks.lookupUsersByIds).toHaveBeenCalledTimes(1);
+		},
+	);
+
+	it("reuses a compatible cached Bird negative in Bird mode", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		mocks.lookupProfileViaBird.mockResolvedValueOnce(null);
+		const { resolveProfilesForIds } = await import("./profile-resolver");
+
+		await expect(resolveProfilesForIds(["profile_user_42"])).resolves.toEqual([
+			expect.objectContaining({ status: "miss", source: "bird" }),
+		]);
+		await expect(resolveProfilesForIds(["profile_user_42"])).resolves.toEqual([
+			expect.objectContaining({ status: "miss", source: "negative-cache" }),
+		]);
+		expect(mocks.lookupProfileViaBird).toHaveBeenCalledTimes(1);
+		expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
+	});
+
+	it("ignores a cached Bird-only miss when xurl fallback is later enabled", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		mocks.lookupProfileViaBird
+			.mockResolvedValueOnce(null)
+			.mockResolvedValueOnce(null);
+		mocks.lookupUsersByIds.mockResolvedValueOnce([
+			{
+				id: "42",
+				username: "sam",
+				name: "Sam Altman",
+				public_metrics: { followers_count: 123, following_count: 45 },
+			},
+		]);
+		const { resolveProfilesForIds } = await import("./profile-resolver");
+
+		await expect(resolveProfilesForIds(["profile_user_42"])).resolves.toEqual([
+			expect.objectContaining({ status: "miss", source: "bird" }),
+		]);
+		await expect(
+			resolveProfilesForIds(["profile_user_42"], { xurlFallback: true }),
+		).resolves.toEqual([
+			expect.objectContaining({
+				status: "hit",
+				source: "xurl",
+				profile: expect.objectContaining({ handle: "sam" }),
+			}),
+		]);
+		expect(mocks.lookupProfileViaBird).toHaveBeenCalledTimes(2);
+		expect(mocks.lookupUsersByIds).toHaveBeenCalledTimes(1);
+	});
+
 	it("resolves handle-only profiles through bird and xurl fallback", async () => {
 		const db = getNativeDb();
 		db.prepare(
@@ -284,6 +396,42 @@ describe("profile resolver", () => {
 			}),
 		]);
 		expect(mocks.lookupUsersByHandles).toHaveBeenCalledWith(["fcoury"]);
+	});
+
+	it("does not fall back to xurl for misses in configured bird mode", async () => {
+		const previousDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		try {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+			resetBirdclawPathsForTests();
+			mocks.lookupProfilesViaBird.mockResolvedValueOnce([
+				{ target: "missing", user: null },
+			]);
+			mocks.lookupProfileViaBird.mockResolvedValueOnce(null);
+			const { resolveProfilesForHandles, resolveProfilesForIds } =
+				await import("./profile-resolver");
+
+			await expect(resolveProfilesForHandles(["missing"])).resolves.toEqual([
+				expect.objectContaining({
+					handle: "missing",
+					status: "miss",
+					source: "bird",
+				}),
+			]);
+			await expect(
+				resolveProfilesForIds(["profile_user_42"], { refresh: true }),
+			).resolves.toEqual([
+				expect.objectContaining({ status: "miss", source: "bird" }),
+			]);
+			expect(mocks.lookupUsersByHandles).not.toHaveBeenCalled();
+			expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
+		} finally {
+			if (previousDataSource === undefined) {
+				delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+			} else {
+				process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = previousDataSource;
+			}
+			resetBirdclawPathsForTests();
+		}
 	});
 
 	it("hydrates synthetic highlighted-label affiliations into real org profiles", async () => {

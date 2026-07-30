@@ -8,6 +8,7 @@ import {
 	assertLiveAccountMatches,
 	resolveLiveSyncAccount,
 } from "./live-sync-engine";
+import { resolveLiveReadMode } from "./live-transport-policy";
 import {
 	getTransportStatusEffect,
 	lookupAuthenticatedOAuth2UserEffect,
@@ -169,6 +170,16 @@ export function hydrateProfilesFromXEffect({
 	account,
 }: { account?: string } = {}): Effect.Effect<HydrateProfilesResult, unknown> {
 	return Effect.gen(function* () {
+		if (resolveLiveReadMode() === "bird") {
+			const hydratedAccount = yield* hydrateAccountFromBirdEffect(account);
+			return {
+				ok: true,
+				hydratedProfiles: 0,
+				hydratedAccount,
+				reason: "xurl disabled by bird transport selection",
+			};
+		}
+
 		const transport = yield* getTransportStatusEffect();
 		if (transport.availableTransport !== "xurl") {
 			// xurl is unavailable, so the live profile backfill can't run. When the

@@ -7,6 +7,10 @@ const getBirdclawPathsMock = vi.fn();
 const getDefaultAccountSelectorMock = vi.fn();
 const resolveOperationAccountMock = vi.fn();
 const resolveMentionsDataSourceMock = vi.fn();
+const resolveActionsTransportMock = vi.hoisted(() => vi.fn());
+const resolveLiveReadModeMock = vi.hoisted(() => vi.fn());
+const resolveLiveSyncModeMock = vi.hoisted(() => vi.fn());
+const resolveMentionThreadReadModeMock = vi.hoisted(() => vi.fn());
 const setActionsTransportMock = vi.fn();
 const getQueryEnvelopeMock = vi.fn();
 const getNativeDbMock = vi.fn();
@@ -56,6 +60,7 @@ const hydrateProfilesFromXMock = vi.fn();
 const inspectProfileRepliesMock = vi.fn();
 const runResearchModeMock = vi.fn();
 const streamPeriodDigestMock = vi.fn();
+const streamProfileAnalysisMock = vi.fn();
 const streamSearchDiscussionMock = vi.fn();
 const syncAuthoredTweetsMock = vi.fn();
 const syncTimelineCollectionMock = vi.fn();
@@ -66,6 +71,13 @@ const removeBlockMock = vi.fn();
 const removeMuteMock = vi.fn();
 const maybeAutoUpdateBackupMock = vi.fn();
 const maybeAutoSyncBackupMock = vi.fn();
+const runAccountSyncJobMock = vi.hoisted(() => vi.fn());
+const installAccountSyncLaunchAgentMock = vi.hoisted(() => vi.fn());
+const parseAccountSyncStepsMock = vi.hoisted(() => vi.fn());
+const runBookmarkSyncJobMock = vi.hoisted(() => vi.fn());
+const installBookmarkSyncLaunchAgentMock = vi.hoisted(() => vi.fn());
+const syncHomeTimelineMock = vi.hoisted(() => vi.fn());
+const syncXListsMock = vi.hoisted(() => vi.fn());
 const exportBackupMock = vi.fn();
 const importBackupMock = vi.fn();
 const syncBackupMock = vi.fn();
@@ -95,7 +107,30 @@ vi.mock("#/lib/config", () => ({
 	getBirdclawPaths: () => getBirdclawPathsMock(),
 	resolveMentionsDataSource: (...args: unknown[]) =>
 		resolveMentionsDataSourceMock(...args),
+	resolveActionsTransport: (...args: unknown[]) =>
+		resolveActionsTransportMock(...args),
 	setActionsTransport: (...args: unknown[]) => setActionsTransportMock(...args),
+}));
+
+vi.mock("#/lib/live-transport-policy", () => ({
+	resolveLiveReadMode: (...args: unknown[]) => resolveLiveReadModeMock(...args),
+	resolveLiveSyncMode: (...args: unknown[]) => resolveLiveSyncModeMock(...args),
+	resolveMentionThreadReadMode: (...args: unknown[]) =>
+		resolveMentionThreadReadModeMock(...args),
+}));
+
+vi.mock("#/lib/account-sync-job", () => ({
+	runAccountSyncJob: (...args: unknown[]) => runAccountSyncJobMock(...args),
+	installAccountSyncLaunchAgent: (...args: unknown[]) =>
+		installAccountSyncLaunchAgentMock(...args),
+	parseAccountSyncSteps: (...args: unknown[]) =>
+		parseAccountSyncStepsMock(...args),
+}));
+
+vi.mock("#/lib/bookmark-sync-job", () => ({
+	runBookmarkSyncJob: (...args: unknown[]) => runBookmarkSyncJobMock(...args),
+	installBookmarkSyncLaunchAgent: (...args: unknown[]) =>
+		installBookmarkSyncLaunchAgentMock(...args),
 }));
 
 vi.mock("#/lib/db", () => ({
@@ -258,6 +293,11 @@ vi.mock("#/lib/search-discussion", () => ({
 		streamSearchDiscussionMock(...args),
 }));
 
+vi.mock("#/lib/profile-analysis", () => ({
+	streamProfileAnalysis: (...args: unknown[]) =>
+		streamProfileAnalysisMock(...args),
+}));
+
 vi.mock("#/lib/authored-live", () => ({
 	AuthoredSyncError: class AuthoredSyncError extends Error {
 		constructor(
@@ -297,6 +337,14 @@ vi.mock("#/lib/timeline-collections-live", () => ({
 		syncTimelineCollectionMock(...args),
 }));
 
+vi.mock("#/lib/timeline-live", () => ({
+	syncHomeTimeline: (...args: unknown[]) => syncHomeTimelineMock(...args),
+}));
+
+vi.mock("#/lib/x-lists", () => ({
+	syncXLists: (...args: unknown[]) => syncXListsMock(...args),
+}));
+
 vi.mock("#/lib/url-expansion", () => ({
 	expandUrlsFromTexts: (...args: unknown[]) => expandUrlsFromTextsMock(...args),
 }));
@@ -324,6 +372,10 @@ describe("cli", () => {
 		getDefaultAccountSelectorMock.mockReset();
 		resolveOperationAccountMock.mockReset();
 		resolveMentionsDataSourceMock.mockReset();
+		resolveActionsTransportMock.mockReset();
+		resolveLiveReadModeMock.mockReset();
+		resolveLiveSyncModeMock.mockReset();
+		resolveMentionThreadReadModeMock.mockReset();
 		setActionsTransportMock.mockReset();
 		getQueryEnvelopeMock.mockReset();
 		getNativeDbMock.mockReset();
@@ -373,6 +425,7 @@ describe("cli", () => {
 		inspectProfileRepliesMock.mockReset();
 		runResearchModeMock.mockReset();
 		streamPeriodDigestMock.mockReset();
+		streamProfileAnalysisMock.mockReset();
 		streamSearchDiscussionMock.mockReset();
 		syncAuthoredTweetsMock.mockReset();
 		syncTimelineCollectionMock.mockReset();
@@ -383,6 +436,13 @@ describe("cli", () => {
 		removeMuteMock.mockReset();
 		maybeAutoUpdateBackupMock.mockReset();
 		maybeAutoSyncBackupMock.mockReset();
+		runAccountSyncJobMock.mockReset();
+		installAccountSyncLaunchAgentMock.mockReset();
+		parseAccountSyncStepsMock.mockReset();
+		runBookmarkSyncJobMock.mockReset();
+		installBookmarkSyncLaunchAgentMock.mockReset();
+		syncHomeTimelineMock.mockReset();
+		syncXListsMock.mockReset();
 		exportBackupMock.mockReset();
 		importBackupMock.mockReset();
 		syncBackupMock.mockReset();
@@ -420,6 +480,30 @@ describe("cli", () => {
 		resolveMentionsDataSourceMock.mockImplementation(
 			(mode?: string) => mode ?? "birdclaw",
 		);
+		resolveActionsTransportMock.mockImplementation((mode?: string) => {
+			if (mode === undefined) return "auto";
+			if (mode === "auto" || mode === "bird" || mode === "xurl") return mode;
+			throw new Error("Invalid action transport; expected auto, bird, or xurl");
+		});
+		resolveLiveReadModeMock.mockImplementation((mode?: string) => {
+			if (mode === undefined) return "bird";
+			if (mode === "auto" || mode === "bird" || mode === "xurl") return mode;
+			throw new Error("Invalid live-read mode; expected auto, bird, or xurl");
+		});
+		resolveLiveSyncModeMock.mockImplementation((mode?: string) => {
+			if (mode === undefined) return "bird";
+			if (mode === "auto" || mode === "bird" || mode === "xurl") return mode;
+			throw new Error("Invalid live-read mode; expected auto, bird, or xurl");
+		});
+		resolveMentionThreadReadModeMock.mockImplementation((mode?: string) => {
+			if (mode === undefined) return "bird";
+			if (mode === "bird" || mode === "xurl") return mode;
+			if (mode === "auto") return "xurl";
+			throw new Error("Invalid live-read mode; expected auto, bird, or xurl");
+		});
+		streamProfileAnalysisMock.mockResolvedValue({
+			markdown: "# Profile\n",
+		});
 		setActionsTransportMock.mockImplementation((transport: string) => ({
 			configPath: "/tmp/.birdclaw/config.json",
 			transport,
@@ -623,6 +707,17 @@ describe("cli", () => {
 			enabled: false,
 			skipped: true,
 		});
+		runAccountSyncJobMock.mockResolvedValue({ ok: true });
+		installAccountSyncLaunchAgentMock.mockResolvedValue({ ok: true });
+		parseAccountSyncStepsMock.mockReturnValue(undefined);
+		runBookmarkSyncJobMock.mockResolvedValue({ ok: true });
+		installBookmarkSyncLaunchAgentMock.mockResolvedValue({ ok: true });
+		syncHomeTimelineMock.mockResolvedValue({
+			ok: true,
+			source: "bird",
+			count: 1,
+		});
+		syncXListsMock.mockResolvedValue({ ok: true, source: "bird", count: 1 });
 		exportBackupMock.mockResolvedValue({ ok: true, exported: 1 });
 		importBackupMock.mockResolvedValue({ ok: true, imported: 1 });
 		syncBackupMock.mockResolvedValue({ ok: true, synced: true });
@@ -667,6 +762,171 @@ describe("cli", () => {
 		});
 		expect(getNativeDbMock).toHaveBeenCalledWith({ seedDemoData: false });
 		expect(seedDemoDataMock).not.toHaveBeenCalled();
+	});
+
+	it("forwards account job mode only when explicitly selected", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "jobs", "sync-account"]);
+		expect(runAccountSyncJobMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ mode: undefined }),
+		);
+
+		await runCli(["node", "birdclaw", "jobs", "install-account-launchd"]);
+		expect(installAccountSyncLaunchAgentMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ mode: undefined }),
+		);
+
+		for (const mode of ["auto", "xurl", "bird"]) {
+			await runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"sync-account",
+				"--mode",
+				mode,
+			]);
+			expect(runAccountSyncJobMock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ mode }),
+			);
+
+			await runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"install-account-launchd",
+				"--mode",
+				mode,
+			]);
+			expect(installAccountSyncLaunchAgentMock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ mode }),
+			);
+		}
+	});
+
+	it("forwards bookmark job mode only when explicitly selected", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "jobs", "sync-bookmarks"]);
+		expect(runBookmarkSyncJobMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ mode: undefined }),
+		);
+
+		await runCli(["node", "birdclaw", "jobs", "install-bookmarks-launchd"]);
+		expect(installBookmarkSyncLaunchAgentMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ mode: undefined }),
+		);
+
+		for (const mode of ["auto", "xurl", "bird"]) {
+			await runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"sync-bookmarks",
+				"--mode",
+				mode,
+			]);
+			expect(runBookmarkSyncJobMock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ mode }),
+			);
+
+			await runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"install-bookmarks-launchd",
+				"--mode",
+				mode,
+			]);
+			expect(installBookmarkSyncLaunchAgentMock).toHaveBeenLastCalledWith(
+				expect.objectContaining({ mode }),
+			);
+		}
+	});
+
+	it("rejects invalid account and bookmark job modes before dispatch", async () => {
+		const { runCli } = await loadCli();
+		const cases = [
+			{
+				args: ["jobs", "sync-account"],
+				target: runAccountSyncJobMock,
+			},
+			{
+				args: ["jobs", "install-account-launchd"],
+				target: installAccountSyncLaunchAgentMock,
+			},
+			{
+				args: ["jobs", "sync-bookmarks"],
+				target: runBookmarkSyncJobMock,
+			},
+			{
+				args: ["jobs", "install-bookmarks-launchd"],
+				target: installBookmarkSyncLaunchAgentMock,
+			},
+		];
+
+		for (const { args, target } of cases) {
+			target.mockClear();
+			await expect(
+				runCli(["node", "birdclaw", ...args, "--mode", "invalid"]),
+			).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
+			expect(target).not.toHaveBeenCalled();
+		}
+	});
+
+	it("resolves omitted sync command modes through the live-read policy", async () => {
+		resolveLiveSyncModeMock.mockReturnValue("bird");
+		syncMentionsMock.mockResolvedValue({
+			ok: true,
+			source: "bird",
+			kind: "mentions",
+			count: 1,
+			partial: false,
+		});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "sync", "lists"]);
+		await runCli(["node", "birdclaw", "sync", "timeline"]);
+		await runCli(["node", "birdclaw", "sync", "mentions"]);
+		await runCli(["node", "birdclaw", "sync", "bookmarks"]);
+		await runCli(["node", "birdclaw", "sync", "followers"]);
+
+		expect(syncXListsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncHomeTimelineMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncMentionsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncTimelineCollectionMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+		expect(syncFollowGraphMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+		);
+	});
+
+	it("reports the resolved sync mode when an omitted mode fails", async () => {
+		resolveLiveSyncModeMock.mockReturnValue("bird");
+		syncMentionsMock.mockRejectedValueOnce(new Error("bird unavailable"));
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "sync", "mentions"]);
+
+		expect(consoleLogMock).toHaveBeenCalledWith(
+			JSON.stringify(
+				{
+					ok: false,
+					kind: "mentions",
+					mode: "bird",
+					error: "bird unavailable",
+				},
+				null,
+				2,
+			),
+		);
 	});
 
 	it("seeds and explains an offline demo only when requested", async () => {
@@ -1220,29 +1480,56 @@ describe("cli", () => {
 	});
 
 	it("rejects invalid sync mentions modes as json", async () => {
-		syncMentionsMock.mockRejectedValueOnce(
-			new Error("--mode must be bird or xurl"),
-		);
 		const { runCli } = await loadCli();
 
 		await runCli(["node", "birdclaw", "sync", "mentions", "--mode", "weird"]);
 
-		expect(syncMentionsMock).toHaveBeenCalledWith(
-			expect.objectContaining({ mode: "weird" }),
-		);
+		expect(resolveLiveSyncModeMock).toHaveBeenCalledWith("weird");
+		expect(syncMentionsMock).not.toHaveBeenCalled();
 		expect(consoleLogMock).toHaveBeenCalledWith(
 			JSON.stringify(
 				{
 					ok: false,
 					kind: "mentions",
 					mode: "weird",
-					error: "--mode must be bird or xurl",
+					error: "Invalid live-read mode; expected auto, bird, or xurl",
 				},
 				null,
 				2,
 			),
 		);
 		expect(process.exitCode).toBe(1);
+	});
+
+	it("rejects invalid modes across the remaining sync command families", async () => {
+		const { runCli } = await loadCli();
+		const cases = [
+			{ args: ["sync", "lists"], target: syncXListsMock },
+			{ args: ["sync", "timeline"], target: syncHomeTimelineMock },
+			{ args: ["sync", "authored"], target: syncAuthoredTweetsMock },
+			{
+				args: ["sync", "mention-threads"],
+				target: syncMentionThreadsMock,
+			},
+			{ args: ["sync", "likes"], target: syncTimelineCollectionMock },
+			{ args: ["sync", "bookmarks"], target: syncTimelineCollectionMock },
+			{ args: ["sync", "following"], target: syncFollowGraphMock },
+		];
+
+		for (const { args, target } of cases) {
+			process.exitCode = undefined;
+			consoleLogMock.mockClear();
+			target.mockClear();
+			await runCli(["node", "birdclaw", ...args, "--mode", "invalid"]);
+			expect(target).not.toHaveBeenCalled();
+			expect(process.exitCode).toBe(1);
+			expect(
+				JSON.parse(consoleLogMock.mock.lastCall?.[0] as string),
+			).toMatchObject({
+				ok: false,
+				error: "Invalid live-read mode; expected auto, bird, or xurl",
+			});
+		}
 	});
 
 	it("marks truncated sync mention-threads as partial with exit code 5", async () => {
@@ -1315,6 +1602,28 @@ describe("cli", () => {
 			results: [expect.objectContaining({ truncated: true })],
 		});
 		expect(process.exitCode).toBe(5);
+	});
+
+	it("resolves an omitted mention-thread mode before dispatching", async () => {
+		resolveMentionThreadReadModeMock.mockReturnValue("xurl");
+		syncMentionThreadsMock.mockResolvedValueOnce({
+			ok: true,
+			partial: false,
+		});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "sync", "mention-threads"]);
+
+		expect(resolveMentionThreadReadModeMock).toHaveBeenCalledWith(undefined);
+		expect(syncMentionThreadsMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "xurl" }),
+		);
+		expect(
+			JSON.parse(consoleLogMock.mock.lastCall?.[0] as string),
+		).toMatchObject({
+			ok: true,
+			mode: "xurl",
+		});
 	});
 
 	it("imports an explicit archive path without discovery", async () => {
@@ -1883,14 +2192,14 @@ describe("cli", () => {
 		});
 		expect(syncDirectMessagesViaCachedBirdMock).toHaveBeenCalledWith({
 			account: "acct_primary",
-			mode: "bird",
+			mode: undefined,
 			limit: 12,
 			refresh: true,
 			cacheTtlMs: 120_000,
 		});
 		expect(syncDirectMessagesViaCachedBirdMock).toHaveBeenCalledWith({
 			account: "acct_primary",
-			mode: "bird",
+			mode: undefined,
 			limit: 7,
 			refresh: true,
 			cacheTtlMs: 45_000,
@@ -1969,6 +2278,48 @@ describe("cli", () => {
 		expect(consoleLogMock).toHaveBeenCalledWith(
 			expect.stringContaining('"saturated_at_page": 1'),
 		);
+	});
+
+	it("rejects invalid DM list modes before refreshing or listing", async () => {
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"dms",
+			"list",
+			"--refresh",
+			"--mode",
+			"invalid",
+		]);
+
+		expect(process.exitCode).toBe(1);
+		expect(consoleErrorMock).toHaveBeenCalledWith(
+			expect.stringContaining("--mode must be auto, bird, or xurl"),
+		);
+		expect(syncDirectMessagesViaCachedBirdMock).not.toHaveBeenCalled();
+		expect(listDmConversationsMock).not.toHaveBeenCalled();
+		consoleErrorMock.mockRestore();
+	});
+
+	it("rejects invalid DM sync modes before syncing", async () => {
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "dms", "sync", "--mode", "invalid"]);
+
+		expect(process.exitCode).toBe(1);
+		expect(consoleErrorMock).toHaveBeenCalledWith(
+			expect.stringContaining("--mode must be auto, bird, or xurl"),
+		);
+		expect(syncDirectMessagesViaCachedBirdMock).not.toHaveBeenCalled();
+		expect(listDmConversationsMock).not.toHaveBeenCalled();
+		consoleErrorMock.mockRestore();
 	});
 
 	it("updates local DM request state after live mutations", async () => {
@@ -2107,7 +2458,7 @@ describe("cli", () => {
 		expect(syncFollowGraphMock).toHaveBeenNthCalledWith(1, {
 			direction: "followers",
 			account: undefined,
-			mode: "auto",
+			mode: "bird",
 			limit: 1000,
 			maxPages: undefined,
 			maxResources: undefined,
@@ -2212,23 +2563,52 @@ describe("cli", () => {
 		expect(process.exitCode).toBe(5);
 	});
 
-	it("rejects invalid follow sync modes as json", async () => {
-		syncFollowGraphMock.mockRejectedValueOnce(
-			new Error("--mode must be auto, bird, or xurl"),
+	it("resolves omitted authored mode and preserves explicit xurl", async () => {
+		syncAuthoredTweetsMock.mockResolvedValue({
+			ok: true,
+			source: "xurl",
+			kind: "authored",
+			count: 0,
+			partial: false,
+		});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "sync", "authored", "--limit", "5"]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"sync",
+			"authored",
+			"--mode",
+			"xurl",
+			"--limit",
+			"5",
+		]);
+
+		expect(resolveLiveReadModeMock).toHaveBeenCalledWith();
+		expect(syncAuthoredTweetsMock).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({ mode: "bird" }),
 		);
+		expect(syncAuthoredTweetsMock).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ mode: "xurl" }),
+		);
+	});
+
+	it("rejects invalid follow sync modes as json", async () => {
 		const { runCli } = await loadCli();
 
 		await runCli(["node", "birdclaw", "sync", "followers", "--mode", "weird"]);
 
-		expect(syncFollowGraphMock).toHaveBeenCalledWith(
-			expect.objectContaining({ mode: "weird" }),
-		);
+		expect(resolveLiveSyncModeMock).toHaveBeenCalledWith("weird");
+		expect(syncFollowGraphMock).not.toHaveBeenCalled();
 		expect(consoleLogMock).toHaveBeenCalledWith(
 			JSON.stringify(
 				{
 					ok: false,
 					direction: "followers",
-					error: "--mode must be auto, bird, or xurl",
+					error: "Invalid live-read mode; expected auto, bird, or xurl",
 				},
 				null,
 				2,
@@ -2419,6 +2799,139 @@ describe("cli", () => {
 		expect(formatWhoisMock).toHaveBeenCalled();
 	});
 
+	it("preserves explicit and omitted xurl fallback options for DM, search DM, and whois commands", async () => {
+		listDmConversationsMock.mockReturnValue([
+			{
+				id: "dm_1",
+				lastMessagePreview: "hello",
+				participant: { id: "profile_user_42" },
+			},
+		]);
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "dms", "list", "--resolve-profiles"]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"search",
+			"dms",
+			"blacksmith",
+			"--resolve-profiles",
+		]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"dms",
+			"list",
+			"--resolve-profiles",
+			"--no-xurl-fallback",
+		]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"dms",
+			"list",
+			"--resolve-profiles",
+			"--xurl-fallback",
+		]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"search",
+			"dms",
+			"blacksmith",
+			"--resolve-profiles",
+			"--no-xurl-fallback",
+		]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"search",
+			"dms",
+			"blacksmith",
+			"--resolve-profiles",
+			"--xurl-fallback",
+		]);
+		await runCli(["node", "birdclaw", "whois", "blacksmith"]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"whois",
+			"blacksmith",
+			"--no-xurl-fallback",
+		]);
+		await runCli([
+			"node",
+			"birdclaw",
+			"whois",
+			"blacksmith",
+			"--xurl-fallback",
+		]);
+
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			1,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: undefined,
+			},
+		);
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			2,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: undefined,
+			},
+		);
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			3,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: false,
+			},
+		);
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			4,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: true,
+			},
+		);
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			5,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: false,
+			},
+		);
+		expect(resolveProfilesForIdsMock).toHaveBeenNthCalledWith(
+			6,
+			["profile_user_42"],
+			{
+				refresh: false,
+				xurlFallback: true,
+			},
+		);
+		expect(runWhoisMock).toHaveBeenCalledWith(
+			"blacksmith",
+			expect.objectContaining({ xurlFallback: undefined }),
+		);
+		expect(runWhoisMock).toHaveBeenNthCalledWith(
+			2,
+			"blacksmith",
+			expect.objectContaining({ xurlFallback: false }),
+		);
+		expect(runWhoisMock).toHaveBeenNthCalledWith(
+			3,
+			"blacksmith",
+			expect.objectContaining({ xurlFallback: true }),
+		);
+	});
+
 	it("prints quality reasons for tweet search when requested", async () => {
 		listTimelineItemsMock.mockReturnValue([
 			{ id: "tweet_1", qualityReason: "keep:high-likes" },
@@ -2542,8 +3055,38 @@ describe("cli", () => {
 		expect(removeBlockMock).toHaveBeenCalledWith("acct_studio", "@sam", {
 			transport: "bird",
 		});
-		expect(syncBlocksMock).toHaveBeenCalledWith("acct_studio");
+		expect(syncBlocksMock).toHaveBeenCalledWith("acct_studio", {
+			mode: undefined,
+		});
 		expect(recordBlockMock).toHaveBeenCalledWith("acct_studio", "@sam");
+	});
+
+	it("forwards an explicit block sync read mode", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "blocks", "sync", "--mode", "xurl"]);
+
+		expect(syncBlocksMock).toHaveBeenCalledWith("acct_primary", {
+			mode: "xurl",
+		});
+	});
+
+	it("rejects invalid moderation transports before command dispatch", async () => {
+		const { runCli } = await loadCli();
+
+		await expect(
+			runCli([
+				"node",
+				"birdclaw",
+				"blocks",
+				"add",
+				"@sam",
+				"--transport",
+				"invalid",
+			]),
+		).rejects.toThrow("Invalid action transport; expected auto, bird, or xurl");
+		expect(resolveActionsTransportMock).toHaveBeenCalledWith("invalid");
+		expect(addBlockMock).not.toHaveBeenCalled();
 	});
 
 	it("dispatches mute and ban commands", async () => {
@@ -2658,6 +3201,44 @@ describe("cli", () => {
 		expect(consoleLogMock).toHaveBeenCalledWith(
 			expect.stringContaining('"markdown": "markdown"'),
 		);
+	});
+
+	it("rejects an invalid mention export mode before auto-update or export work", async () => {
+		resolveMentionsDataSourceMock.mockImplementation((mode?: string) => {
+			if (
+				mode === "birdclaw" ||
+				mode === "auto" ||
+				mode === "bird" ||
+				mode === "xurl"
+			) {
+				return mode;
+			}
+			throw new Error(
+				"Invalid mentions data source; expected birdclaw, auto, bird, or xurl",
+			);
+		});
+		const { runCli } = await loadCli();
+
+		await expect(
+			runCli([
+				"node",
+				"birdclaw",
+				"mentions",
+				"export",
+				"--mode",
+				"invalid",
+				"--refresh",
+			]),
+		).rejects.toThrow(
+			"Invalid mentions data source; expected birdclaw, auto, bird, or xurl",
+		);
+
+		expect(maybeAutoUpdateBackupMock).not.toHaveBeenCalled();
+		expect(maybeAutoSyncBackupMock).not.toHaveBeenCalled();
+		expect(exportMentionItemsMock).not.toHaveBeenCalled();
+		expect(exportMentionsViaCachedAutoMock).not.toHaveBeenCalled();
+		expect(exportMentionsViaCachedBirdMock).not.toHaveBeenCalled();
+		expect(exportMentionsViaCachedXurlMock).not.toHaveBeenCalled();
 	});
 
 	it("exports mentions in cached xurl mode", async () => {
@@ -2796,7 +3377,10 @@ describe("cli", () => {
 			"2026-05-16",
 			"--account",
 			"acct_primary",
+			"--live-mode",
+			"auto",
 		]);
+		await runCli(["node", "birdclaw", "digest", "week", "--live-mode", "xurl"]);
 
 		expect(streamPeriodDigestMock).toHaveBeenNthCalledWith(
 			1,
@@ -2812,7 +3396,7 @@ describe("cli", () => {
 				maxTweets: 10,
 				maxLinks: 2,
 				liveSync: true,
-				liveSyncMode: "xurl",
+				liveSyncMode: "bird",
 			},
 			expect.objectContaining({ onDelta: expect.any(Function) }),
 		);
@@ -2824,8 +3408,17 @@ describe("cli", () => {
 				until: "2026-05-16",
 				account: "acct_primary",
 				includeDms: false,
+				liveSyncMode: "auto",
 			}),
 			expect.objectContaining({ onDelta: undefined }),
+		);
+		expect(streamPeriodDigestMock).toHaveBeenNthCalledWith(
+			3,
+			expect.objectContaining({
+				period: "week",
+				liveSyncMode: "xurl",
+			}),
+			expect.objectContaining({ onDelta: expect.any(Function) }),
 		);
 		expect(stdoutWriteMock).toHaveBeenCalledWith("# Today\n");
 		expect(consoleLogMock).toHaveBeenCalledWith(
@@ -2935,6 +3528,7 @@ describe("cli", () => {
 			"gpt-5.5",
 		]);
 		await runCli(["node", "birdclaw", "--json", "discuss", "sync"]);
+		await runCli(["node", "birdclaw", "discuss", "explicit", "--mode", "xurl"]);
 
 		expect(streamSearchDiscussionMock).toHaveBeenNthCalledWith(
 			1,
@@ -2948,7 +3542,7 @@ describe("cli", () => {
 				question: "what changed?",
 				originalsOnly: true,
 				hideLowQuality: true,
-				mode: "xurl",
+				mode: "bird",
 				model: "gpt-5.5",
 				refresh: true,
 				limit: 25,
@@ -2961,12 +3555,20 @@ describe("cli", () => {
 			expect.objectContaining({
 				query: "sync",
 				source: "search",
-				mode: "xurl",
+				mode: "bird",
 				includeDms: false,
 				limit: 20000,
 				maxPages: 200,
 			}),
 			expect.objectContaining({ onDelta: undefined }),
+		);
+		expect(streamSearchDiscussionMock).toHaveBeenNthCalledWith(
+			3,
+			expect.objectContaining({
+				query: "explicit",
+				mode: "xurl",
+			}),
+			expect.objectContaining({ onDelta: expect.any(Function) }),
 		);
 		expect(stdoutWriteMock).toHaveBeenCalledWith("# Search discussion\n");
 		expect(consoleLogMock).toHaveBeenCalledWith(
@@ -2991,6 +3593,78 @@ describe("cli", () => {
 		consoleErrorMock.mockRestore();
 	});
 
+	it("rejects invalid explicit discussion modes", async () => {
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "discuss", "sync", "--mode", "weird"]);
+
+		expect(process.exitCode).toBe(1);
+		expect(streamSearchDiscussionMock).not.toHaveBeenCalled();
+		expect(consoleErrorMock).toHaveBeenCalledWith(
+			expect.stringContaining("--mode must be auto, bird, xurl, or local"),
+		);
+		consoleErrorMock.mockRestore();
+	});
+
+	it("passes an optional validated mode to profile analysis", async () => {
+		const stdoutWriteMock = vi
+			.spyOn(process.stdout, "write")
+			.mockImplementation(() => true);
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"profile-analyze",
+			"@alice",
+			"--mode",
+			"BIRD",
+			"--max-tweets",
+			"1",
+			"--max-pages",
+			"1",
+			"--max-conversations",
+			"1",
+			"--max-conversation-pages",
+			"1",
+		]);
+
+		expect(streamProfileAnalysisMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				handle: "@alice",
+				mode: "bird",
+			}),
+			expect.objectContaining({ onDelta: expect.any(Function) }),
+		);
+		stdoutWriteMock.mockRestore();
+	});
+
+	it("rejects invalid profile analysis modes", async () => {
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"profile-analyze",
+			"alice",
+			"--mode",
+			"local",
+		]);
+
+		expect(process.exitCode).toBe(1);
+		expect(streamProfileAnalysisMock).not.toHaveBeenCalled();
+		expect(consoleErrorMock).toHaveBeenCalledWith(
+			expect.stringContaining("--mode must be auto, bird, or xurl"),
+		);
+		consoleErrorMock.mockRestore();
+	});
+
 	it("inspects recent profile replies", async () => {
 		const { runCli } = await loadCli();
 
@@ -3007,6 +3681,27 @@ describe("cli", () => {
 		expect(inspectProfileRepliesMock).toHaveBeenCalledWith("@sam", {
 			account: undefined,
 			limit: 7,
+			mode: undefined,
+		});
+	});
+
+	it("passes explicit profile reply read modes through to inspection", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"profiles",
+			"replies",
+			"@sam",
+			"--mode",
+			"xurl",
+		]);
+
+		expect(inspectProfileRepliesMock).toHaveBeenCalledWith("@sam", {
+			account: undefined,
+			limit: 12,
+			mode: "xurl",
 		});
 	});
 

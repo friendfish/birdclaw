@@ -1,11 +1,17 @@
 // @vitest-environment node
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetBirdclawPathsForTests } from "./config";
+import { getBirdclawPaths, resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 import { listTimelineItems } from "./queries";
 
@@ -25,13 +31,16 @@ vi.mock("./xurl", async () => {
 });
 
 const tempDirs: string[] = [];
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 
 function makeTempHome() {
 	const tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-authored-"));
 	tempDirs.push(tempDir);
-	process.env.BIRDCLAW_HOME = tempDir;
+	vi.stubEnv("BIRDCLAW_HOME", tempDir);
 	resetBirdclawPathsForTests();
 	resetDatabaseForTests();
+	return tempDir;
 }
 
 function makeArchiveWithTweet(id: string) {
@@ -155,6 +164,9 @@ function insertAuthoredEdge(
 
 describe("live authored tweet sync", () => {
 	beforeEach(() => {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		resetBirdclawPathsForTests();
 		mocks.getTransportStatus.mockResolvedValue({
 			installed: true,
 			availableTransport: "xurl",
@@ -169,8 +181,18 @@ describe("live authored tweet sync", () => {
 
 	afterEach(() => {
 		resetDatabaseForTests();
+		vi.unstubAllEnvs();
+		if (originalLiveDataSource === undefined) {
+			delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+		}
+		if (originalMentionsDataSource === undefined) {
+			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+		}
 		resetBirdclawPathsForTests();
-		delete process.env.BIRDCLAW_HOME;
 		for (const mock of Object.values(mocks)) {
 			mock.mockReset();
 		}
@@ -210,6 +232,81 @@ describe("live authored tweet sync", () => {
 			"xurl mode requires --limit between 5 and 100",
 		);
 		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.listUserTweets).not.toHaveBeenCalled();
+	});
+
+	it("rejects Bird mode before touching xurl or local sync state", async () => {
+		makeTempHome();
+		const dbPath = getBirdclawPaths().dbPath;
+		const { syncAuthoredTweetsEffect } = await import("./authored-live");
+
+		await expect(
+			Effect.runPromise(syncAuthoredTweetsEffect({ mode: "bird", limit: 5 })),
+		).rejects.toThrow(
+			"authored sync requires an explicit --mode xurl in Bird mode",
+		);
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listUserTweets).not.toHaveBeenCalled();
+		expect(existsSync(dbPath)).toBe(false);
+	});
+
+	it("rejects configured Bird mode before touching xurl or local sync state", async () => {
+		makeTempHome();
+		vi.stubEnv("BIRDCLAW_MENTIONS_DATA_SOURCE", "bird");
+		resetBirdclawPathsForTests();
+		const dbPath = getBirdclawPaths().dbPath;
+		const { syncAuthoredTweetsEffect } = await import("./authored-live");
+
+		await expect(
+			Effect.runPromise(syncAuthoredTweetsEffect({ limit: 5 })),
+		).rejects.toThrow(
+			"authored sync requires an explicit --mode xurl in Bird mode",
+		);
+		expect(mocks.getTransportStatus).not.toHaveBeenCalled();
+		expect(mocks.lookupAuthenticatedUser).not.toHaveBeenCalled();
+		expect(mocks.listUserTweets).not.toHaveBeenCalled();
+		expect(existsSync(dbPath)).toBe(false);
+	});
+
+	it("uses the existing xurl flow when authored mode is auto", async () => {
+		makeTempHome();
+		mocks.listUserTweets.mockResolvedValueOnce(authoredPage("auto_1"));
+		const { syncAuthoredTweetsEffect } = await import("./authored-live");
+
+		await expect(
+			Effect.runPromise(syncAuthoredTweetsEffect({ mode: "auto", limit: 5 })),
+		).resolves.toMatchObject({
+			ok: true,
+			source: "xurl",
+			count: 1,
+			nextSinceId: "auto_1",
+		});
+		expect(mocks.getTransportStatus).toHaveBeenCalledTimes(1);
+		expect(mocks.listUserTweets).toHaveBeenCalledWith(
+			"25401953",
+			expect.objectContaining({ maxResults: 5, auth: "oauth2" }),
+		);
+	});
+
+	it("preserves xurl availability errors when authored mode is auto", async () => {
+		makeTempHome();
+		mocks.getTransportStatus.mockResolvedValueOnce({
+			installed: false,
+			availableTransport: "local",
+			statusText: "xurl unavailable",
+		});
+		const { syncAuthoredTweets } = await import("./authored-live");
+
+		await expect(
+			syncAuthoredTweets({ mode: "auto", limit: 5 }),
+		).rejects.toEqual(
+			expect.objectContaining({
+				name: "AuthoredSyncError",
+				message: "xurl unavailable",
+				exitCode: 4,
+			}),
+		);
 		expect(mocks.listUserTweets).not.toHaveBeenCalled();
 	});
 

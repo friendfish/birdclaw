@@ -36,7 +36,7 @@ The Playwright test home is `.playwright-home` in the repo, which is why CI neve
 
 ## Config file
 
-`~/.birdclaw/config.json` controls live transport, scheduled jobs, mention sourcing, and backup auto-sync.
+`~/.birdclaw/config.json` controls live transport, writes, scheduled jobs, and backup auto-sync.
 
 ```json
 {
@@ -46,8 +46,10 @@ The Playwright test home is `.playwright-home` in the repo, which is why CI neve
 	"actions": {
 		"transport": "auto"
 	},
+	"live": {
+		"dataSource": "bird"
+	},
 	"mentions": {
-		"dataSource": "bird",
 		"birdCommand": "/Users/steipete/Projects/bird/bird"
 	},
 	"backup": {
@@ -67,17 +69,29 @@ Selection is per operation. Birdclaw resolves the existing account row, routes x
 
 ### `actions.transport`
 
-- `auto` — try `bird` first for block/unblock/mute, then fall back to verified `xurl`
-- `bird` — force `bird`
-- `xurl` — force `xurl`; verifies through `bird status` before mutating SQLite
+- Controls compose writes (post, reply, and DM compose) and moderation writes
+  that use the actions policy. `auto` and `xurl` allow the implemented xurl
+  write path.
+- `bird` explicitly rejects post, reply, and DM compose: those writes have no Bird implementation.
 
-Twitter still rejects pure OAuth2 block writes for many accounts, so `auto` is the safe default.
+`BIRDCLAW_ACTIONS_TRANSPORT` overrides this setting for one process. For
+block/unblock/mute, `auto` tries Bird first and then falls back to verified xurl;
+Twitter still rejects pure OAuth2 block writes for many accounts.
+DM request mutations (`dms accept`, `dms reject`, and `dms block`) use Bird
+directly and do not use `actions.transport`.
 
-### `mentions.dataSource`
+### `live.dataSource`
 
-- `birdclaw` — local cache only
-- `bird` — refresh through `bird mentions --json`, normalize, cache in SQLite
-- `xurl` — refresh through `xurl mentions`, cache the response shape
+This is the global transport choice for live reads and syncs. Its values are
+`bird`, `xurl`, and `auto`; `auto` runs the operation's supported automatic
+strategy. An explicit operation mode takes precedence. The remaining order is
+`BIRDCLAW_LIVE_DATA_SOURCE`, `live.dataSource`, the legacy
+`BIRDCLAW_MENTIONS_DATA_SOURCE`, legacy `mentions.dataSource`, then that
+operation's capability default.
+
+`mentions.dataSource` and `BIRDCLAW_MENTIONS_DATA_SOURCE` remain compatibility
+aliases. They should be used only for existing installations; they no longer
+describe a mentions-only global setting.
 
 `mentions.birdCommand` overrides the `bird` binary path when you want to point at a non-`PATH` build.
 
@@ -91,7 +105,9 @@ See [Backup](backup.md). When `autoSync` is enabled, read commands pull + merge 
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BIRDCLAW_HOME`                | Override the storage root (`~/.birdclaw` by default)                                                                                                 |
 | `BIRDCLAW_CONFIG`              | Read and write config at a non-default path                                                                                                          |
-| `BIRDCLAW_ACTIONS_TRANSPORT`   | Override moderation action transport with `auto`, `xurl`, or `bird` for one process                                                                  |
+| `BIRDCLAW_ACTIONS_TRANSPORT`   | Override the transport for compose (post, reply, and DM compose) and policy-backed moderation writes with `auto`, `xurl`, or `bird` for one process |
+| `BIRDCLAW_LIVE_DATA_SOURCE`    | Override global live read/sync transport with `auto`, `xurl`, or `bird` for one process                                                              |
+| `BIRDCLAW_MENTIONS_DATA_SOURCE`| Legacy alias for `BIRDCLAW_LIVE_DATA_SOURCE`; lower precedence than the new variable                                                                |
 | `BIRDCLAW_BIRD_COMMAND`        | Override the `bird` executable used by live Bird transports                                                                                          |
 | `BIRDCLAW_BASH_COMMAND`        | Override the Git Bash executable used for Bird subprocess redirection on Windows                                                                     |
 | `BIRDCLAW_HOST`                | Host interface for the production `birdclaw serve` listener; defaults to `127.0.0.1`                                                                 |
@@ -128,14 +144,13 @@ Per-account state — cursors, transport preferences, last-sync watermarks, Open
 
 ## Transport selection
 
-There is no single global transport order:
-
-- Archive imports and local reads need no live transport.
-- Sync commands select their source with `--mode`; supported modes and defaults vary by command.
-- Mentions export resolves its data source separately.
-- Moderation writes use command `--transport`, then `BIRDCLAW_ACTIONS_TRANSPORT`, then `actions.transport`, then `auto`.
-
-For moderation, `auto` tries bird first and falls back to xurl. Persist that choice with `birdclaw auth use <auto|bird|xurl>`.
+Archive imports and local reads need no live transport. For live reads and syncs,
+an explicit operation mode wins over `BIRDCLAW_LIVE_DATA_SOURCE`,
+`live.dataSource`, the legacy mentions environment/config aliases, and the
+operation's capability default. Compose (post, reply, and DM compose) and
+policy-backed moderation writes instead use command `--transport`,
+`BIRDCLAW_ACTIONS_TRANSPORT`, `actions.transport`, then `auto`. DM request
+mutations use Bird directly.
 
 ## Disabling live writes
 

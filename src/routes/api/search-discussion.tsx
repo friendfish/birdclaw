@@ -3,11 +3,13 @@ import { Effect } from "effect";
 import { searchDiscussionStreamEventSchema } from "#/lib/client-stream-contracts";
 import { maybeAutoUpdateBackupEffect } from "#/lib/backup";
 import {
+	jsonResponse,
 	parseBoundedInteger,
 	runRouteEffect,
 	sensitiveRequestErrorResponse,
 } from "#/lib/http-effect";
 import { createEffectNdjsonResponse } from "#/lib/ndjson-stream";
+import { resolveLiveReadMode } from "#/lib/live-transport-policy";
 import {
 	streamSearchDiscussionEffect,
 	type SearchDiscussionOptions,
@@ -39,6 +41,7 @@ function parseSource(value: string | null): SearchDiscussionSource {
 }
 
 function parseMode(value: string | null): TweetSearchMode {
+	if (value === null) return resolveLiveReadMode();
 	if (
 		value === "auto" ||
 		value === "bird" ||
@@ -47,7 +50,7 @@ function parseMode(value: string | null): TweetSearchMode {
 	) {
 		return value;
 	}
-	return "auto";
+	throw new Error("mode must be auto, bird, xurl, or local");
 }
 
 function parseOptions(url: URL): SearchDiscussionOptions {
@@ -83,7 +86,21 @@ export const Route = createFileRoute("/api/search-discussion")({
 						if (denied) return denied;
 
 						const url = new URL(request.url);
-						const options = parseOptions(url);
+						let options: SearchDiscussionOptions;
+						try {
+							options = parseOptions(url);
+						} catch (error) {
+							return jsonResponse(
+								{
+									ok: false,
+									error:
+										error instanceof Error
+											? error.message
+											: "Invalid discussion options",
+								},
+								{ status: 400 },
+							);
+						}
 						return createEffectNdjsonResponse<SearchDiscussionStreamEvent>({
 							request,
 							schema: searchDiscussionStreamEventSchema,

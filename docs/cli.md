@@ -41,6 +41,8 @@ User config:
 - `BIRDCLAW_HOME`
 - `BIRDCLAW_CONFIG`
 - `BIRDCLAW_ACTIONS_TRANSPORT`
+- `BIRDCLAW_LIVE_DATA_SOURCE`
+- `BIRDCLAW_MENTIONS_DATA_SOURCE` (legacy compatibility alias)
 - `BIRDCLAW_BIRD_COMMAND`
 - `BIRDCLAW_BASH_COMMAND`
 - `BIRDCLAW_MCP_TOKEN`
@@ -152,11 +154,21 @@ See [Public tweet import](public-tweets.md) for the full privacy and capability 
 - show transport availability
 - show active account/profile
 - never print secrets
+- `installed` is present only after an actual xurl status probe; a policy-disabled xurl transport leaves it absent.
 
 ### `auth use <transport>`
 
-- set preferred moderation action transport
+- set the preferred transport for compose and policy-backed moderation writes; it does not apply to Bird-only DM request mutations (`dms accept`, `dms reject`, and `dms block`)
 - allowed: `auto`, `xurl`, `bird`
+- Bird mode rejects post, reply, and DM compose because those writes are xurl-only.
+
+### Live read/sync transport
+
+`live.dataSource` controls live reads and syncs globally: `bird`, `xurl`, or
+`auto`. Resolution is explicit operation mode, `BIRDCLAW_LIVE_DATA_SOURCE`,
+`live.dataSource`, legacy `BIRDCLAW_MENTIONS_DATA_SOURCE`, legacy
+`mentions.dataSource`, then the operation's capability default. The legacy
+mentions keys remain aliases for compatibility.
 
 ### `backup export`
 
@@ -297,7 +309,7 @@ birdclaw import archive ~/Downloads/twitter-archive.zip --select followers,follo
 - `sync authored` uses `xurl`, includes retweets, and resumes from a stored `since_id`
 - `sync timeline` stores the live home timeline through `bird`; it defaults to the chronological Following feed
 - `sync mentions` ingests recent mentions through `xurl` (default) or `bird` and writes `kind='mention'` rows into the canonical store; this is the cron-friendly ingest path that replaces relying on `mentions export --refresh`
-- `sync mention-threads` fetches conversation context for recent mentions through `bird thread` or `xurl`; pass `--mode xurl` when the `bird` CLI is unavailable, otherwise use `--delay-ms` and `--timeout-ms` to stay gentle on live X
+- `sync mention-threads` fetches conversation context for recent mentions through `bird thread` or `xurl`; `--mode auto` selects xurl for this operation, and `--delay-ms` plus `--timeout-ms` keep live X reads paced
 - `sync followers` and `sync following` default to dry-run and require `--yes` for live sync or fresh-cache merge; `auto` prefers `bird`, then falls back to `xurl`
 - `sync lists` is an explicit read-only walk; it defaults to 20 members, one page, and 1,000 ms pacing per List, and stores `complete|inferred|partial|error` membership state
 
@@ -326,6 +338,7 @@ birdclaw sync bookmarks --mode bird --all --max-pages 5 --limit 100 --refresh --
 birdclaw sync timeline --limit 100 --refresh --json
 birdclaw sync mentions --mode xurl --limit 100 --max-pages 3 --refresh --json
 birdclaw sync mention-threads --mode bird --limit 30 --delay-ms 1500 --timeout-ms 15000 --json
+birdclaw sync mention-threads --mode auto --limit 30 --json
 birdclaw sync mention-threads --mode xurl --limit 30 --json
 birdclaw sync lists --mode auto --max-lists 20 --member-limit 20 --max-member-pages 1 --delay-ms 1000 --json
 ```
@@ -447,14 +460,15 @@ Flags:
 - `--expand-urls`
 - `--refresh-profile-cache`
 - `--refresh-url-cache`
-- `--no-xurl-fallback`
+- `--[no-]xurl-fallback` — allow or forbid xurl profile fallback; when omitted, configuration and the operation default decide
 - `--replied`
 - `--unreplied`
 - `--limit <n>`
 
 Profile resolution reads the local profile row first, then the persistent lookup
-cache, then `bird user`, then `xurl` unless `--no-xurl-fallback` is set. Failed
-lookups are cached briefly so repeated searches do not keep spending live calls.
+cache, then `bird user`, and may use xurl according to the configured transport
+policy unless `--[no-]xurl-fallback` explicitly decides it. Failed lookups are
+cached briefly so repeated searches do not keep spending live calls.
 Resolved profile rows store bio, profile URL, location, verification type,
 structured X URL entities, raw profile JSON, and affiliation badge metadata when
 the live transport exposes it.
@@ -511,7 +525,7 @@ Flags:
 - `--no-expand-urls`
 - `--refresh-profile-cache`
 - `--refresh-url-cache`
-- `--no-xurl-fallback`
+- `--[no-]xurl-fallback` — allow or forbid xurl profile fallback; when omitted, configuration and the operation default decide
 - `--affiliation <query>` - require current/bio/history affiliation evidence
 - `--current-affiliation <query>` - require an active affiliation badge edge
 - `--exclude-domain-only` - drop candidates that only matched domains or URLs
@@ -572,7 +586,7 @@ Notes:
 - `--max-pages` limits that paged xurl scan and implies `--all`
 - in paged `xurl` mode, `--limit` is the page size, not the total returned item count
 - query and reply-state filters still work in `xurl` mode, but the filtered response is rebuilt from the local canonical store after sync
-- default live source can live in `~/.birdclaw/config.json` under `mentions.dataSource`
+- default live source is `live.dataSource`; legacy `mentions.dataSource` remains a compatibility alias
 
 ### `media fetch`
 
@@ -618,12 +632,13 @@ birdclaw media fetch --no-include-video --parallel 3 --pacing-ms 250 --json
 Flags:
 
 - `--account <username>` — account username or stored ID
+- `--mode <mode>` — override the configured live read transport
 - `--limit <n>`
 
 Examples:
 
 ```bash
-birdclaw profiles replies @jpctan --limit 12 --json
+birdclaw profiles replies @jpctan --mode xurl --limit 12 --json
 ```
 
 ### `dms list`
@@ -636,6 +651,7 @@ Flags:
 
 - `--refresh`
 - `--mode bird|xurl|auto`
+- `--[no-]xurl-fallback` — allow or forbid xurl profile fallback; when omitted, configuration and the operation default decide
 - `--cache-ttl <seconds>`
 - `--participant <handle-or-id>`
 - `--min-followers <n>`
@@ -662,7 +678,12 @@ Flags:
 - `--refresh`
 - `--cache-ttl <seconds>`
 
-`--mode bird` is the default and the only mode that can sync message requests. `--mode xurl` reads recent OAuth2 `/2/dm_events` as accepted conversations; `--mode auto` tries xurl first for accepted DMs and falls back to bird.
+With no configured live source, `--mode bird` remains the default and the only
+mode that can sync message requests. `live.dataSource` and
+`BIRDCLAW_LIVE_DATA_SOURCE` can select `bird`, `xurl`, or `auto` when the flag
+is omitted. `--mode xurl` reads recent OAuth2 `/2/dm_events` as accepted
+conversations; `--mode auto` tries xurl first for accepted DMs and falls back to
+bird.
 
 ### `inbox`
 

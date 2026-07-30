@@ -14,6 +14,7 @@ import {
 	runDigestArchiveJob,
 } from "#/lib/digest-archive-job";
 import type { PeriodDigestPreset } from "#/lib/period-digest";
+import { resolveLiveSyncMode } from "#/lib/live-transport-policy";
 import type { TimelineCollectionMode } from "#/lib/timeline-collections-live";
 import type { CliCommandContext } from "./command-context";
 
@@ -27,6 +28,12 @@ function parsePeriod(value: string): PeriodDigestPreset {
 		return value;
 	}
 	throw new Error("--period must be today, yesterday, 24h, or week");
+}
+
+function parseOptionalJobMode(
+	mode: string | undefined,
+): TimelineCollectionMode | undefined {
+	return mode === undefined ? undefined : resolveLiveSyncMode(mode);
 }
 
 export function registerJobCommands({ program, print }: CliCommandContext) {
@@ -44,7 +51,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			"--steps <steps>",
 			"Comma list: timeline,mentions,mention-threads,likes,bookmarks,dms",
 		)
-		.option("--mode <mode>", "auto, xurl, or bird for likes/bookmarks", "auto")
+		.option("--mode <mode>", "auto, xurl, or bird for likes/bookmarks")
 		.option("--limit <n>", "Per-page/result limit", "100")
 		.option("--max-pages <n>", "Stop after N pages", "3")
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
@@ -58,7 +65,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			const result = await runAccountSyncJob({
 				account: options.account,
 				steps: parseAccountSyncSteps(options.steps),
-				mode: options.mode as TimelineCollectionMode,
+				mode: parseOptionalJobMode(options.mode),
 				limit: Number(options.limit),
 				maxPages: Number(options.maxPages),
 				refresh: Boolean(options.refresh),
@@ -81,7 +88,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			"--steps <steps>",
 			"Comma list: timeline,mentions,mention-threads,likes,bookmarks,dms",
 		)
-		.option("--mode <mode>", "auto, xurl, or bird for likes/bookmarks", "auto")
+		.option("--mode <mode>", "auto, xurl, or bird for likes/bookmarks")
 		.option("--limit <n>", "Per-page/result limit", "100")
 		.option("--max-pages <n>", "Stop after N pages", "3")
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
@@ -104,7 +111,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				program: options.program,
 				account: options.account,
 				steps: parseAccountSyncSteps(options.steps),
-				mode: options.mode as TimelineCollectionMode,
+				mode: parseOptionalJobMode(options.mode),
 				limit: Number(options.limit),
 				maxPages: Number(options.maxPages),
 				refresh: options.refresh,
@@ -124,7 +131,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.command("sync-bookmarks")
 		.description("Refresh live bookmarks and append a JSONL audit entry")
 		.option("--account <username>", "Account username or id")
-		.option("--mode <mode>", "auto, xurl, or bird", "auto")
+		.option("--mode <mode>", "auto, xurl, or bird")
 		.option("--limit <n>", "Per-page/result limit", "100")
 		.option("--all", "Fetch every retrievable page")
 		.option("--max-pages <n>", "Stop after N pages", "5")
@@ -134,7 +141,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.action(async (options) => {
 			const result = await runBookmarkSyncJob({
 				account: options.account,
-				mode: options.mode as TimelineCollectionMode,
+				mode: parseOptionalJobMode(options.mode),
 				limit: Number(options.limit),
 				all: Boolean(options.all) || options.maxPages !== undefined,
 				maxPages: options.all ? undefined : Number(options.maxPages),
@@ -153,7 +160,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.option("--label <label>", "LaunchAgent label")
 		.option("--interval-seconds <seconds>", "Launch interval", "10800")
 		.option("--program <path>", "birdclaw executable or command", "birdclaw")
-		.option("--mode <mode>", "auto, xurl, or bird", "auto")
+		.option("--mode <mode>", "auto, xurl, or bird")
 		.option("--limit <n>", "Per-page/result limit", "100")
 		.option("--all", "Fetch every retrievable page")
 		.option("--max-pages <n>", "Stop after N pages", "5")
@@ -172,7 +179,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				label: options.label,
 				intervalSeconds: Number(options.intervalSeconds),
 				program: options.program,
-				mode: options.mode as TimelineCollectionMode,
+				mode: parseOptionalJobMode(options.mode),
 				limit: Number(options.limit),
 				all: Boolean(options.all) || options.maxPages !== undefined,
 				maxPages: options.all ? undefined : Number(options.maxPages),

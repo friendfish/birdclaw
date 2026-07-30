@@ -2,7 +2,7 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	ensureBirdclawDirs,
 	getBirdCommand,
@@ -18,16 +18,33 @@ import {
 
 const tempRoots: string[] = [];
 const originalPath = process.env.PATH;
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+
+beforeEach(() => {
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	resetBirdclawPathsForTests();
+});
 
 afterEach(() => {
-	resetBirdclawPathsForTests();
 	process.env.PATH = originalPath;
 	delete process.env.BIRDCLAW_HOME;
 	delete process.env.BIRDCLAW_CONFIG;
 	delete process.env.BIRDCLAW_ACTIONS_TRANSPORT;
 	delete process.env.BIRDCLAW_BIRD_COMMAND;
-	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 	delete process.env.BIRDCLAW_DIGEST_ARCHIVE_DIR;
+	if (originalLiveDataSource === undefined) {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+	}
+	if (originalMentionsDataSource === undefined) {
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+	}
+	resetBirdclawPathsForTests();
 
 	for (const tempRoot of tempRoots.splice(0)) {
 		rmSync(tempRoot, { recursive: true, force: true });
@@ -116,6 +133,74 @@ describe("config", () => {
 		expect(resolveMentionsDataSource()).toBe("xurl");
 		expect(resolveActionsTransport()).toBe("bird");
 		expect(getBirdCommand()).toBe("/tmp/env-bird");
+	});
+
+	it("resolves live data source before legacy mentions source", () => {
+		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
+		tempRoots.push(tempRoot);
+		process.env.BIRDCLAW_HOME = tempRoot;
+		writeFileSync(
+			path.join(tempRoot, "config.json"),
+			JSON.stringify({
+				live: { dataSource: "xurl" },
+				mentions: { dataSource: "bird" },
+			}),
+		);
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "bird";
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "auto";
+
+		expect(resolveMentionsDataSource()).toBe("bird");
+		expect(resolveMentionsDataSource("xurl")).toBe("xurl");
+
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		expect(resolveMentionsDataSource()).toBe("xurl");
+
+		resetBirdclawPathsForTests();
+		process.env.BIRDCLAW_HOME = tempRoot;
+		writeFileSync(
+			path.join(tempRoot, "config.json"),
+			JSON.stringify({ mentions: { dataSource: "bird" } }),
+		);
+		expect(resolveMentionsDataSource()).toBe("auto");
+
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		resetBirdclawPathsForTests();
+		process.env.BIRDCLAW_HOME = tempRoot;
+		expect(resolveMentionsDataSource()).toBe("bird");
+
+		writeFileSync(path.join(tempRoot, "config.json"), "{}");
+		resetBirdclawPathsForTests();
+		process.env.BIRDCLAW_HOME = tempRoot;
+		expect(resolveMentionsDataSource()).toBe("birdclaw");
+	});
+
+	it("rejects invalid explicit action transports instead of falling back", () => {
+		process.env.BIRDCLAW_ACTIONS_TRANSPORT = "bird";
+
+		for (const transport of ["invalid", "", " \t "]) {
+			expect(() => resolveActionsTransport(transport)).toThrow(
+				"Invalid action transport; expected auto, bird, or xurl",
+			);
+		}
+		expect(resolveActionsTransport()).toBe("bird");
+		expect(resolveActionsTransport("auto")).toBe("auto");
+		expect(resolveActionsTransport("bird")).toBe("bird");
+		expect(resolveActionsTransport("xurl")).toBe("xurl");
+	});
+
+	it("rejects invalid explicit mention data sources instead of falling back", () => {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = "xurl";
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+
+		for (const mode of ["invalid", "", " \t "]) {
+			expect(() => resolveMentionsDataSource(mode)).toThrow(
+				"Invalid mentions data source; expected birdclaw, auto, bird, or xurl",
+			);
+		}
+		expect(resolveMentionsDataSource("birdclaw")).toBe("birdclaw");
+		expect(resolveMentionsDataSource("auto")).toBe("auto");
+		expect(resolveMentionsDataSource("bird")).toBe("bird");
+		expect(resolveMentionsDataSource("xurl")).toBe("xurl");
 	});
 
 	it("sets actions transport in the active config file", () => {

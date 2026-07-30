@@ -5,6 +5,7 @@ import {
 	type PeriodDigestOptions,
 	type PeriodDigestPreset,
 } from "#/lib/period-digest";
+import { resolveLiveReadMode } from "#/lib/live-transport-policy";
 import {
 	streamProfileAnalysis,
 	type ProfileAnalysisOptions,
@@ -30,7 +31,10 @@ export function registerAnalysisCommands({
 	function parseDigestLiveModeOption(
 		value: string | undefined,
 	): PeriodDigestOptions["liveSyncMode"] {
-		const normalized = (value ?? "xurl").trim().toLowerCase();
+		if (value === undefined) {
+			return resolveLiveReadMode();
+		}
+		const normalized = value.trim().toLowerCase();
 		if (
 			normalized === "auto" ||
 			normalized === "bird" ||
@@ -150,7 +154,8 @@ export function registerAnalysisCommands({
 	}
 
 	function parseTweetSearchMode(value: string | undefined) {
-		const normalized = (value ?? "auto").trim().toLowerCase();
+		if (value === undefined) return resolveLiveReadMode();
+		const normalized = value.trim().toLowerCase();
 		if (
 			normalized === "auto" ||
 			normalized === "bird" ||
@@ -238,6 +243,7 @@ export function registerAnalysisCommands({
 		handle: string,
 		options: {
 			account?: string;
+			mode?: string;
 			model?: string;
 			refresh?: boolean;
 			maxTweets?: string;
@@ -249,6 +255,10 @@ export function registerAnalysisCommands({
 			rateLimitRetries?: string;
 		},
 	): ProfileAnalysisOptions | null {
+		const mode = parseProfileAnalysisMode(options.mode);
+		if (options.mode !== undefined && mode === undefined) {
+			return null;
+		}
 		const maxTweets = parsePositiveIntegerOption(
 			options.maxTweets,
 			"--max-tweets",
@@ -316,6 +326,7 @@ export function registerAnalysisCommands({
 		return {
 			handle,
 			account: options.account,
+			mode,
 			model: options.model,
 			refresh: Boolean(options.refresh),
 			maxTweets,
@@ -326,6 +337,23 @@ export function registerAnalysisCommands({
 			rateLimitRetryMs,
 			rateLimitMaxRetries,
 		};
+	}
+
+	function parseProfileAnalysisMode(
+		value: string | undefined,
+	): ProfileAnalysisOptions["mode"] {
+		if (value === undefined) return undefined;
+		const normalized = value.trim().toLowerCase();
+		if (
+			normalized === "auto" ||
+			normalized === "bird" ||
+			normalized === "xurl"
+		) {
+			return normalized;
+		}
+		printError("--mode must be auto, bird, or xurl");
+		process.exitCode = 1;
+		return undefined;
 	}
 
 	function runProfileAnalysisCli(options: ProfileAnalysisOptions) {
@@ -388,7 +416,7 @@ export function registerAnalysisCommands({
 			"all, search, home, mentions, authored, likes, or bookmarks",
 			"search",
 		)
-		.option("--mode <mode>", "auto, bird, xurl, or local", "xurl")
+		.option("--mode <mode>", "auto, bird, xurl, or local")
 		.option("--include-dms", "Include private DM search matches")
 		.option(
 			"--since <isoDate>",
@@ -414,6 +442,7 @@ export function registerAnalysisCommands({
 		.alias("profile-analyse")
 		.description("Backfill a profile with xurl and summarize it with AI")
 		.option("--account <username>", "Account username or id")
+		.option("--mode <mode>", "auto, bird, or xurl")
 		.option("--model <model>", "OpenAI model id")
 		.option("--refresh", "Bypass profile fetch and analysis caches")
 		.option("--max-tweets <n>", "Maximum profile tweets", "10000")
@@ -458,11 +487,7 @@ export function registerAnalysisCommands({
 		.option("--max-tweets <n>", "Maximum tweet context", "5000")
 		.option("--max-links <n>", "Maximum linked articles", "12")
 		.option("--no-live-sync", "Use only the local database")
-		.option(
-			"--live-mode <mode>",
-			"Live timeline mode: xurl, bird, or auto",
-			"xurl",
-		)
+		.option("--live-mode <mode>", "Live timeline mode: xurl, bird, or auto")
 		.action(async (options) => {
 			await autoUpdateBeforeRead();
 			const digestOptions = buildDigestOptions("today", options);
@@ -486,11 +511,7 @@ export function registerAnalysisCommands({
 		.option("--max-tweets <n>", "Maximum tweet context", "5000")
 		.option("--max-links <n>", "Maximum linked articles", "12")
 		.option("--no-live-sync", "Use only the local database")
-		.option(
-			"--live-mode <mode>",
-			"Live timeline mode: xurl, bird, or auto",
-			"xurl",
-		)
+		.option("--live-mode <mode>", "Live timeline mode: xurl, bird, or auto")
 		.action(async (period, options) => {
 			await autoUpdateBeforeRead();
 			const digestOptions = buildDigestOptions(period, options);

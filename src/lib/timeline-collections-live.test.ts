@@ -163,6 +163,22 @@ describe("live timeline collection sync", () => {
 		expect(mocks.listLikedTweetsViaXurl).not.toHaveBeenCalled();
 	});
 
+	it("rejects an invalid collection mode before database or transport work", async () => {
+		setupTempHome();
+		const { syncTimelineCollection } =
+			await import("./timeline-collections-live");
+
+		await expect(
+			syncTimelineCollection({
+				kind: "likes",
+				mode: "invalid" as "auto",
+				limit: 20,
+			}),
+		).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
+		expect(mocks.listLikedTweetsViaXurl).not.toHaveBeenCalled();
+		expect(mocks.listLikedTweetsViaBird).not.toHaveBeenCalled();
+	});
+
 	it("syncs liked tweets from xurl into local search filters", async () => {
 		setupTempHome();
 		mocks.listLikedTweetsViaXurl.mockResolvedValue({

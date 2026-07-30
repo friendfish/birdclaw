@@ -26,7 +26,7 @@ export function registerDirectMessageCommands({
 	dmsCommand
 		.command("list")
 		.option("--account <username>", "Account username or id")
-		.option("--mode <mode>", "auto, bird, or xurl", "bird")
+		.option("--mode <mode>", "auto, bird, or xurl")
 		.option("--refresh", "Refresh live DMs before listing")
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
 		.option("--inbox <kind>", "all, accepted, or requests", "all")
@@ -46,6 +46,7 @@ export function registerDirectMessageCommands({
 		.option("--expand-urls", "Expand URLs through the persistent URL cache")
 		.option("--refresh-profile-cache", "Bypass profile lookup cache")
 		.option("--refresh-url-cache", "Bypass URL expansion cache")
+		.option("--xurl-fallback", "Fall back to xurl after bird profile lookup")
 		.option(
 			"--no-xurl-fallback",
 			"Do not fall back to xurl after bird profile lookup",
@@ -53,7 +54,7 @@ export function registerDirectMessageCommands({
 		.option("--replied", "Only replied threads")
 		.option("--unreplied", "Only unreplied threads")
 		.option("--limit <n>", "Limit results", "20")
-		.action(async (options) => {
+		.action(async (options, command) => {
 			const replyFilter = options.replied
 				? "replied"
 				: options.unreplied
@@ -61,6 +62,7 @@ export function registerDirectMessageCommands({
 					: "all";
 			const inbox = parseDmInboxOption(options.inbox);
 			const mode = parseDmSyncModeOption(options.mode);
+			if (options.mode !== undefined && mode === undefined) return;
 			const maxPages = parseNonNegativeIntegerOption(
 				options.maxPages,
 				"--max-pages",
@@ -71,7 +73,6 @@ export function registerDirectMessageCommands({
 			);
 			if (
 				inbox === undefined ||
-				mode === undefined ||
 				maxPages === undefined ||
 				pageDelayMs === undefined
 			)
@@ -121,7 +122,10 @@ export function registerDirectMessageCommands({
 					expandUrls: Boolean(options.expandUrls),
 					refreshProfileCache: Boolean(options.refreshProfileCache),
 					refreshUrlCache: Boolean(options.refreshUrlCache),
-					xurlFallback: options.xurlFallback,
+					xurlFallback:
+						command.getOptionValueSource("xurlFallback") === "cli"
+							? options.xurlFallback
+							: undefined,
 				},
 			);
 			print(items, program.opts().json ?? false);
@@ -131,7 +135,7 @@ export function registerDirectMessageCommands({
 		.command("sync")
 		.description("Refresh live direct messages into the local store")
 		.option("--account <username>", "Account username or id")
-		.option("--mode <mode>", "auto, bird, or xurl", "bird")
+		.option("--mode <mode>", "auto, bird, or xurl")
 		.option("--limit <n>", "Limit messages", "20")
 		.option("--inbox <kind>", "all, accepted, or requests", "all")
 		.option("--max-pages <n>", "Additional accepted/request pages to sync", "0")
@@ -142,6 +146,7 @@ export function registerDirectMessageCommands({
 		.action(async (options) => {
 			const inbox = parseDmInboxOption(options.inbox);
 			const mode = parseDmSyncModeOption(options.mode);
+			if (options.mode !== undefined && mode === undefined) return;
 			const maxPages = parseNonNegativeIntegerOption(
 				options.maxPages,
 				"--max-pages",
@@ -152,7 +157,6 @@ export function registerDirectMessageCommands({
 			);
 			if (
 				inbox === undefined ||
-				mode === undefined ||
 				maxPages === undefined ||
 				pageDelayMs === undefined
 			)

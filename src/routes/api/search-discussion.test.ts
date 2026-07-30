@@ -5,6 +5,11 @@ import { getRouteHandler } from "#/test/route-handlers";
 
 const maybeAutoUpdateBackupMock = vi.fn();
 const streamSearchDiscussionMock = vi.fn();
+const resolveLiveReadModeMock = vi.fn();
+
+vi.mock("#/lib/live-transport-policy", () => ({
+	resolveLiveReadMode: (...args: unknown[]) => resolveLiveReadModeMock(...args),
+}));
 
 vi.mock("#/lib/backup", () => ({
 	maybeAutoUpdateBackup: () => maybeAutoUpdateBackupMock(),
@@ -24,6 +29,8 @@ describe("api search discussion route", () => {
 	beforeEach(() => {
 		maybeAutoUpdateBackupMock.mockReset();
 		streamSearchDiscussionMock.mockReset();
+		resolveLiveReadModeMock.mockReset();
+		resolveLiveReadModeMock.mockReturnValue("bird");
 		maybeAutoUpdateBackupMock.mockResolvedValue({ skipped: true });
 		streamSearchDiscussionMock.mockImplementation(
 			async (
@@ -59,6 +66,21 @@ describe("api search discussion route", () => {
 					},
 				});
 			},
+		);
+	});
+
+	it("uses the configured live transport when mode is omitted", async () => {
+		const response = await GET({
+			request: new Request(
+				"http://localhost/api/search-discussion?query=ChatGPT",
+			),
+		});
+
+		await response.text();
+		expect(resolveLiveReadModeMock).toHaveBeenCalledWith();
+		expect(streamSearchDiscussionMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: "bird" }),
+			expect.any(Object),
 		);
 	});
 
@@ -105,7 +127,7 @@ describe("api search discussion route", () => {
 
 		const response = await GET({
 			request: new Request(
-				"http://localhost/api/search-discussion?source=bad&mode=bad&includeDms=no&limit=50000&maxPages=nope",
+				"http://localhost/api/search-discussion?source=bad&mode=auto&includeDms=no&limit=50000&maxPages=nope",
 			),
 		});
 
@@ -122,5 +144,22 @@ describe("api search discussion route", () => {
 			}),
 			expect.any(Object),
 		);
+	});
+
+	it("returns HTTP 400 for an invalid explicit mode without starting work", async () => {
+		const response = await GET({
+			request: new Request(
+				"http://localhost/api/search-discussion?query=ChatGPT&mode=bad",
+			),
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toEqual({
+			ok: false,
+			error: "mode must be auto, bird, xurl, or local",
+		});
+		expect(resolveLiveReadModeMock).not.toHaveBeenCalled();
+		expect(maybeAutoUpdateBackupMock).not.toHaveBeenCalled();
+		expect(streamSearchDiscussionMock).not.toHaveBeenCalled();
 	});
 });

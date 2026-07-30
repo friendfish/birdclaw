@@ -1,10 +1,13 @@
 // @vitest-environment node
 import { Effect } from "effect";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetBirdclawPathsForTests } from "./config";
 
 const resolveProfileMock = vi.fn();
 const resolveOperationAccountMock = vi.fn();
 const listUserTweetsMock = vi.fn();
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
 
 vi.mock("./account-selection", () => ({
 	resolveOperationAccount: (...args: unknown[]) =>
@@ -22,12 +25,82 @@ vi.mock("./xurl", () => ({
 describe("profile reply inspection", () => {
 	beforeEach(() => {
 		vi.resetModules();
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
 		resolveProfileMock.mockReset();
 		resolveOperationAccountMock.mockReset();
 		listUserTweetsMock.mockReset();
 		resolveOperationAccountMock.mockReturnValue({
 			id: "acct_primary",
 			username: "selected_user",
+		});
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "auto";
+		resetBirdclawPathsForTests();
+	});
+
+	afterEach(() => {
+		if (originalLiveDataSource === undefined) {
+			delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+		}
+		if (originalMentionsDataSource === undefined) {
+			delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+		} else {
+			process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+		}
+		resetBirdclawPathsForTests();
+	});
+
+	it("rejects omitted reply inspection before account or profile lookup when Bird is configured", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		resolveProfileMock.mockResolvedValue({
+			profile: {
+				id: "profile_user_42",
+				handle: "jpctan",
+				displayName: "Jason Tan",
+				bio: "",
+				followersCount: 268,
+				avatarHue: 18,
+				createdAt: "2015-05-20T09:27:37.000Z",
+			},
+			externalUserId: "42",
+		});
+		listUserTweetsMock.mockResolvedValue({ items: [] });
+		const { inspectProfileReplies } = await import("./profile-replies");
+
+		await expect(inspectProfileReplies("@jpctan")).rejects.toThrow(
+			"Profile reply inspection requires xurl; select xurl explicitly",
+		);
+		expect(resolveOperationAccountMock).not.toHaveBeenCalled();
+		expect(resolveProfileMock).not.toHaveBeenCalled();
+		expect(listUserTweetsMock).not.toHaveBeenCalled();
+	});
+
+	it("allows an explicit xurl reply inspection override when Bird is configured", async () => {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = "bird";
+		resetBirdclawPathsForTests();
+		resolveProfileMock.mockResolvedValue({
+			profile: {
+				id: "profile_user_42",
+				handle: "jpctan",
+				displayName: "Jason Tan",
+				bio: "",
+				followersCount: 268,
+				avatarHue: 18,
+				createdAt: "2015-05-20T09:27:37.000Z",
+			},
+			externalUserId: "42",
+		});
+		listUserTweetsMock.mockResolvedValue({ items: [] });
+		const { inspectProfileReplies } = await import("./profile-replies");
+
+		await expect(
+			inspectProfileReplies("@jpctan", { mode: "xurl" }),
+		).resolves.toMatchObject({ externalUserId: "42", items: [] });
+		expect(listUserTweetsMock).toHaveBeenCalledWith("42", {
+			maxResults: 36,
+			excludeRetweets: true,
 		});
 	});
 

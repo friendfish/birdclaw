@@ -2,6 +2,7 @@ import type { Database } from "./sqlite";
 import { Effect } from "effect";
 import { getNativeDb } from "./db";
 import { runEffectPromise, trySync } from "./effect-runtime";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import { liveTransportGateway } from "./live-transport-gateway";
 import {
 	createLiveTransportAdapter,
@@ -307,7 +308,7 @@ function fetchBirdCollectionEffect({
 export function syncTimelineCollectionEffect({
 	kind,
 	account,
-	mode = "auto",
+	mode,
 	limit = 20,
 	all = false,
 	maxPages,
@@ -316,14 +317,15 @@ export function syncTimelineCollectionEffect({
 	earlyStop = false,
 }: SyncTimelineCollectionOptions) {
 	return Effect.gen(function* () {
+		const resolvedMode = yield* trySync(() => resolveLiveSyncMode(mode));
 		yield* trySync(() => assertLimit(limit));
 		const parsedMaxPages = yield* trySync(() => parseMaxPages(maxPages));
 		const shouldApplyEarlyStopCap =
-			earlyStop && !all && parsedMaxPages === null && mode !== "bird";
+			earlyStop && !all && parsedMaxPages === null && resolvedMode !== "bird";
 		const xurlMaxPages = shouldApplyEarlyStopCap
 			? DEFAULT_EARLY_STOP_MAX_PAGES
 			: parsedMaxPages;
-		if (mode === "xurl" || mode === "auto") {
+		if (resolvedMode === "xurl" || resolvedMode === "auto") {
 			yield* trySync(() => assertXurlLimit(limit));
 		}
 
@@ -331,8 +333,9 @@ export function syncTimelineCollectionEffect({
 		const resolvedAccount = yield* trySync(() =>
 			resolveLiveSyncAccount(db, account),
 		);
-		const cacheMaxPages = mode === "bird" ? parsedMaxPages : xurlMaxPages;
-		const cacheKey = `${kind}:${mode}:${resolvedAccount.accountId}:${String(limit)}:${all ? "all" : "single"}:${cacheMaxPages === null ? "all-pages" : String(cacheMaxPages)}${earlyStop ? ":early-stop" : ""}`;
+		const cacheMaxPages =
+			resolvedMode === "bird" ? parsedMaxPages : xurlMaxPages;
+		const cacheKey = `${kind}:${resolvedMode}:${resolvedAccount.accountId}:${String(limit)}:${all ? "all" : "single"}:${cacheMaxPages === null ? "all-pages" : String(cacheMaxPages)}${earlyStop ? ":early-stop" : ""}`;
 
 		if (shouldApplyEarlyStopCap) {
 			console.error(
@@ -358,9 +361,9 @@ export function syncTimelineCollectionEffect({
 			maxPages: parsedMaxPages,
 		});
 		const transports =
-			mode === "bird"
+			resolvedMode === "bird"
 				? [createLiveTransportAdapter("bird", birdFetch)]
-				: mode === "xurl"
+				: resolvedMode === "xurl"
 					? [createLiveTransportAdapter("xurl", xurlFetch)]
 					: [
 							createLiveTransportAdapter("xurl", xurlFetch),

@@ -9,6 +9,7 @@ const maybeAutoSyncBackupMock = vi.hoisted(() => vi.fn());
 const syncHomeTimelineMock = vi.hoisted(() => vi.fn());
 const syncMentionThreadsMock = vi.hoisted(() => vi.fn());
 const syncMentionsMock = vi.hoisted(() => vi.fn());
+const resolveLiveReadModeMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./backup", () => ({
 	maybeAutoSyncBackupEffect: (...args: unknown[]) =>
@@ -40,6 +41,10 @@ vi.mock("./timeline-live", () => ({
 			try: () => syncHomeTimelineMock(...args),
 			catch: (error) => error,
 		}),
+}));
+
+vi.mock("./live-transport-policy", () => ({
+	resolveLiveReadMode: (...args: unknown[]) => resolveLiveReadModeMock(...args),
 }));
 
 import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
@@ -79,6 +84,8 @@ describe("period digest live refresh", () => {
 		syncHomeTimelineMock.mockReset();
 		syncMentionThreadsMock.mockReset();
 		syncMentionsMock.mockReset();
+		resolveLiveReadModeMock.mockReset();
+		resolveLiveReadModeMock.mockReturnValue("xurl");
 		maybeAutoSyncBackupMock.mockResolvedValue({
 			ok: true,
 			enabled: false,
@@ -290,6 +297,10 @@ describe("period digest live refresh", () => {
 				following: true,
 				mode: "xurl",
 			});
+			expect(syncMentionsMock.mock.calls[0]?.[0]).toMatchObject({
+				mode: "xurl",
+				startTime: "2026-01-01T00:00:00.000Z",
+			});
 		});
 
 		it("syncs the for_you feed (not following) via bird/auto, never xurl", async () => {
@@ -314,6 +325,7 @@ describe("period digest live refresh", () => {
 
 		it("prefers bird explicitly for for_you when mentions.dataSource is configured as bird", async () => {
 			writeBirdclawConfig({ mentions: { dataSource: "bird" } });
+			resolveLiveReadModeMock.mockReturnValue("bird");
 			vi.stubGlobal(
 				"fetch",
 				vi.fn().mockResolvedValue(streamResponse(streamed)),
@@ -350,6 +362,44 @@ describe("period digest live refresh", () => {
 
 			expect(syncHomeTimelineMock.mock.calls[0]?.[0]).toMatchObject({
 				following: true,
+				mode: "bird",
+			});
+			expect(syncMentionsMock.mock.calls[0]?.[0]).toMatchObject({
+				mode: "bird",
+			});
+			expect(syncMentionsMock.mock.calls[0]?.[0]).not.toHaveProperty(
+				"startTime",
+			);
+			expect(syncMentionThreadsMock.mock.calls.at(-1)?.[0]).toMatchObject({
+				mode: "bird",
+			});
+		});
+
+		it("resolves an omitted live mode once across both refresh phases", async () => {
+			resolveLiveReadModeMock
+				.mockReturnValueOnce("bird")
+				.mockReturnValue("xurl");
+			vi.stubGlobal(
+				"fetch",
+				vi.fn().mockResolvedValue(streamResponse(streamed)),
+			);
+
+			await streamPeriodDigest({
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
+				refresh: true,
+				liveSync: true,
+				contentSource: "all",
+			});
+
+			expect(resolveLiveReadModeMock).toHaveBeenCalledTimes(1);
+			expect(syncHomeTimelineMock.mock.calls[0]?.[0]).toMatchObject({
+				mode: "bird",
+			});
+			expect(syncMentionsMock.mock.calls[0]?.[0]).toMatchObject({
+				mode: "bird",
+			});
+			expect(syncMentionThreadsMock.mock.calls.at(-1)?.[0]).toMatchObject({
 				mode: "bird",
 			});
 		});

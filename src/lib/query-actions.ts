@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect } from "effect";
 import type { Database } from "./sqlite";
+import { resolveActionsTransport } from "./config";
 import { getReadDb } from "./db";
 import { databaseWriteEffect } from "./database-writer";
 import { getConversationThread } from "./dm-read-model";
@@ -19,6 +20,19 @@ function toError(error: unknown) {
 
 function trySync<T>(try_: () => T) {
 	return Effect.try({ try: try_, catch: toError });
+}
+
+function assertComposeTransportEffect() {
+	return Effect.gen(function* () {
+		const transport = yield* trySync(() => resolveActionsTransport());
+		if (transport === "bird") {
+			return yield* Effect.fail(
+				new Error(
+					"Compose writes require xurl; set actions.transport to auto or xurl",
+				),
+			);
+		}
+	});
 }
 
 function e2eFakeLiveWritesEnabled() {
@@ -208,6 +222,7 @@ function writePostDraft(
 
 export function createPostEffect(accountId: string, text: string) {
 	return Effect.gen(function* () {
+		yield* assertComposeTransportEffect();
 		const draft = yield* trySync(() => preparePostDraft(accountId));
 		yield* databaseWriteEffect((db) =>
 			preflightWrite(db, (writeDb) =>
@@ -276,6 +291,7 @@ export function createTweetReplyEffect(
 	}
 
 	return Effect.gen(function* () {
+		yield* assertComposeTransportEffect();
 		const draft = yield* trySync(() => prepareReplyDraft());
 		yield* databaseWriteEffect((db) =>
 			preflightWrite(db, (writeDb) => writeReplyDraft(writeDb, draft)),
@@ -306,6 +322,7 @@ export function createDmReplyEffect(
 	accountId?: string,
 ) {
 	return Effect.gen(function* () {
+		yield* assertComposeTransportEffect();
 		const draft = yield* trySync(() => {
 			const conversation = getConversationThread(conversationId);
 			if (!conversation) {

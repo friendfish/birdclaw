@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { lookupTweetsByIdsViaBirdEffect } from "./bird";
 import { runEffectPromise } from "./effect-runtime";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import type { XurlTweetsResponse } from "./types";
 import { lookupTweetsByIdsEffect as lookupTweetsByIdsViaXurlEffect } from "./xurl";
 
@@ -12,12 +13,13 @@ function errorMessage(error: unknown) {
 
 export function lookupTweetsByIdsEffect(
 	ids: string[],
-	mode: TweetLookupMode = "auto",
+	mode?: TweetLookupMode,
 ): Effect.Effect<XurlTweetsResponse, unknown> {
-	if (mode === "bird") {
+	const resolvedMode = resolveLiveSyncMode(mode);
+	if (resolvedMode === "bird") {
 		return lookupTweetsByIdsViaBirdEffect(ids);
 	}
-	if (mode === "xurl") {
+	if (resolvedMode === "xurl") {
 		return lookupTweetsByIdsViaXurlEffect(ids);
 	}
 
@@ -40,7 +42,7 @@ export function lookupTweetsByIdsEffect(
 
 export function lookupTweetsByIds(
 	ids: string[],
-	mode: TweetLookupMode = "auto",
+	mode?: TweetLookupMode,
 ): Promise<XurlTweetsResponse> {
 	return runEffectPromise(lookupTweetsByIdsEffect(ids, mode));
 }

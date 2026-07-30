@@ -72,8 +72,9 @@ export function registerModerationCommands({
 	blocksCommand
 		.command("sync")
 		.option("--account <username>", "Account username or id", "acct_primary")
+		.option("--mode <mode>", "auto, bird, or xurl")
 		.action(async (options) => {
-			const result = await syncBlocks(options.account);
+			const result = await syncBlocks(options.account, { mode: options.mode });
 			print(result, asJson());
 		});
 

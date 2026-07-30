@@ -5,6 +5,7 @@ import { syncDirectMessagesViaCachedBirdEffect } from "./dms-live";
 import { runEffectBackground, runEffectPromise } from "./effect-runtime";
 import { syncMentionThreadsEffect } from "./mention-threads-live";
 import { syncMentionsEffect } from "./mentions-live";
+import { resolveLiveSyncMode } from "./live-transport-policy";
 import {
 	defaultServerRuntimeServices,
 	type ServerRuntimeServices,
@@ -13,7 +14,6 @@ import NativeSqliteDatabase from "./sqlite";
 import { syncTimelineCollectionEffect } from "./timeline-collections-live";
 import { syncHomeTimelineEffect } from "./timeline-live";
 import type { HomeFeed } from "./tweet-feed-edges";
-import { getBirdclawConfig } from "./config";
 import { syncFollowGraphEffect } from "./follow-graph";
 
 import type { WebSyncKind } from "./api-enums";
@@ -133,6 +133,22 @@ function summarizeSteps(steps: WebSyncStep[]) {
 	return `Synced ${String(total)} items${suffix}`;
 }
 
+function resolveAccountTargetedWebMode(
+	account: string | undefined,
+	runtime: ServerRuntimeServices,
+) {
+	const configuredMode = resolveLiveSyncMode();
+	if (configuredMode !== "auto") return configuredMode;
+	return targetsDefaultWebAccount(account, runtime) ? "auto" : "xurl";
+}
+
+function targetsDefaultWebAccount(
+	account: string | undefined,
+	runtime: ServerRuntimeServices,
+) {
+	return !account || account === resolveDefaultSyncAccountId(runtime);
+}
+
 const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 	timeline: {
 		label: "Home timeline",
@@ -140,14 +156,13 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 		run: (account, options, runtime) =>
 			Effect.gen(function* () {
 				const feed = options.feed ?? "following";
+				const mode =
+					feed === "for_you" && targetsDefaultWebAccount(account, runtime)
+						? "bird"
+						: resolveAccountTargetedWebMode(account, runtime);
 				const result = yield* syncHomeTimelineEffect({
 					account,
-					mode:
-						getBirdclawConfig().mentions?.dataSource === "bird"
-							? "bird"
-							: !account || account === resolveDefaultSyncAccountId(runtime)
-								? "auto"
-								: "xurl",
+					mode,
 					limit: 100,
 					maxPages: 3,
 					following: feed !== "for_you",
@@ -168,12 +183,10 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 		accountAware: true,
 		run: (account) =>
 			Effect.gen(function* () {
+				const mode = resolveLiveSyncMode();
 				const mentions = yield* syncMentionsEffect({
 					account,
-					mode:
-						getBirdclawConfig().mentions?.dataSource === "bird"
-							? "bird"
-							: "auto",
+					mode,
 					limit: 100,
 					maxPages: 3,
 					refresh: true,
@@ -190,10 +203,7 @@ const WEB_SYNC_PLANS: Record<WebSyncKind, WebSyncPlan> = {
 
 				const threads = yield* syncMentionThreadsEffect({
 					account,
-					mode:
-						getBirdclawConfig().mentions?.dataSource === "bird"
-							? "bird"
-							: "xurl",
+					mode: mode === "auto" ? "xurl" : mode,
 					limit: 30,
 					delayMs: 1500,
 					timeoutMs: 15000,
@@ -283,17 +293,10 @@ function syncSavedCollection(
 	runtime: ServerRuntimeServices,
 ): Effect.Effect<WebSyncStep[], unknown> {
 	return Effect.gen(function* () {
-		const isNonDefaultAccount =
-			account !== undefined && account !== resolveDefaultSyncAccountId(runtime);
 		const result = yield* syncTimelineCollectionEffect({
 			kind,
 			account,
-			mode:
-				getBirdclawConfig().mentions?.dataSource === "bird"
-					? "bird"
-					: isNonDefaultAccount
-						? "xurl"
-						: "auto",
+			mode: resolveAccountTargetedWebMode(account, runtime),
 			limit: 100,
 			maxPages: 5,
 			refresh: true,

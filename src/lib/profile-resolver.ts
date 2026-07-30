@@ -6,6 +6,7 @@ import {
 	lookupProfilesViaBirdEffect,
 } from "./bird";
 import { runEffectPromise } from "./effect-runtime";
+import { resolveLiveReadMode } from "./live-transport-policy";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
 import {
 	hydrateProfileAffiliationOrganizationsEffect,
@@ -98,6 +99,14 @@ function isPlaceholderProfile(profile: ProfileRecord) {
 
 function isFresh(updatedAt: string, maxAgeMs: number) {
 	return Date.now() - new Date(updatedAt).getTime() <= maxAgeMs;
+}
+
+function isCachedLookupCompatible(
+	value: CachedProfileLookup,
+	xurlFallback: boolean,
+) {
+	if (value.status === "hit") return true;
+	return value.source === (xurlFallback ? "xurl" : "bird");
 }
 
 function cacheKeyForUserId(externalUserId: string) {
@@ -277,7 +286,8 @@ export function resolveProfilesForIdsEffect(
 		const maxAgeMs = options.maxAgeMs ?? PROFILE_CACHE_TTL_MS;
 		const negativeMaxAgeMs =
 			options.negativeMaxAgeMs ?? PROFILE_NEGATIVE_CACHE_TTL_MS;
-		const xurlFallback = options.xurlFallback ?? true;
+		const xurlFallback =
+			options.xurlFallback ?? resolveLiveReadMode() !== "bird";
 		const ordered: Array<
 			| { kind: "ready"; result: ProfileResolveResult }
 			| { kind: "pending"; profileId: string; externalUserId: string }
@@ -323,7 +333,10 @@ export function resolveProfilesForIdsEffect(
 			if (cached && !options.refresh) {
 				const maxAge =
 					cached.value.status === "hit" ? maxAgeMs : negativeMaxAgeMs;
-				if (isFresh(cached.updatedAt, maxAge)) {
+				if (
+					isFresh(cached.updatedAt, maxAge) &&
+					isCachedLookupCompatible(cached.value, xurlFallback)
+				) {
 					if (cached.value.status === "hit" && cached.value.user) {
 						const resolved = yield* trySync(() => {
 							const resolved = upsertProfileFromXUser(db, cached.value.user!);
@@ -425,7 +438,8 @@ export function resolveProfilesForHandlesEffect(
 ): Effect.Effect<HandleProfileResolveResult[], unknown> {
 	return Effect.gen(function* () {
 		const db = yield* trySync(() => getNativeDb());
-		const xurlFallback = options.xurlFallback ?? true;
+		const xurlFallback =
+			options.xurlFallback ?? resolveLiveReadMode() !== "bird";
 		const targets = Array.from(
 			new Set(
 				handles.map(profileHandleKey).filter((handle) => handle.length > 0),

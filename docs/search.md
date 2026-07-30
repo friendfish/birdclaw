@@ -92,7 +92,7 @@ DM-specific filters layer follower-count and influence on top of FTS5:
 - `--resolve-profiles`
 - `--expand-urls`
 - `--refresh-profile-cache` / `--refresh-url-cache`
-- `--no-xurl-fallback`
+- `--[no-]xurl-fallback` — explicitly allow or forbid xurl profile fallback; when omitted, configuration and the operation default decide
 - `--replied` / `--unreplied`
 - `--limit <n>`
 
@@ -117,7 +117,7 @@ Use the identity filters when domain-only matches would be noisy:
 
 ```bash
 birdclaw whois "github guy" --current-affiliation github --exclude-domain-only
-birdclaw whois github --affiliation github --no-xurl-fallback --json
+birdclaw whois github --affiliation github --xurl-fallback --json
 ```
 
 ## Discuss Search Results

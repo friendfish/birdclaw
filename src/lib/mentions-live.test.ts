@@ -1,10 +1,10 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetBirdclawPathsForTests } from "./config";
+import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 import { listTimelineItems } from "./queries";
 
@@ -12,6 +12,42 @@ const listMentionsViaBirdMock = vi.fn();
 const listMentionsViaXurlMock = vi.fn();
 const lookupUsersByHandlesMock = vi.fn();
 const getAuthenticatedBirdAccountMock = vi.fn();
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+const originalConfig = process.env.BIRDCLAW_CONFIG;
+const originalHome = process.env.BIRDCLAW_HOME;
+
+function resetLiveDataSourceEnvironment() {
+	delete process.env.BIRDCLAW_HOME;
+	delete process.env.BIRDCLAW_CONFIG;
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	resetBirdclawPathsForTests();
+}
+
+function restoreLiveDataSourceEnvironment() {
+	if (originalHome === undefined) {
+		delete process.env.BIRDCLAW_HOME;
+	} else {
+		process.env.BIRDCLAW_HOME = originalHome;
+	}
+	if (originalConfig === undefined) {
+		delete process.env.BIRDCLAW_CONFIG;
+	} else {
+		process.env.BIRDCLAW_CONFIG = originalConfig;
+	}
+	if (originalLiveDataSource === undefined) {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+	}
+	if (originalMentionsDataSource === undefined) {
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+	}
+	resetBirdclawPathsForTests();
+}
 
 vi.mock("./bird", async () => {
 	const { Effect } = await import("effect");
@@ -107,6 +143,7 @@ function insertLocalMentionBaseline({
 
 describe("cached live mentions", () => {
 	beforeEach(() => {
+		resetLiveDataSourceEnvironment();
 		listMentionsViaBirdMock.mockReset();
 		listMentionsViaXurlMock.mockReset();
 		lookupUsersByHandlesMock.mockReset();
@@ -118,10 +155,22 @@ describe("cached live mentions", () => {
 		});
 	});
 
+	it("preserves malformed config errors while resolving an omitted mode", async () => {
+		const home = makeTempHome();
+		writeFileSync(path.join(home, "config.json"), "{");
+		const { syncMentions } = await import("./mentions-live");
+
+		await expect(syncMentions({ limit: 5 })).rejects.toBeInstanceOf(
+			SyntaxError,
+		);
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
+	});
+
 	afterEach(() => {
 		resetDatabaseForTests();
 		resetBirdclawPathsForTests();
 		delete process.env.BIRDCLAW_HOME;
+		restoreLiveDataSourceEnvironment();
 
 		for (const dir of tempDirs.splice(0)) {
 			rmSync(dir, { recursive: true, force: true });
@@ -129,9 +178,9 @@ describe("cached live mentions", () => {
 	});
 
 	it("builds mention sync effects lazily", async () => {
-		makeTempHome();
-		insertLocalMentionBaseline();
+		const home = makeTempHome();
 		const { syncMentionsEffect } = await import("./mentions-live");
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 
 		const effect = syncMentionsEffect({
 			mode: "xurl",
@@ -140,6 +189,10 @@ describe("cached live mentions", () => {
 		});
 
 		expect(listMentionsViaXurlMock).not.toHaveBeenCalled();
+		expect(listMentionsViaBirdMock).not.toHaveBeenCalled();
+		expect(lookupUsersByHandlesMock).not.toHaveBeenCalled();
+		expect(getAuthenticatedBirdAccountMock).not.toHaveBeenCalled();
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 		listMentionsViaXurlMock.mockResolvedValueOnce({
 			data: [
 				{
@@ -164,15 +217,20 @@ describe("cached live mentions", () => {
 	});
 
 	it("validates mention sync effects only when run", async () => {
-		makeTempHome();
+		const home = makeTempHome();
 		const { syncMentionsEffect } = await import("./mentions-live");
 
-		const effect = syncMentionsEffect({ mode: "xurl", limit: 4 });
+		const effect = syncMentionsEffect({ mode: "" as never, limit: 5 });
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 
 		await expect(Effect.runPromise(effect)).rejects.toThrow(
-			"xurl mode requires --limit between 5 and 100",
+			"Invalid live-read mode; expected auto, bird, or xurl",
 		);
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 		expect(listMentionsViaXurlMock).not.toHaveBeenCalled();
+		expect(listMentionsViaBirdMock).not.toHaveBeenCalled();
+		expect(lookupUsersByHandlesMock).not.toHaveBeenCalled();
+		expect(getAuthenticatedBirdAccountMock).not.toHaveBeenCalled();
 	});
 
 	it("reports bird mention sync progress", async () => {
@@ -201,6 +259,39 @@ describe("cached live mentions", () => {
 				done: true,
 			}),
 		]);
+	});
+
+	it("uses configured Bird for omitted mention sync mode without xurl calls", async () => {
+		makeTempHome();
+		writeBirdclawConfig({ live: { dataSource: "bird" } });
+		listMentionsViaBirdMock.mockResolvedValueOnce({
+			data: [],
+			meta: { result_count: 0 },
+		});
+		const { syncMentions } = await import("./mentions-live");
+
+		await expect(
+			syncMentions({ account: "acct_primary", limit: 5, refresh: true }),
+		).resolves.toMatchObject({ source: "bird" });
+		expect(listMentionsViaBirdMock).toHaveBeenCalledTimes(1);
+		expect(listMentionsViaXurlMock).not.toHaveBeenCalled();
+		expect(lookupUsersByHandlesMock).not.toHaveBeenCalled();
+	});
+
+	it("uses configured xurl for omitted mention sync mode", async () => {
+		makeTempHome();
+		writeBirdclawConfig({ live: { dataSource: "xurl" } });
+		listMentionsViaXurlMock.mockResolvedValueOnce({
+			data: [],
+			meta: { result_count: 0 },
+		});
+		const { syncMentions } = await import("./mentions-live");
+
+		await expect(
+			syncMentions({ account: "acct_primary", limit: 5, refresh: true }),
+		).resolves.toMatchObject({ source: "xurl" });
+		expect(listMentionsViaXurlMock).toHaveBeenCalledTimes(1);
+		expect(listMentionsViaBirdMock).not.toHaveBeenCalled();
 	});
 
 	it("falls back from xurl to bird in auto mention sync", async () => {
@@ -2009,7 +2100,7 @@ describe("cached live mentions", () => {
 				mode: "weird",
 				limit: 5,
 			}),
-		).rejects.toThrow("--mode must be auto, bird, or xurl");
+		).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 		await expect(
 			syncMentions({
 				account: "acct_primary",

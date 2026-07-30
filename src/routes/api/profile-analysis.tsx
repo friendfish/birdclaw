@@ -3,11 +3,13 @@ import { Effect } from "effect";
 import { profileAnalysisStreamEventSchema } from "#/lib/client-stream-contracts";
 import { maybeAutoUpdateBackupEffect } from "#/lib/backup";
 import {
+	jsonResponse,
 	parseBoundedInteger,
 	runRouteEffect,
 	sensitiveRequestErrorResponse,
 } from "#/lib/http-effect";
 import { createEffectNdjsonResponse } from "#/lib/ndjson-stream";
+import type { LiveReadMode } from "#/lib/live-transport-policy";
 import {
 	streamProfileAnalysisEffect,
 	type ProfileAnalysisOptions,
@@ -16,6 +18,15 @@ import {
 
 function parseBoolean(value: string | null) {
 	return value === "true" || value === "1" || value === "yes";
+}
+
+function parseMode(value: string | null): LiveReadMode | undefined {
+	if (value === null) return undefined;
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "auto" || normalized === "bird" || normalized === "xurl") {
+		return normalized;
+	}
+	throw new Error("mode must be auto, bird, or xurl");
 }
 
 function parseOptions(url: URL): ProfileAnalysisOptions {
@@ -34,6 +45,7 @@ function parseOptions(url: URL): ProfileAnalysisOptions {
 	return {
 		handle: url.searchParams.get("handle") ?? "",
 		account: url.searchParams.get("account") ?? undefined,
+		mode: parseMode(url.searchParams.get("mode")),
 		refresh: parseBoolean(url.searchParams.get("refresh")),
 		model: url.searchParams.get("model") === "gpt-5.5" ? "gpt-5.5" : undefined,
 		language: url.searchParams.get("language") ?? undefined,
@@ -67,7 +79,21 @@ export const Route = createFileRoute("/api/profile-analysis")({
 						if (denied) return denied;
 
 						const url = new URL(request.url);
-						const options = parseOptions(url);
+						let options: ProfileAnalysisOptions;
+						try {
+							options = parseOptions(url);
+						} catch (error) {
+							return jsonResponse(
+								{
+									ok: false,
+									error:
+										error instanceof Error
+											? error.message
+											: "Invalid profile analysis options",
+								},
+								{ status: 400 },
+							);
+						}
 						return createEffectNdjsonResponse<ProfileAnalysisStreamEvent>({
 							request,
 							schema: profileAnalysisStreamEventSchema,

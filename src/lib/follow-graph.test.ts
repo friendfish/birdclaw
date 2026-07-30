@@ -1,10 +1,10 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { resetBirdclawPathsForTests } from "./config";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 import type { XurlMentionUser } from "./types";
 
@@ -12,6 +12,42 @@ const mocks = vi.hoisted(() => ({
 	listFollowUsersViaBird: vi.fn(),
 	listFollowUsersViaXurl: vi.fn(),
 }));
+const originalLiveDataSource = process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+const originalMentionsDataSource = process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+const originalConfig = process.env.BIRDCLAW_CONFIG;
+const originalHome = process.env.BIRDCLAW_HOME;
+
+function resetLiveDataSourceEnvironment() {
+	delete process.env.BIRDCLAW_HOME;
+	delete process.env.BIRDCLAW_CONFIG;
+	delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	resetBirdclawPathsForTests();
+}
+
+function restoreLiveDataSourceEnvironment() {
+	if (originalHome === undefined) {
+		delete process.env.BIRDCLAW_HOME;
+	} else {
+		process.env.BIRDCLAW_HOME = originalHome;
+	}
+	if (originalConfig === undefined) {
+		delete process.env.BIRDCLAW_CONFIG;
+	} else {
+		process.env.BIRDCLAW_CONFIG = originalConfig;
+	}
+	if (originalLiveDataSource === undefined) {
+		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_LIVE_DATA_SOURCE = originalLiveDataSource;
+	}
+	if (originalMentionsDataSource === undefined) {
+		delete process.env.BIRDCLAW_MENTIONS_DATA_SOURCE;
+	} else {
+		process.env.BIRDCLAW_MENTIONS_DATA_SOURCE = originalMentionsDataSource;
+	}
+	resetBirdclawPathsForTests();
+}
 
 vi.mock("./bird", () => ({
 	listFollowUsersViaBird: mocks.listFollowUsersViaBird,
@@ -31,6 +67,10 @@ vi.mock("./xurl", () => ({
 }));
 
 const tempRoots: string[] = [];
+
+beforeEach(() => {
+	resetLiveDataSourceEnvironment();
+});
 
 function setupTempHome() {
 	const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-graph-"));
@@ -64,6 +104,7 @@ afterEach(() => {
 	resetDatabaseForTests();
 	resetBirdclawPathsForTests();
 	delete process.env.BIRDCLAW_HOME;
+	restoreLiveDataSourceEnvironment();
 	mocks.listFollowUsersViaBird.mockReset();
 	mocks.listFollowUsersViaXurl.mockReset();
 	for (const tempRoot of tempRoots.splice(0)) {
@@ -72,6 +113,16 @@ afterEach(() => {
 });
 
 describe("follow graph sync and cache-only queries", () => {
+	it("preserves malformed config errors while resolving an omitted mode", async () => {
+		setupTempHome();
+		writeFileSync(path.join(process.env.BIRDCLAW_HOME!, "config.json"), "{");
+		const { syncFollowGraph } = await import("./follow-graph");
+
+		await expect(
+			syncFollowGraph({ direction: "followers" }),
+		).rejects.toBeInstanceOf(SyntaxError);
+	});
+
 	it("defaults to dry-run and does not call xurl", async () => {
 		setupTempHome();
 		const { syncFollowGraph } = await import("./follow-graph");
@@ -128,6 +179,56 @@ describe("follow graph sync and cache-only queries", () => {
 			all: true,
 			maxPages: undefined,
 		});
+		expect(mocks.listFollowUsersViaXurl).not.toHaveBeenCalled();
+	});
+
+	it("uses configured Bird for omitted follow sync mode without xurl calls", async () => {
+		setupTempHome();
+		writeBirdclawConfig({ live: { dataSource: "bird" } });
+		mocks.listFollowUsersViaBird.mockReset();
+		mocks.listFollowUsersViaBird.mockResolvedValueOnce({
+			data: [user("1", "alice", 100)],
+			meta: { result_count: 1 },
+		});
+		const { syncFollowGraph } = await import("./follow-graph");
+
+		await expect(
+			syncFollowGraph({ direction: "followers", yes: true, refresh: true }),
+		).resolves.toMatchObject({ source: "bird", mode: "bird" });
+		expect(mocks.listFollowUsersViaBird).toHaveBeenCalledTimes(1);
+		expect(mocks.listFollowUsersViaXurl).not.toHaveBeenCalled();
+	});
+
+	it("uses configured xurl for omitted follow sync mode", async () => {
+		setupTempHome();
+		writeBirdclawConfig({ live: { dataSource: "xurl" } });
+		mocks.listFollowUsersViaXurl.mockResolvedValueOnce({
+			data: [user("1", "alice", 100)],
+			meta: { result_count: 1 },
+		});
+		const { syncFollowGraph } = await import("./follow-graph");
+
+		await expect(
+			syncFollowGraph({ direction: "followers", yes: true, refresh: true }),
+		).resolves.toMatchObject({ source: "xurl", mode: "xurl" });
+		expect(mocks.listFollowUsersViaXurl).toHaveBeenCalledTimes(1);
+		expect(mocks.listFollowUsersViaBird).not.toHaveBeenCalled();
+	});
+
+	it("rejects blank follow sync mode before opening a database", async () => {
+		const tempRoot = mkdtempSync(
+			path.join(os.tmpdir(), "birdclaw-graph-fresh-"),
+		);
+		tempRoots.push(tempRoot);
+		process.env.BIRDCLAW_HOME = tempRoot;
+		resetBirdclawPathsForTests();
+		const { syncFollowGraph } = await import("./follow-graph");
+
+		await expect(
+			syncFollowGraph({ direction: "followers", mode: "" as never }),
+		).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
+		expect(existsSync(path.join(tempRoot, "birdclaw.sqlite"))).toBe(false);
+		expect(mocks.listFollowUsersViaBird).not.toHaveBeenCalled();
 		expect(mocks.listFollowUsersViaXurl).not.toHaveBeenCalled();
 	});
 
