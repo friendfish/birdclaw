@@ -34,6 +34,8 @@ export interface HybridAnalysisResult<T> {
 	value: T;
 	markdown: string;
 	rawText: string;
+	parseStatus: "structured" | "fallback";
+	fallbackReason?: string;
 	responseId?: string;
 	usage?: unknown;
 }
@@ -111,12 +113,29 @@ export function parseHybridAnalysis<T>({
 	);
 	if (candidate?.startsWith("{")) {
 		try {
-			return { markdown, value: parse(JSON.parse(candidate)) };
-		} catch {
-			return { markdown, value: fallback(markdown) };
+			return {
+				markdown,
+				value: parse(JSON.parse(candidate)),
+				parseStatus: "structured" as const,
+			};
+		} catch (error) {
+			return {
+				markdown,
+				value: fallback(markdown),
+				parseStatus: "fallback" as const,
+				fallbackReason:
+					error instanceof Error
+						? error.message
+						: "Structured output was invalid.",
+			};
 		}
 	}
-	return { markdown, value: fallback(markdown) };
+	return {
+		markdown,
+		value: fallback(markdown),
+		parseStatus: "fallback" as const,
+		fallbackReason: "Structured output delimiter or JSON object was missing.",
+	};
 }
 
 export function extractOpenAIResponseText(

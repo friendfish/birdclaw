@@ -24,6 +24,14 @@ import {
 	recordTweetRevision,
 } from "./tweet-retention";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
+import {
+	type EffectivePrompt,
+	materializeEffectivePrompt,
+	PROMPT_TEMPLATE_DEFINITIONS,
+	resolveEffectivePrompt,
+} from "./prompt-templates";
+import type { PlaygroundResultBase } from "./prompt-playground";
+import { profileFromDbRow } from "./profile-row";
 import { tweetEntitiesFromXurl } from "./tweet-render";
 import type {
 	ProfileRecord,
@@ -39,7 +47,11 @@ import {
 	type TweetAccountEdgeKind,
 	upsertTweetAccountEdge,
 } from "./tweet-account-edges";
-import { buildExternalProfileId, upsertProfileFromXUser } from "./x-profile";
+import {
+	buildExternalProfileId,
+	getExternalUserId,
+	upsertProfileFromXUser,
+} from "./x-profile";
 import { recordXurlRateLimitEventSafe } from "./xurl-rate-limits";
 import type { XurlJsonCommandAttempt } from "./xurl";
 import {
@@ -153,6 +165,7 @@ export interface ProfileAnalysisRunResult {
 	model: string;
 	reasoningEffort: string;
 	serviceTier: string;
+	parseStatus: "structured" | "fallback";
 	cached: boolean;
 	updatedAt: string;
 }
@@ -163,6 +176,19 @@ export type ProfileAnalysisStreamEvent =
 	| { type: "delta"; delta: string }
 	| { type: "done"; result: ProfileAnalysisRunResult }
 	| { type: "error"; error: string };
+
+export interface ProfileAnalysisPlaygroundOptions {
+	handle: string;
+	account?: string;
+	language?: string;
+	system: string;
+	requirements: string;
+	signal?: AbortSignal;
+}
+
+export interface ProfileAnalysisPlaygroundResult extends PlaygroundResultBase {
+	analysis: ProfileAnalysis;
+}
 
 const DEFAULT_MAX_TWEETS = 10_000;
 const DEFAULT_MAX_PAGES = 100;
@@ -591,12 +617,225 @@ function contextHash(context: Omit<ProfileAnalysisContext, "hash">) {
 		.digest("hex");
 }
 
+function parseLocalJson(value: unknown): Record<string, unknown> {
+	if (typeof value !== "string" || !value) return {};
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+			? (parsed as Record<string, unknown>)
+			: {};
+	} catch {
+		return {};
+	}
+}
+
+function localTweetPayload(row: Record<string, unknown>) {
+	return parseLocalJson(row.payload_json);
+}
+
+function localTweetMetrics(payload: Record<string, unknown>) {
+	const metrics = payload.public_metrics;
+	return metrics && typeof metrics === "object" && !Array.isArray(metrics)
+		? (metrics as Record<string, unknown>)
+		: {};
+}
+
+function compactLocalProfileTweet(
+	row: Record<string, unknown>,
+	handle: string,
+): CompactProfileTweet {
+	const payload = localTweetPayload(row);
+	const metrics = localTweetMetrics(payload);
+	const entities = Object.keys(payload).length
+		? tweetEntitiesFromXurl(payload.entities)
+		: (parseLocalJson(row.entities_json) as TweetEntities);
+	const conversationId =
+		typeof payload.conversation_id === "string"
+			? payload.conversation_id
+			: undefined;
+	const replyToId =
+		typeof row.reply_to_id === "string" ? row.reply_to_id : undefined;
+	return {
+		id: String(row.id),
+		url: tweetUrl(handle, String(row.id)),
+		author: handle,
+		createdAt: String(row.created_at),
+		text: String(row.text),
+		entities,
+		...(conversationId ? { conversationId } : {}),
+		...(replyToId ? { replyToId } : {}),
+		likeCount: Number(metrics.like_count ?? row.like_count ?? 0),
+		replyCount: Number(metrics.reply_count ?? 0),
+		retweetCount: Number(metrics.retweet_count ?? 0),
+		quoteCount: Number(metrics.quote_count ?? 0),
+		bookmarkedCount: Number(metrics.bookmark_count ?? 0),
+	};
+}
+
+function localProfileRowColumns(prefix = "profile_") {
+	return [
+		"id",
+		"handle",
+		"display_name",
+		"bio",
+		"followers_count",
+		"following_count",
+		"avatar_hue",
+		"avatar_url",
+		"location",
+		"url",
+		"verified_type",
+		"entities_json",
+		"created_at",
+	]
+		.map((column) => `p.${column} as ${prefix}${column}`)
+		.join(", ");
+}
+
+export function collectProfileAnalysisContextLocalOnly(
+	options: Pick<
+		ProfileAnalysisOptions,
+		"handle" | "account" | "maxTweets" | "maxConversations" | "signal"
+	>,
+): ProfileAnalysisContext {
+	if (options.signal?.aborted) throw new Error("Profile analysis aborted");
+	const db = getNativeDb();
+	const handle = normalizeHandle(options.handle);
+	const account = resolveAccount(db, options.account);
+	const maxTweets = normalizePositiveInteger(
+		options.maxTweets,
+		DEFAULT_MAX_TWEETS,
+		"maxTweets",
+	);
+	const maxConversations = normalizePositiveInteger(
+		options.maxConversations,
+		DEFAULT_MAX_CONVERSATIONS,
+		"maxConversations",
+	);
+	const profileRow = db
+		.prepare("select * from profiles where lower(handle) = lower(?) limit 1")
+		.get(handle) as Record<string, unknown> | undefined;
+	if (!profileRow) {
+		throw new Error(`No local profile data found for @${handle}`);
+	}
+	const profile = profileFromDbRow(profileRow);
+	const tweetRows = db
+		.prepare(
+			`
+        select t.*,
+          (select tr.payload_json
+           from tweet_revisions tr
+           where tr.root_tweet_id = t.id
+           order by tr.revision_index desc
+           limit 1) as payload_json
+        from tweets t
+        where t.author_profile_id = ?
+          and t.deleted_at is null
+          and t.superseded_at is null
+        order by t.created_at desc, t.id desc
+        limit ?
+        `,
+		)
+		.all(profile.id, maxTweets) as Array<Record<string, unknown>>;
+	const tweets = tweetRows.map((row) =>
+		compactLocalProfileTweet(row, profile.handle),
+	);
+	const conversationRoots = [
+		...new Set(tweets.map((tweet) => tweet.conversationId ?? tweet.id)),
+	].slice(0, maxConversations);
+	const conversations: CompactConversationTweet[] = [];
+	const profiles = new Map<string, ProfileRecord>([[profile.id, profile]]);
+	if (conversationRoots.length > 0) {
+		const placeholders = conversationRoots.map(() => "?").join(",");
+		const rows = db
+			.prepare(
+				`
+          with local_tweets as (
+            select t.*,
+              (select tr.payload_json
+               from tweet_revisions tr
+               where tr.root_tweet_id = t.id
+               order by tr.revision_index desc
+               limit 1) as payload_json
+            from tweets t
+            where t.deleted_at is null and t.superseded_at is null
+          )
+          select local_tweets.*, ${localProfileRowColumns()}
+          from local_tweets
+          join profiles p on p.id = local_tweets.author_profile_id
+          where local_tweets.id in (${placeholders})
+             or local_tweets.reply_to_id in (${placeholders})
+             or json_extract(local_tweets.payload_json, '$.conversation_id') in (${placeholders})
+          order by local_tweets.created_at desc, local_tweets.id desc
+          limit ?
+          `,
+			)
+			.all(
+				...conversationRoots,
+				...conversationRoots,
+				...conversationRoots,
+				maxTweets * 3,
+			) as Array<Record<string, unknown>>;
+		const rootSet = new Set(conversationRoots);
+		for (const row of rows) {
+			const author = profileFromDbRow(row, "profile_");
+			profiles.set(author.id, author);
+			const payload = localTweetPayload(row);
+			const payloadConversationId =
+				typeof payload.conversation_id === "string"
+					? payload.conversation_id
+					: undefined;
+			const rowId = String(row.id);
+			const replyToId =
+				typeof row.reply_to_id === "string" ? row.reply_to_id : undefined;
+			const conversationRootId = payloadConversationId
+				? payloadConversationId
+				: rootSet.has(rowId)
+					? rowId
+					: replyToId && rootSet.has(replyToId)
+						? replyToId
+						: undefined;
+			if (!conversationRootId || !rootSet.has(conversationRootId)) continue;
+			conversations.push({
+				...compactLocalProfileTweet(row, author.handle),
+				conversationRootId,
+				profileId: author.id,
+				name: author.displayName,
+				bio: author.bio,
+				followersCount: author.followersCount,
+				...(author.avatarUrl ? { avatarUrl: author.avatarUrl } : {}),
+			});
+		}
+	}
+	const withoutHash = {
+		handle: profile.handle,
+		accountId: account.id,
+		accountHandle: account.handle,
+		profile,
+		profiles: [...profiles.values()],
+		externalUserId: getExternalUserId(profile.id) ?? profile.id,
+		tweets,
+		conversations,
+		counts: {
+			tweets: tweets.length,
+			tweetPages: tweets.length > 0 ? 1 : 0,
+			conversationsScanned: conversationRoots.length,
+			conversationTweets: conversations.length,
+			conversationPages: conversations.length > 0 ? 1 : 0,
+		},
+		fetchCached: false,
+	} satisfies Omit<ProfileAnalysisContext, "hash">;
+	return { ...withoutHash, hash: contextHash(withoutHash) };
+}
+
 function resultCacheKey(
 	context: ProfileAnalysisContext,
 	options: ProfileAnalysisOptions,
+	promptHash: string,
 ) {
 	return [
 		"profile-analysis:result",
+		promptHash,
 		modelFromOptions(options),
 		reasoningEffortFromOptions(options),
 		serviceTierFromOptions(options),
@@ -1159,6 +1398,7 @@ function fitPromptDataset(context: ProfileAnalysisContext) {
 function buildPrompt(
 	context: ProfileAnalysisContext,
 	options: ProfileAnalysisOptions,
+	effectivePrompt: EffectivePrompt,
 ) {
 	const { dataset, tweetCount, conversationCount } = fitPromptDataset(context);
 	const language =
@@ -1180,15 +1420,7 @@ Prompt conversation tweets: ${String(conversationCount)} of ${String(context.con
 Write a high-signal Markdown profile analysis from X/Twitter API data.
 
 Requirements:
-- Summarize who this person appears to be, what they care about, and what kind of attention they attract.
-- Separate authored profile evidence from conversation/reply evidence.
-- Cover recurring topics, tone, technical interests, social graph hints, interaction style, and likely follow-up angles.
-- Cite claims with tweet ids at sentence ends, e.g. (1234567890). Cite handles only when they are in the dataset.
-- Do not overstate beyond the supplied data.
-- If conversation context is sparse, say so.
-- Use level 2 (##) and level 3 (###) Markdown headings only. Do not use headings smaller than level 3 (avoid #### or smaller headings).
-- After Markdown, output a blank line, a line containing only three hyphens, then one compact JSON object.
-- JSON shape: { "title": string, "summary": string, "voice": string, "themes": [{ "title": string, "summary": string, "tweetIds": string[], "handles": string[] }], "conversationStyle": string, "notableSignals": string[], "risks": string[], "followUps": string[], "sourceTweetIds": string[], "sourceHandles": string[] }${langInstruction}
+${effectivePrompt.requirements}${langInstruction}
 
 Dataset:
 ${JSON.stringify(dataset)}`;
@@ -1217,14 +1449,22 @@ function fallbackAnalysis(
 function parseAnalysisFromHybridText(
 	context: ProfileAnalysisContext,
 	rawText: string,
-): { analysis: ProfileAnalysis; markdown: string } {
+): {
+	analysis: ProfileAnalysis;
+	markdown: string;
+	parseStatus: "structured" | "fallback";
+} {
 	const parsed = parseHybridAnalysis({
 		rawText,
 		parse: (value) => ProfileAnalysisSchema.parse(value),
 		fallback: (markdown) => fallbackAnalysis(context, markdown),
 		delimiterPattern: DELIMITER_PATTERN,
 	});
-	return { markdown: parsed.markdown, analysis: parsed.value };
+	return {
+		markdown: parsed.markdown,
+		analysis: parsed.value,
+		parseStatus: parsed.parseStatus,
+	};
 }
 
 function extractResponseText(payload: Record<string, unknown>) {
@@ -1234,12 +1474,12 @@ function extractResponseText(payload: Record<string, unknown>) {
 function createOpenAIRequestBody(
 	context: ProfileAnalysisContext,
 	options: ProfileAnalysisOptions,
+	effectivePrompt: EffectivePrompt,
 ) {
 	return createAnalysisRequestBody({
 		settings: resolveAnalysisModelSettings(options),
-		system:
-			"You are a precise X/Twitter profile analyst. Use only supplied data. Return Markdown plus the requested JSON after the delimiter.",
-		prompt: buildPrompt(context, options),
+		system: effectivePrompt.system,
+		prompt: buildPrompt(context, options, effectivePrompt),
 		stream: false,
 	});
 }
@@ -1249,6 +1489,9 @@ export function streamProfileAnalysisEffect(
 	handlers: ProfileAnalysisStreamHandlers = {},
 ): Effect.Effect<ProfileAnalysisRunResult, Error> {
 	return Effect.gen(function* () {
+		const effectivePrompt = yield* tryProfileSync(() =>
+			resolveEffectivePrompt("profile-analysis"),
+		);
 		const context = yield* collectProfileAnalysisContextEffect(
 			options,
 			handlers,
@@ -1262,7 +1505,8 @@ export function streamProfileAnalysisEffect(
 						model: string;
 						reasoningEffort: string;
 						serviceTier: string;
-					}>(resultCacheKey(context, options)),
+						parseStatus: "structured" | "fallback";
+					}>(resultCacheKey(context, options, effectivePrompt.promptHash)),
 				);
 		if (cached) {
 			const result: ProfileAnalysisRunResult = yield* tryProfileSync(() => ({
@@ -1272,6 +1516,7 @@ export function streamProfileAnalysisEffect(
 				model: cached.value.model,
 				reasoningEffort: cached.value.reasoningEffort,
 				serviceTier: cached.value.serviceTier,
+				parseStatus: cached.value.parseStatus,
 				cached: true,
 				updatedAt: cached.updatedAt,
 			}));
@@ -1285,20 +1530,31 @@ export function streamProfileAnalysisEffect(
 		handlers.onEvent?.({ type: "start", context, cached: false });
 		emitStatus(handlers, "Summarizing with AI", modelFromOptions(options));
 		const analysisResponse = yield* requestHybridAnalysisEffect({
-			body: createOpenAIRequestBody(context, options),
+			body: createOpenAIRequestBody(context, options, effectivePrompt),
 			signal: options.signal,
 			parse: (value) => ProfileAnalysisSchema.parse(value),
 			fallback: (markdown) => fallbackAnalysis(context, markdown),
 			delimiterPattern: DELIMITER_PATTERN,
 		});
 		const updatedAt = yield* tryProfileSync(() =>
-			writeSyncCache(resultCacheKey(context, options), {
-				analysis: analysisResponse.value,
-				markdown: analysisResponse.markdown,
-				model: modelFromOptions(options),
-				reasoningEffort: reasoningEffortFromOptions(options),
-				serviceTier: serviceTierFromOptions(options),
-			}),
+			writeSyncCache(
+				resultCacheKey(context, options, effectivePrompt.promptHash),
+				{
+					analysis: analysisResponse.value,
+					markdown: analysisResponse.markdown,
+					model: modelFromOptions(options),
+					reasoningEffort: reasoningEffortFromOptions(options),
+					serviceTier: serviceTierFromOptions(options),
+					parseStatus: analysisResponse.parseStatus,
+				} satisfies {
+					analysis: ProfileAnalysis;
+					markdown: string;
+					model: string;
+					reasoningEffort: string;
+					serviceTier: string;
+					parseStatus: "structured" | "fallback";
+				},
+			),
 		);
 		const result: ProfileAnalysisRunResult = {
 			context,
@@ -1307,6 +1563,7 @@ export function streamProfileAnalysisEffect(
 			model: modelFromOptions(options),
 			reasoningEffort: reasoningEffortFromOptions(options),
 			serviceTier: serviceTierFromOptions(options),
+			parseStatus: analysisResponse.parseStatus,
 			cached: false,
 			updatedAt,
 		};
@@ -1324,9 +1581,60 @@ export function streamProfileAnalysis(
 	return runEffectPromise(streamProfileAnalysisEffect(options, handlers));
 }
 
+export function runProfileAnalysisPlaygroundEffect(
+	options: ProfileAnalysisPlaygroundOptions,
+): Effect.Effect<ProfileAnalysisPlaygroundResult, Error> {
+	return Effect.gen(function* () {
+		const effectivePrompt = yield* tryProfileSync(() =>
+			materializeEffectivePrompt(
+				{ system: options.system, requirements: options.requirements },
+				PROMPT_TEMPLATE_DEFINITIONS["profile-analysis"].protocol,
+			),
+		);
+		const runOptions: ProfileAnalysisOptions = {
+			handle: options.handle,
+			account: options.account,
+			language: options.language,
+			signal: options.signal,
+		};
+		const context = yield* tryProfileSync(() =>
+			collectProfileAnalysisContextLocalOnly(runOptions),
+		);
+		if (context.tweets.length === 0 && context.conversations.length === 0) {
+			return yield* Effect.fail(
+				new Error(
+					"No local tweets or conversations are available for this profile.",
+				),
+			);
+		}
+		const response = yield* requestHybridAnalysisEffect({
+			body: createOpenAIRequestBody(context, runOptions, effectivePrompt),
+			signal: options.signal,
+			parse: (value) => ProfileAnalysisSchema.parse(value),
+			fallback: (markdown) => fallbackAnalysis(context, markdown),
+			delimiterPattern: DELIMITER_PATTERN,
+		});
+		return {
+			markdown: response.markdown,
+			analysis: response.value,
+			parseStatus: response.parseStatus,
+			generatedAt: new Date().toISOString(),
+		};
+	});
+}
+
+export function runProfileAnalysisPlayground(
+	options: ProfileAnalysisPlaygroundOptions,
+) {
+	return runEffectPromise(runProfileAnalysisPlaygroundEffect(options));
+}
+
 export const __test__ = {
 	ProfileAnalysisSchema,
 	buildPrompt,
+	collectProfileAnalysisContextLocalOnly,
+	createOpenAIRequestBody,
 	extractResponseText,
 	parseAnalysisFromHybridText,
+	resultCacheKey,
 };

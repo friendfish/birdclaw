@@ -44,12 +44,17 @@ import { Route as ApiPeriodDigestMetadataRouteImport } from './routes/api/period
 import { Route as ApiProfileAnalysisRouteImport } from './routes/api/profile-analysis'
 import { Route as ApiProfileAnalysisMetadataRouteImport } from './routes/api/profile-analysis-metadata'
 import { Route as ApiProfileHydrateRouteImport } from './routes/api/profile-hydrate'
+import { Route as ApiPromptTemplatesRouteImport } from './routes/api/prompt-templates'
 import { Route as ApiQueryRouteImport } from './routes/api/query'
 import { Route as ApiSearchDiscussionRouteImport } from './routes/api/search-discussion'
 import { Route as ApiStatusRouteImport } from './routes/api/status'
 import { Route as ApiSyncRouteImport } from './routes/api/sync'
 import { Route as ApiXurlRateLimitsRouteImport } from './routes/api/xurl-rate-limits'
 import { Route as ProfilesHandleRouteImport } from './routes/profiles.$handle'
+import { Route as ApiPromptPlaygroundPeriodDigestRouteImport } from './routes/api/prompt-playground.period-digest'
+import { Route as ApiPromptPlaygroundProfileAnalysisRouteImport } from './routes/api/prompt-playground.profile-analysis'
+import { Route as ApiPromptPlaygroundSearchDiscussionRouteImport } from './routes/api/prompt-playground.search-discussion'
+import { Route as ApiPromptTemplatesResetRouteImport } from './routes/api/prompt-templates.reset'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -227,6 +232,11 @@ const ApiProfileHydrateRoute = ApiProfileHydrateRouteImport.update({
   path: '/api/profile-hydrate',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPromptTemplatesRoute = ApiPromptTemplatesRouteImport.update({
+  id: '/api/prompt-templates',
+  path: '/api/prompt-templates',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiQueryRoute = ApiQueryRouteImport.update({
   id: '/api/query',
   path: '/api/query',
@@ -256,6 +266,29 @@ const ProfilesHandleRoute = ProfilesHandleRouteImport.update({
   id: '/profiles/$handle',
   path: '/profiles/$handle',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPromptPlaygroundPeriodDigestRoute =
+  ApiPromptPlaygroundPeriodDigestRouteImport.update({
+    id: '/api/prompt-playground/period-digest',
+    path: '/api/prompt-playground/period-digest',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPromptPlaygroundProfileAnalysisRoute =
+  ApiPromptPlaygroundProfileAnalysisRouteImport.update({
+    id: '/api/prompt-playground/profile-analysis',
+    path: '/api/prompt-playground/profile-analysis',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPromptPlaygroundSearchDiscussionRoute =
+  ApiPromptPlaygroundSearchDiscussionRouteImport.update({
+    id: '/api/prompt-playground/search-discussion',
+    path: '/api/prompt-playground/search-discussion',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPromptTemplatesResetRoute = ApiPromptTemplatesResetRouteImport.update({
+  id: '/reset',
+  path: '/reset',
+  getParentRoute: () => ApiPromptTemplatesRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -294,12 +327,17 @@ export interface FileRoutesByFullPath {
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
   '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
+  '/api/prompt-templates': typeof ApiPromptTemplatesRouteWithChildren
   '/api/query': typeof ApiQueryRoute
   '/api/search-discussion': typeof ApiSearchDiscussionRoute
   '/api/status': typeof ApiStatusRoute
   '/api/sync': typeof ApiSyncRoute
   '/api/xurl-rate-limits': typeof ApiXurlRateLimitsRoute
   '/profiles/$handle': typeof ProfilesHandleRoute
+  '/api/prompt-playground/period-digest': typeof ApiPromptPlaygroundPeriodDigestRoute
+  '/api/prompt-playground/profile-analysis': typeof ApiPromptPlaygroundProfileAnalysisRoute
+  '/api/prompt-playground/search-discussion': typeof ApiPromptPlaygroundSearchDiscussionRoute
+  '/api/prompt-templates/reset': typeof ApiPromptTemplatesResetRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -337,12 +375,17 @@ export interface FileRoutesByTo {
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
   '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
+  '/api/prompt-templates': typeof ApiPromptTemplatesRouteWithChildren
   '/api/query': typeof ApiQueryRoute
   '/api/search-discussion': typeof ApiSearchDiscussionRoute
   '/api/status': typeof ApiStatusRoute
   '/api/sync': typeof ApiSyncRoute
   '/api/xurl-rate-limits': typeof ApiXurlRateLimitsRoute
   '/profiles/$handle': typeof ProfilesHandleRoute
+  '/api/prompt-playground/period-digest': typeof ApiPromptPlaygroundPeriodDigestRoute
+  '/api/prompt-playground/profile-analysis': typeof ApiPromptPlaygroundProfileAnalysisRoute
+  '/api/prompt-playground/search-discussion': typeof ApiPromptPlaygroundSearchDiscussionRoute
+  '/api/prompt-templates/reset': typeof ApiPromptTemplatesResetRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -381,12 +424,17 @@ export interface FileRoutesById {
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
   '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
+  '/api/prompt-templates': typeof ApiPromptTemplatesRouteWithChildren
   '/api/query': typeof ApiQueryRoute
   '/api/search-discussion': typeof ApiSearchDiscussionRoute
   '/api/status': typeof ApiStatusRoute
   '/api/sync': typeof ApiSyncRoute
   '/api/xurl-rate-limits': typeof ApiXurlRateLimitsRoute
   '/profiles/$handle': typeof ProfilesHandleRoute
+  '/api/prompt-playground/period-digest': typeof ApiPromptPlaygroundPeriodDigestRoute
+  '/api/prompt-playground/profile-analysis': typeof ApiPromptPlaygroundProfileAnalysisRoute
+  '/api/prompt-playground/search-discussion': typeof ApiPromptPlaygroundSearchDiscussionRoute
+  '/api/prompt-templates/reset': typeof ApiPromptTemplatesResetRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -426,12 +474,17 @@ export interface FileRouteTypes {
     | '/api/profile-analysis'
     | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
+    | '/api/prompt-templates'
     | '/api/query'
     | '/api/search-discussion'
     | '/api/status'
     | '/api/sync'
     | '/api/xurl-rate-limits'
     | '/profiles/$handle'
+    | '/api/prompt-playground/period-digest'
+    | '/api/prompt-playground/profile-analysis'
+    | '/api/prompt-playground/search-discussion'
+    | '/api/prompt-templates/reset'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -469,12 +522,17 @@ export interface FileRouteTypes {
     | '/api/profile-analysis'
     | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
+    | '/api/prompt-templates'
     | '/api/query'
     | '/api/search-discussion'
     | '/api/status'
     | '/api/sync'
     | '/api/xurl-rate-limits'
     | '/profiles/$handle'
+    | '/api/prompt-playground/period-digest'
+    | '/api/prompt-playground/profile-analysis'
+    | '/api/prompt-playground/search-discussion'
+    | '/api/prompt-templates/reset'
   id:
     | '__root__'
     | '/'
@@ -512,12 +570,17 @@ export interface FileRouteTypes {
     | '/api/profile-analysis'
     | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
+    | '/api/prompt-templates'
     | '/api/query'
     | '/api/search-discussion'
     | '/api/status'
     | '/api/sync'
     | '/api/xurl-rate-limits'
     | '/profiles/$handle'
+    | '/api/prompt-playground/period-digest'
+    | '/api/prompt-playground/profile-analysis'
+    | '/api/prompt-playground/search-discussion'
+    | '/api/prompt-templates/reset'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -556,12 +619,16 @@ export interface RootRouteChildren {
   ApiProfileAnalysisRoute: typeof ApiProfileAnalysisRoute
   ApiProfileAnalysisMetadataRoute: typeof ApiProfileAnalysisMetadataRoute
   ApiProfileHydrateRoute: typeof ApiProfileHydrateRoute
+  ApiPromptTemplatesRoute: typeof ApiPromptTemplatesRouteWithChildren
   ApiQueryRoute: typeof ApiQueryRoute
   ApiSearchDiscussionRoute: typeof ApiSearchDiscussionRoute
   ApiStatusRoute: typeof ApiStatusRoute
   ApiSyncRoute: typeof ApiSyncRoute
   ApiXurlRateLimitsRoute: typeof ApiXurlRateLimitsRoute
   ProfilesHandleRoute: typeof ProfilesHandleRoute
+  ApiPromptPlaygroundPeriodDigestRoute: typeof ApiPromptPlaygroundPeriodDigestRoute
+  ApiPromptPlaygroundProfileAnalysisRoute: typeof ApiPromptPlaygroundProfileAnalysisRoute
+  ApiPromptPlaygroundSearchDiscussionRoute: typeof ApiPromptPlaygroundSearchDiscussionRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -811,6 +878,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiProfileHydrateRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/prompt-templates': {
+      id: '/api/prompt-templates'
+      path: '/api/prompt-templates'
+      fullPath: '/api/prompt-templates'
+      preLoaderRoute: typeof ApiPromptTemplatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/query': {
       id: '/api/query'
       path: '/api/query'
@@ -853,8 +927,47 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProfilesHandleRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/prompt-playground/period-digest': {
+      id: '/api/prompt-playground/period-digest'
+      path: '/api/prompt-playground/period-digest'
+      fullPath: '/api/prompt-playground/period-digest'
+      preLoaderRoute: typeof ApiPromptPlaygroundPeriodDigestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/prompt-playground/profile-analysis': {
+      id: '/api/prompt-playground/profile-analysis'
+      path: '/api/prompt-playground/profile-analysis'
+      fullPath: '/api/prompt-playground/profile-analysis'
+      preLoaderRoute: typeof ApiPromptPlaygroundProfileAnalysisRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/prompt-playground/search-discussion': {
+      id: '/api/prompt-playground/search-discussion'
+      path: '/api/prompt-playground/search-discussion'
+      fullPath: '/api/prompt-playground/search-discussion'
+      preLoaderRoute: typeof ApiPromptPlaygroundSearchDiscussionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/prompt-templates/reset': {
+      id: '/api/prompt-templates/reset'
+      path: '/reset'
+      fullPath: '/api/prompt-templates/reset'
+      preLoaderRoute: typeof ApiPromptTemplatesResetRouteImport
+      parentRoute: typeof ApiPromptTemplatesRoute
+    }
   }
 }
+
+interface ApiPromptTemplatesRouteChildren {
+  ApiPromptTemplatesResetRoute: typeof ApiPromptTemplatesResetRoute
+}
+
+const ApiPromptTemplatesRouteChildren: ApiPromptTemplatesRouteChildren = {
+  ApiPromptTemplatesResetRoute: ApiPromptTemplatesResetRoute,
+}
+
+const ApiPromptTemplatesRouteWithChildren =
+  ApiPromptTemplatesRoute._addFileChildren(ApiPromptTemplatesRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -892,12 +1005,18 @@ const rootRouteChildren: RootRouteChildren = {
   ApiProfileAnalysisRoute: ApiProfileAnalysisRoute,
   ApiProfileAnalysisMetadataRoute: ApiProfileAnalysisMetadataRoute,
   ApiProfileHydrateRoute: ApiProfileHydrateRoute,
+  ApiPromptTemplatesRoute: ApiPromptTemplatesRouteWithChildren,
   ApiQueryRoute: ApiQueryRoute,
   ApiSearchDiscussionRoute: ApiSearchDiscussionRoute,
   ApiStatusRoute: ApiStatusRoute,
   ApiSyncRoute: ApiSyncRoute,
   ApiXurlRateLimitsRoute: ApiXurlRateLimitsRoute,
   ProfilesHandleRoute: ProfilesHandleRoute,
+  ApiPromptPlaygroundPeriodDigestRoute: ApiPromptPlaygroundPeriodDigestRoute,
+  ApiPromptPlaygroundProfileAnalysisRoute:
+    ApiPromptPlaygroundProfileAnalysisRoute,
+  ApiPromptPlaygroundSearchDiscussionRoute:
+    ApiPromptPlaygroundSearchDiscussionRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

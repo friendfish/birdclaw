@@ -76,6 +76,7 @@ describe("api period digest route", () => {
 						model: "gpt-5.5",
 						cached: false,
 						serviceTier: "priority",
+						parseStatus: "structured",
 						context: {
 							window: { label: "Week" },
 							counts: { home: 1, mentions: 0, links: 0, dms: 0 },
@@ -203,6 +204,7 @@ describe("api period digest route", () => {
 						model: "gpt-5.5",
 						cached: false,
 						serviceTier: "priority",
+						parseStatus: "structured",
 						context: {
 							window: { label: "Today" },
 							counts: { home: 0, mentions: 0, links: 0, dms: 0 },

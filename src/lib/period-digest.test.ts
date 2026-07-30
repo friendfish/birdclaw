@@ -14,10 +14,16 @@ import {
 	resolvePeriodDigestWindow,
 	streamPeriodDigest,
 	streamPeriodDigestEffect,
+	streamPeriodDigestPlayground,
 } from "./period-digest";
 import { getTweetsByIds } from "./queries";
+import { resolveEffectivePrompt } from "./prompt-templates";
 
 const tempRoots: string[] = [];
+
+function effectivePrompt() {
+	return resolveEffectivePrompt("period-digest");
+}
 
 function setupTempHome() {
 	const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-digest-"));
@@ -245,15 +251,24 @@ describe("period digest", () => {
 
 			expect(new Set([all.hash, following.hash, forYou.hash]).size).toBe(3);
 
-			const allKey = __test__.latestDigestCacheKey({ period: "today" });
-			const followingKey = __test__.latestDigestCacheKey({
-				period: "today",
-				contentSource: "following",
-			});
-			const forYouKey = __test__.latestDigestCacheKey({
-				period: "today",
-				contentSource: "for_you",
-			});
+			const allKey = __test__.latestDigestCacheKey(
+				{ period: "today" },
+				effectivePrompt().promptHash,
+			);
+			const followingKey = __test__.latestDigestCacheKey(
+				{
+					period: "today",
+					contentSource: "following",
+				},
+				effectivePrompt().promptHash,
+			);
+			const forYouKey = __test__.latestDigestCacheKey(
+				{
+					period: "today",
+					contentSource: "for_you",
+				},
+				effectivePrompt().promptHash,
+			);
 			expect(new Set([allKey, followingKey, forYouKey]).size).toBe(3);
 		});
 
@@ -274,8 +289,10 @@ describe("period digest", () => {
 			expect(periodDigestGenerationKey(before)).toBe(
 				periodDigestGenerationKey(after),
 			);
-			expect(__test__.latestDigestCacheKey(before)).not.toBe(
-				__test__.latestDigestCacheKey(after),
+			expect(
+				__test__.latestDigestCacheKey(before, effectivePrompt().promptHash),
+			).not.toBe(
+				__test__.latestDigestCacheKey(after, effectivePrompt().promptHash),
 			);
 		});
 
@@ -297,13 +314,22 @@ describe("period digest", () => {
 			const allBudget = __test__.createOpenAIRequestBody(
 				all,
 				{},
+				effectivePrompt(),
 			).max_output_tokens;
-			const followingBudget = __test__.createOpenAIRequestBody(following, {
-				contentSource: "following",
-			}).max_output_tokens;
-			const forYouBudget = __test__.createOpenAIRequestBody(forYou, {
-				contentSource: "for_you",
-			}).max_output_tokens;
+			const followingBudget = __test__.createOpenAIRequestBody(
+				following,
+				{
+					contentSource: "following",
+				},
+				effectivePrompt(),
+			).max_output_tokens;
+			const forYouBudget = __test__.createOpenAIRequestBody(
+				forYou,
+				{
+					contentSource: "for_you",
+				},
+				effectivePrompt(),
+			).max_output_tokens;
 
 			expect(allBudget).toBeGreaterThan(followingBudget);
 			expect(followingBudget).toBeGreaterThan(forYouBudget);
@@ -316,7 +342,7 @@ describe("period digest", () => {
 			until: "2027-01-01T00:00:00.000Z",
 			maxTweets: 20,
 		});
-		const prompt = __test__.buildPrompt(context);
+		const prompt = __test__.buildPrompt(context, undefined, effectivePrompt());
 
 		expect(prompt).toContain(
 			`Prompt tweets: ${String(context.tweets.length)} of ${String(context.tweets.length)}`,
@@ -330,20 +356,24 @@ describe("period digest", () => {
 			until: "2027-01-01T00:00:00.000Z",
 			maxTweets: 20,
 		});
-		const prompt = __test__.buildPrompt({
-			...context,
-			dms: [
-				{
-					id: "huge_dm",
-					participant: "person",
-					name: "Person",
-					lastMessageAt: "2026-01-01T00:00:00.000Z",
-					text: "x".repeat(2_000_000),
-					needsReply: false,
-					influenceScore: 0,
-				},
-			],
-		});
+		const prompt = __test__.buildPrompt(
+			{
+				...context,
+				dms: [
+					{
+						id: "huge_dm",
+						participant: "person",
+						name: "Person",
+						lastMessageAt: "2026-01-01T00:00:00.000Z",
+						text: "x".repeat(2_000_000),
+						needsReply: false,
+						influenceScore: 0,
+					},
+				],
+			},
+			undefined,
+			effectivePrompt(),
+		);
 
 		expect(prompt).toContain(context.tweets[0]?.text);
 		expect(prompt).toContain(`"dms":[]`);
@@ -378,7 +408,11 @@ describe("period digest", () => {
 		});
 
 		expect(__test__.languageFromOptions({})).toBe("pt-BR");
-		const prompt = __test__.buildPrompt(context, { language: "PT-br" });
+		const prompt = __test__.buildPrompt(
+			context,
+			{ language: "PT-br" },
+			effectivePrompt(),
+		);
 		expect(prompt).toContain("human-readable prose");
 		expect(prompt).toContain("in pt-BR");
 		expect(prompt).toContain("Preserve handles, URLs, tweet ids");
@@ -392,11 +426,31 @@ describe("period digest", () => {
 			maxTweets: 20,
 		});
 
-		expect(__test__.digestCacheKey(context, { language: "pt-br" })).toBe(
-			__test__.digestCacheKey(context, { language: "pt-BR" }),
+		expect(
+			__test__.digestCacheKey(
+				context,
+				{ language: "pt-br" },
+				effectivePrompt().promptHash,
+			),
+		).toBe(
+			__test__.digestCacheKey(
+				context,
+				{ language: "pt-BR" },
+				effectivePrompt().promptHash,
+			),
 		);
-		expect(__test__.digestCacheKey(context, { language: "pt-BR" })).not.toBe(
-			__test__.digestCacheKey(context, { language: "de" }),
+		expect(
+			__test__.digestCacheKey(
+				context,
+				{ language: "pt-BR" },
+				effectivePrompt().promptHash,
+			),
+		).not.toBe(
+			__test__.digestCacheKey(
+				context,
+				{ language: "de" },
+				effectivePrompt().promptHash,
+			),
 		);
 	});
 
@@ -443,6 +497,76 @@ describe("period digest", () => {
 		expect(body.reasoning).toEqual({ effort: "medium" });
 		expect(body.service_tier).toBe("priority");
 		expect(body.stream).toBe(true);
+	});
+
+	it("runs playground drafts locally without writing digest caches", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-05-24T12:00:00.000Z"));
+		const streamed = [
+			sseFrame({
+				type: "response.output_text.delta",
+				delta:
+					'# Draft\n\nLocal preview.\n\n---\n{"title":"Draft","summary":"Local preview","keyTopics":[],"notableLinks":[],"people":[],"actionItems":[],"sourceTweetIds":[]}',
+			}),
+			"data: [DONE]\n\n",
+		].join("");
+		const fetchMock = vi.fn().mockResolvedValue(streamResponse(streamed));
+		vi.stubGlobal("fetch", fetchMock);
+		const db = getNativeDb();
+		const before = db
+			.prepare("select count(*) as count from sync_cache")
+			.get() as { count: number };
+		const changesBefore = db
+			.prepare("select total_changes() as count")
+			.get() as { count: number };
+
+		const result = await streamPeriodDigestPlayground({
+			period: "week",
+			includeDms: true,
+			contentSource: "all",
+			system: "Draft Today system",
+			requirements: "Draft Today requirements",
+		});
+
+		const after = db
+			.prepare("select count(*) as count from sync_cache")
+			.get() as { count: number };
+		const changesAfter = db
+			.prepare("select total_changes() as count")
+			.get() as { count: number };
+		expect(result.digest.title).toBe("Draft");
+		expect(result.parseStatus).toBe("structured");
+		expect(after.count).toBe(before.count);
+		expect(changesAfter.count).toBe(changesBefore.count);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const body = JSON.parse(
+			String(fetchMock.mock.calls[0]?.[1]?.body),
+		) as Record<string, unknown>;
+		expect(JSON.stringify(body)).toContain("Draft Today system");
+		expect(JSON.stringify(body)).toContain("Draft Today requirements");
+	});
+
+	it("reports an English error when playground has no local period data", async () => {
+		getNativeDb().exec(`
+			delete from link_occurrences;
+			delete from dm_messages;
+			delete from dm_conversations;
+			delete from tweet_account_edges;
+			delete from tweet_revisions;
+			delete from tweets;
+		`);
+		const prompt = effectivePrompt();
+
+		await expect(
+			streamPeriodDigestPlayground({
+				period: "today",
+				contentSource: "all",
+				system: prompt.system,
+				requirements: prompt.requirements,
+			}),
+		).rejects.toThrow(
+			"No local tweets, DMs, or links are available for this period.",
+		);
 	});
 
 	it("adds locally stored cited tweets to the result context for previews", async () => {

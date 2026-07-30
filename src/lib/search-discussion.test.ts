@@ -11,7 +11,9 @@ import {
 	collectSearchDiscussionContext,
 	streamSearchDiscussion,
 	streamSearchDiscussionEffect,
+	streamSearchDiscussionPlayground,
 } from "./search-discussion";
+import { resolveEffectivePrompt } from "./prompt-templates";
 
 const liveMocks = vi.hoisted(() => ({
 	resolveLiveReadMode: vi.fn(),
@@ -33,6 +35,10 @@ vi.mock("./tweet-search-live", async (importOriginal) => {
 });
 
 const tempRoots: string[] = [];
+
+function effectivePrompt() {
+	return resolveEffectivePrompt("search-discussion");
+}
 
 function setupTempHome() {
 	const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-discuss-"));
@@ -289,7 +295,7 @@ describe("search discussion", () => {
 			query: "local-first",
 			limit: 20,
 		});
-		const prompt = __test__.buildPrompt(context);
+		const prompt = __test__.buildPrompt(context, effectivePrompt());
 
 		expect(prompt).toContain(
 			`Prompt tweets: ${String(context.tweets.length)} of ${String(context.tweets.length)}`,
@@ -302,20 +308,23 @@ describe("search discussion", () => {
 			query: "local-first",
 			limit: 20,
 		});
-		const prompt = __test__.buildPrompt({
-			...context,
-			dms: [
-				{
-					id: "huge_dm",
-					participant: "person",
-					name: "Person",
-					lastMessageAt: "2026-01-01T00:00:00.000Z",
-					text: "x".repeat(2_000_000),
-					needsReply: false,
-					influenceScore: 0,
-				},
-			],
-		});
+		const prompt = __test__.buildPrompt(
+			{
+				...context,
+				dms: [
+					{
+						id: "huge_dm",
+						participant: "person",
+						name: "Person",
+						lastMessageAt: "2026-01-01T00:00:00.000Z",
+						text: "x".repeat(2_000_000),
+						needsReply: false,
+						influenceScore: 0,
+					},
+				],
+			},
+			effectivePrompt(),
+		);
 
 		expect(prompt).toContain(context.tweets[0]?.text);
 		expect(prompt).toContain(`"dms":[]`);
@@ -402,6 +411,64 @@ describe("search discussion", () => {
 		expect(body.service_tier).toBe("priority");
 		expect(body.stream).toBe(true);
 		expect(JSON.stringify(body)).toContain("What should I pay attention to?");
+	});
+
+	it("runs playground drafts locally without writing discussion caches", async () => {
+		const streamed = [
+			sseFrame({
+				type: "response.output_text.delta",
+				delta:
+					'# Draft\n\nLocal preview.\n\n---\n{"title":"Draft","summary":"Local preview","themes":[],"tensions":[],"followUps":[],"sourceTweetIds":[],"sourceDmConversationIds":[]}',
+			}),
+			"data: [DONE]\n\n",
+		].join("");
+		const fetchMock = vi.fn().mockResolvedValue(streamResponse(streamed));
+		vi.stubGlobal("fetch", fetchMock);
+		const db = getNativeDb();
+		const before = db
+			.prepare("select count(*) as count from sync_cache")
+			.get() as { count: number };
+		const changesBefore = db
+			.prepare("select total_changes() as count")
+			.get() as { count: number };
+
+		const result = await streamSearchDiscussionPlayground({
+			query: "local-first",
+			source: "all",
+			includeDms: true,
+			system: "Draft Discuss system",
+			requirements: "Draft Discuss requirements",
+		});
+
+		const after = db
+			.prepare("select count(*) as count from sync_cache")
+			.get() as { count: number };
+		const changesAfter = db
+			.prepare("select total_changes() as count")
+			.get() as { count: number };
+		expect(result.discussion.title).toBe("Draft");
+		expect(result.parseStatus).toBe("structured");
+		expect(after.count).toBe(before.count);
+		expect(changesAfter.count).toBe(changesBefore.count);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const body = JSON.parse(
+			String(fetchMock.mock.calls[0]?.[1]?.body),
+		) as Record<string, unknown>;
+		expect(JSON.stringify(body)).toContain("Draft Discuss system");
+		expect(JSON.stringify(body)).toContain("Draft Discuss requirements");
+	});
+
+	it("reports an English error when playground search has no local matches", async () => {
+		const prompt = effectivePrompt();
+
+		await expect(
+			streamSearchDiscussionPlayground({
+				query: "no-matching-local-content-7bcb12",
+				source: "all",
+				system: prompt.system,
+				requirements: prompt.requirements,
+			}),
+		).rejects.toThrow("No local tweets or DMs match this search query.");
 	});
 
 	it("uses environment AI defaults and renders optional prompt context", async () => {

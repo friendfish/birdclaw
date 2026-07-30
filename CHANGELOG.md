@@ -4,6 +4,7 @@
 
 ### Added
 
+- Add editable prompt templates for Today, Analyse, and Discuss, with strict local Markdown storage, prompt-aware result caches, and isolated local-data Playgrounds for testing unsaved drafts.
 - Preserve explicit X archive deletions as source-attributed tweet, media, and quote tombstones, and retain observable X edit chains as portable revision records while hiding superseded bodies from active views.
 
 ### Changed

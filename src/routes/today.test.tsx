@@ -102,6 +102,7 @@ function digestResult(label: string, markdown: string, includeDms = false) {
 		model: "gpt-5.5",
 		reasoningEffort: "medium",
 		serviceTier: "priority",
+		parseStatus: "structured" as const,
 		cached: false,
 		updatedAt: "2026-05-16T12:00:00.000Z",
 	};

@@ -556,6 +556,11 @@ function ProfileAnalyzeRoute() {
 					</div>
 
 					{/* Profile Analysis Status Line (shows loading status, etc.) */}
+					{snapshots.length > 0 ? (
+						<p className="mt-1 text-[12px] text-[var(--ink-soft)]">
+							同一次分析可能因为提示词更新前后各生成一次，出现多条相近的记录。
+						</p>
+					) : null}
 					{!selectedSnapshot && (
 						<ProfileAnalysisStatusLine analysis={analysis} className="mt-1" />
 					)}
