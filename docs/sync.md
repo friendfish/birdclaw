@@ -138,6 +138,7 @@ Fetch conversation context for recent mentions through `bird` or `xurl`:
 
 ```bash
 birdclaw sync mention-threads --mode bird --limit 30 --delay-ms 1500 --timeout-ms 15000 --json
+birdclaw sync mention-threads --mode auto --limit 30 --json
 birdclaw sync mention-threads --mode xurl --limit 30 --json
 ```
 
@@ -150,7 +151,7 @@ Flags:
 
 This is the gentlest sync command on purpose. It walks back up the reply chain so the web UI can render quoted ancestors without a separate live call later.
 
-The `xurl` mode is for users who do not have the `bird` CLI installed. It uses `/2/tweets/search/recent` keyed on `conversation_id`, with a 12-hop parent-walk fallback for threads outside the 7-day search window. Output carries a `generalReadTweets` cost counter so cron runs can budget against the X API rate limit.
+The `xurl` mode is for users who do not have the `bird` CLI installed. `auto` selects this xurl strategy because mention-thread sync has no mixed fallback path. It uses `/2/tweets/search/recent` keyed on `conversation_id`, with a 12-hop parent-walk fallback for threads outside the 7-day search window. Output carries a `generalReadTweets` cost counter so cron runs can budget against the X API rate limit.
 
 Prerequisite: run [`sync mentions`](#sync-mentions) first so the recent mention rows exist locally; `sync mention-threads` walks those rows.
 
@@ -180,7 +181,7 @@ birdclaw sync all --transport auto
 
 ## DMs sync
 
-DMs sit on a separate command. `bird` is still the default and required for message-request state; `xurl` can import recent OAuth2 DM events for accepted conversations:
+DMs sit on a separate command. With no explicit or global live-data setting, `bird` is still the capability default and required for authoritative message-request state. `xurl` can import recent OAuth2 DM events for accepted conversations without overwriting an existing local request/accepted classification:
 
 ```bash
 birdclaw dms sync --limit 50 --refresh --json

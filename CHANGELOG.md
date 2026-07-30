@@ -13,6 +13,10 @@
 - Clarify that `actions.transport` controls compose and policy-backed moderation writes; Bird mode rejects xurl-only post, reply, and DM compose operations, while `dms accept`, `dms reject`, and `dms block` remain Bird-only and do not use that preference. Disabled xurl status omits unprobed installation state.
 - Document explicit live-read and xurl-fallback overrides, including `profiles replies --mode xurl` and `--[no-]xurl-fallback` for DM search and identity lookup.
 
+### Fixed
+
+- Preserve existing Bird message-request classifications during xurl/auto DM sync, narrow mention-thread `auto` reads to xurl, and retain configuration parse errors instead of rewriting them as mode errors.
+
 ## 0.11.0 - 2026-07-18
 
 ### Highlights

@@ -103,9 +103,7 @@ Add tests for the three public capabilities:
 expect(resolveLiveReadMode()).toBe("xurl");
 expect(resolveLiveSyncMode()).toBe("auto");
 expect(resolveMentionThreadReadMode()).toBe("bird");
-expect(() => resolveMentionThreadReadMode("auto")).toThrow(
-	"Mention-thread sync supports only bird or xurl",
-);
+expect(resolveMentionThreadReadMode("auto")).toBe("xurl");
 expect(() => resolveLiveReadMode("invalid")).toThrow(
 	"Invalid live-read mode; expected auto, bird, or xurl",
 );
@@ -163,7 +161,7 @@ export const resolveLiveSyncMode = (mode?: string) =>
 ```
 
 `resolveMentionThreadReadMode` must use the `mention-threads` capability and
-reject the unsupported resolved `auto` value before returning `bird | xurl`.
+narrow the resolved `auto` value to `xurl` before returning `bird | xurl`.
 Add a short comment explaining that legacy `birdclaw` is treated as an omitted
 global preference outside mention export to preserve pre-policy behavior.
 

@@ -294,6 +294,7 @@ function mergeDirectMessagesIntoLocalStore(
 	accountId: string,
 	accountUsername: string,
 	accountExternalUserId: string | undefined,
+	inboxKindAuthoritative: boolean,
 	payload: {
 		conversations: BirdDmConversation[];
 		events: BirdDmEvent[];
@@ -356,7 +357,10 @@ function mergeDirectMessagesIntoLocalStore(
       account_id = excluded.account_id,
       participant_profile_id = excluded.participant_profile_id,
       title = excluded.title,
-      inbox_kind = excluded.inbox_kind,
+      inbox_kind = case
+        when ? then excluded.inbox_kind
+        else dm_conversations.inbox_kind
+      end,
       last_message_at = excluded.last_message_at,
       needs_reply = excluded.needs_reply
   `);
@@ -448,6 +452,7 @@ function mergeDirectMessagesIntoLocalStore(
 				inboxKind,
 				lastMessageAt,
 				latestInbound ? 1 : 0,
+				inboxKindAuthoritative ? 1 : 0,
 			);
 
 			const previewMessageId = makePreviewMessageId(conversation.id);
@@ -845,6 +850,7 @@ export function syncDirectMessagesViaCachedBirdEffect({
 			resolvedAccount.accountId,
 			resolvedAccount.username,
 			accountExternalUserId,
+			source === "bird",
 			payload,
 		);
 		if (!cached || refresh || cacheAgeMs > ttlMs) {

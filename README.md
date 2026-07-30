@@ -490,7 +490,7 @@ pnpm cli dms list --refresh --limit 10 --json
 pnpm cli dms list --unreplied --min-followers 500 --min-influence-score 90 --sort followers --json
 ```
 
-`dms sync/list --refresh` supports `--mode bird|xurl|auto`. `bird` is the default and required for message-request state; `xurl` imports recent OAuth2 DM events as accepted conversations, and `auto` falls back to bird when xurl cannot read them.
+`dms sync/list --refresh` supports `--mode bird|xurl|auto`. With no explicit or global live-data setting, `bird` is the capability default and the only source of authoritative message-request state. `xurl` imports recent OAuth2 DM events as accepted conversations without overwriting an existing local request/accepted classification, and `auto` falls back to bird when xurl cannot read them.
 
 `--resolve-profiles` fills archive-imported numeric DM profiles through the local
 cache first, then `bird`, and may use xurl according to transport policy. Use

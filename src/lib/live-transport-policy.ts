@@ -64,7 +64,7 @@ export function resolveMentionThreadReadMode(
 ): Exclude<LiveReadMode, "auto"> {
 	const mode = resolveModeForCapability(requestedMode, "mention-threads");
 	if (mode === "auto") {
-		throw new Error("Mention-thread sync supports only bird or xurl");
+		return "xurl";
 	}
 	return mode;
 }
