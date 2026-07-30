@@ -10,7 +10,21 @@ import { promptTemplateResetRequestSchema } from "#/lib/prompt-playground-contra
 import {
 	promptTemplateDefinition,
 	resetPromptTemplate,
+	type PromptFeature,
 } from "#/lib/prompt-templates";
+
+function responseFor(feature: PromptFeature) {
+	const definition = promptTemplateDefinition(feature);
+	return {
+		ok: true as const,
+		template: resetPromptTemplate(feature),
+		definition: {
+			label: definition.label,
+			description: definition.description,
+			protocol: definition.protocol,
+		},
+	};
+}
 
 export const Route = createFileRoute("/api/prompt-templates/reset")({
 	server: {
@@ -28,16 +42,20 @@ export const Route = createFileRoute("/api/prompt-templates/reset")({
 								{ status: 400 },
 							);
 						}
-						const definition = promptTemplateDefinition(parsed.data.feature);
-						return jsonResponse({
-							ok: true,
-							template: resetPromptTemplate(parsed.data.feature),
-							definition: {
-								label: definition.label,
-								description: definition.description,
-								protocol: definition.protocol,
-							},
-						});
+						return yield* Effect.try({
+							try: () => jsonResponse(responseFor(parsed.data.feature)),
+							catch: (error) =>
+								jsonResponse(
+									{
+										ok: false,
+										message:
+											error instanceof Error
+												? error.message
+												: "Unable to reset prompt template",
+									},
+									{ status: 400 },
+								),
+						}).pipe(Effect.merge);
 					}),
 				),
 		},

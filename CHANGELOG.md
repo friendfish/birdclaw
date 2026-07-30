@@ -9,6 +9,7 @@
 
 ### Changed
 
+- Reorder the default Today and Discuss prompt assembly relative to 0.11.0 so the fixed task instruction follows dynamic context and precedes editable guidance plus locked citation and structured-output rules; the resulting prompt hash change intentionally invalidates matching AI caches.
 - Merge archive and backup imports by default so incomplete snapshots never delete destination-only rows; use explicit `--restore` for exact replacement.
 - Define `live.dataSource` and `BIRDCLAW_LIVE_DATA_SOURCE` as the global live read/sync controls, retaining the mentions config and environment keys as lower-precedence compatibility aliases.
 - Clarify that `actions.transport` controls compose and policy-backed moderation writes; Bird mode rejects xurl-only post, reply, and DM compose operations, while `dms accept`, `dms reject`, and `dms block` remain Bird-only and do not use that preference. Disabled xurl status omits unprobed installation state.

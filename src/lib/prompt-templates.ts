@@ -28,6 +28,7 @@ export interface EditablePrompt {
 
 export interface PromptProtocol {
 	system: string;
+	taskInstruction: string;
 	requirements: string;
 }
 
@@ -47,6 +48,7 @@ export interface PromptTemplateState extends EditablePrompt {
 }
 
 export interface EffectivePrompt extends EditablePrompt {
+	taskInstruction: string;
 	promptHash: string;
 }
 
@@ -87,6 +89,8 @@ export const PROMPT_TEMPLATE_DEFINITIONS: Record<
 		protocol: {
 			system:
 				"Stream Markdown first, then emit the requested JSON object after the delimiter.",
+			taskInstruction:
+				'Write a high-signal "what happened" report from this local Twitter/X dataset.',
 			requirements: [
 				"- For tweets: cite every claim with inline tweet ids at the end of the relevant sentence or bullet, e.g. (tweet_123, tweet_456). These citations become hoverable source links.",
 				"- For links: emit normal Markdown links with no space between the label and URL, e.g. [title](https://example.com), then cite the sharing tweet ids in the same bullet.",
@@ -115,6 +119,8 @@ export const PROMPT_TEMPLATE_DEFINITIONS: Record<
 		},
 		protocol: {
 			system: "Return Markdown plus the requested JSON after the delimiter.",
+			taskInstruction:
+				"Write a high-signal Markdown profile analysis from X/Twitter API data.",
 			requirements: [
 				"- Cite claims with tweet ids at sentence ends, e.g. (1234567890). Cite handles only when they are in the dataset.",
 				"- After Markdown, output a blank line, a line containing only three hyphens, then one compact JSON object.",
@@ -141,6 +147,8 @@ export const PROMPT_TEMPLATE_DEFINITIONS: Record<
 		protocol: {
 			system:
 				"Stream Markdown first, then emit the requested JSON object after the delimiter.",
+			taskInstruction:
+				"Write a high-signal Markdown discussion from this local Twitter/X search result set.",
 			requirements: [
 				"- Cite claims with tweet ids or DM conversation ids at the end of the sentence, e.g. (tweet_123) or (dm_456).",
 				"- After the Markdown, output a blank line, then a line containing only three hyphens, then one compact JSON object.",
@@ -306,10 +314,11 @@ export function materializeEffectivePrompt(
 	]
 		.filter(Boolean)
 		.join("\n");
+	const taskInstruction = protocol.taskInstruction.trim();
 	const promptHash = createHash("sha256")
-		.update(JSON.stringify({ system, requirements }))
+		.update(JSON.stringify({ system, taskInstruction, requirements }))
 		.digest("hex");
-	return { system, requirements, promptHash };
+	return { system, taskInstruction, requirements, promptHash };
 }
 
 export function resolveEffectivePrompt(

@@ -1,10 +1,13 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetBirdclawPathsForTests } from "#/lib/config";
-import { PROMPT_SYSTEM_MARKER } from "#/lib/prompt-templates";
+import {
+	__test__ as promptTemplateTest,
+	PROMPT_SYSTEM_MARKER,
+} from "#/lib/prompt-templates";
 import { getRouteHandler } from "#/test/route-handlers";
 import { Route as PromptTemplatesRoute } from "./prompt-templates";
 import { Route as PromptTemplatesResetRoute } from "./prompt-templates.reset";
@@ -21,6 +24,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	delete process.env.BIRDCLAW_WEB_TOKEN;
 	delete process.env.BIRDCLAW_HOME;
 	resetBirdclawPathsForTests();
 	rmSync(tempRoot, { recursive: true, force: true });
@@ -73,6 +77,61 @@ describe("prompt template API", () => {
 		expect(response.status).toBe(400);
 	});
 
+	it("rejects unknown reads and incomplete resets", async () => {
+		const read = await GET({
+			request: new Request(
+				"http://localhost/api/prompt-templates?feature=unknown",
+			),
+		});
+		const reset = await RESET({
+			request: new Request("http://localhost/api/prompt-templates/reset", {
+				method: "POST",
+				body: JSON.stringify({}),
+			}),
+		});
+
+		expect(read.status).toBe(400);
+		expect(reset.status).toBe(400);
+	});
+
+	it("denies cross-origin reads, saves, and resets", async () => {
+		process.env.BIRDCLAW_WEB_TOKEN = "secret";
+		const headers = {
+			origin: "https://evil.example",
+			"x-birdclaw-token": "secret",
+		};
+		const responses = await Promise.all([
+			GET({
+				request: new Request(
+					"http://localhost/api/prompt-templates?feature=period-digest",
+					{ headers },
+				),
+			}),
+			POST({
+				request: new Request("http://localhost/api/prompt-templates", {
+					method: "POST",
+					headers,
+					body: JSON.stringify({
+						feature: "period-digest",
+						system: "System",
+						requirements: "Requirements",
+					}),
+				}),
+			}),
+			RESET({
+				request: new Request("http://localhost/api/prompt-templates/reset", {
+					method: "POST",
+					headers,
+					body: JSON.stringify({ feature: "period-digest" }),
+				}),
+			}),
+		]);
+
+		expect(responses.map((response) => response.status)).toEqual([
+			403, 403, 403,
+		]);
+	});
+
 	it("returns a clear marker validation error", async () => {
 		const response = await POST({
 			request: new Request("http://localhost/api/prompt-templates", {
@@ -86,5 +145,21 @@ describe("prompt template API", () => {
 		});
 		expect(response.status).toBe(400);
 		expect((await response.json()).message).toContain("reserved prompt marker");
+	});
+
+	it("returns a client error when the template cannot be removed", async () => {
+		mkdirSync(promptTemplateTest.promptPath("period-digest"), {
+			recursive: true,
+		});
+
+		const response = await RESET({
+			request: new Request("http://localhost/api/prompt-templates/reset", {
+				method: "POST",
+				body: JSON.stringify({ feature: "period-digest" }),
+			}),
+		});
+
+		expect(response.status).toBe(400);
+		expect((await response.json()).message).toMatch(/directory|EISDIR/u);
 	});
 });

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { Effect } from "effect";
-import { z } from "zod";
 import {
 	createAnalysisRequestBody,
 	type HybridAnalysisResult,
@@ -8,6 +7,10 @@ import {
 	resolveAnalysisModelSettings,
 	streamHybridAnalysisEffect,
 } from "./analysis-runtime";
+import {
+	searchDiscussionSchema as SearchDiscussionSchema,
+	type SearchDiscussion,
+} from "./analysis-result-contracts";
 import { prefetchCachedAvatarsForProfileIdsEffect } from "./avatar-cache";
 import { runEffectBackground, runEffectPromise } from "./effect-runtime";
 import { resolveLiveReadMode } from "./live-transport-policy";
@@ -113,26 +116,6 @@ export interface SearchDiscussionContext {
 	liveSearch?: SyncTweetSearchResult;
 	hash: string;
 }
-
-const SearchDiscussionSchema = z.object({
-	title: z.string().min(1),
-	summary: z.string().min(1),
-	themes: z.array(
-		z.object({
-			title: z.string().min(1),
-			summary: z.string().min(1),
-			tweetIds: z.array(z.string()).default([]),
-			dmConversationIds: z.array(z.string()).default([]),
-			handles: z.array(z.string()).default([]),
-		}),
-	),
-	tensions: z.array(z.string()).default([]),
-	followUps: z.array(z.string()).default([]),
-	sourceTweetIds: z.array(z.string()).default([]),
-	sourceDmConversationIds: z.array(z.string()).default([]),
-});
-
-export type SearchDiscussion = z.infer<typeof SearchDiscussionSchema>;
 
 export interface SearchDiscussionRunResult {
 	context: SearchDiscussionContext;
@@ -640,7 +623,7 @@ Until: ${context.until ?? "(none)"}
 Counts: ${JSON.stringify(context.counts)}
 Prompt tweets: ${String(tweetCount)} of ${String(context.tweets.length)} selected context tweets
 
-Write a high-signal Markdown discussion from this local Twitter/X search result set.
+${effectivePrompt.taskInstruction}
 
 Requirements:
 ${effectivePrompt.requirements}

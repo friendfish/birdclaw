@@ -78,6 +78,43 @@ describe("prompt playground contracts", () => {
 		).toBe(false);
 	});
 
+	it("rejects incomplete nested playground results", () => {
+		const generatedAt = new Date().toISOString();
+		expect(
+			periodDigestPlaygroundStreamEventSchema.safeParse({
+				type: "done",
+				result: {
+					markdown: "Report",
+					digest: {},
+					parseStatus: "structured",
+					generatedAt,
+				},
+			}).success,
+		).toBe(false);
+		expect(
+			searchDiscussionPlaygroundStreamEventSchema.safeParse({
+				type: "done",
+				result: {
+					markdown: "Report",
+					discussion: {},
+					parseStatus: "structured",
+					generatedAt,
+				},
+			}).success,
+		).toBe(false);
+		expect(
+			profileAnalysisPlaygroundResponseSchema.safeParse({
+				ok: true,
+				result: {
+					markdown: "Report",
+					analysis: {},
+					parseStatus: "structured",
+					generatedAt,
+				},
+			}).success,
+		).toBe(false);
+	});
+
 	it("keeps reset as a strict feature-only request", () => {
 		expect(
 			promptTemplateResetRequestSchema.safeParse({

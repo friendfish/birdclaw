@@ -1,5 +1,11 @@
 // @vitest-environment node
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,6 +16,7 @@ import {
 	PROMPT_REQUIREMENTS_MARKER,
 	PROMPT_SYSTEM_MARKER,
 	PROMPT_TEMPLATE_DEFINITIONS,
+	PROMPT_TEMPLATE_SCHEMA_LINE,
 	readPromptTemplate,
 	resetPromptTemplate,
 	resolveEffectivePrompt,
@@ -68,6 +75,31 @@ describe("prompt templates", () => {
 		);
 	});
 
+	it("reports malformed marker layouts and unreadable template paths", () => {
+		const feature = "period-digest";
+		expect(
+			__test__.parseTemplateFile(
+				feature,
+				`${PROMPT_TEMPLATE_SCHEMA_LINE}\n${PROMPT_SYSTEM_MARKER}\nSystem\n${PROMPT_SYSTEM_MARKER}\n${PROMPT_REQUIREMENTS_MARKER}\nRequirements`,
+			).parseError,
+		).toMatch(/exactly once/u);
+		expect(
+			__test__.parseTemplateFile(
+				feature,
+				`${PROMPT_TEMPLATE_SCHEMA_LINE}\n${PROMPT_REQUIREMENTS_MARKER}\nRequirements\n${PROMPT_SYSTEM_MARKER}\nSystem`,
+			).parseError,
+		).toMatch(/out of order/u);
+		expect(
+			__test__.parseTemplateFile(
+				feature,
+				`${PROMPT_TEMPLATE_SCHEMA_LINE}\n${PROMPT_SYSTEM_MARKER}\n\n${PROMPT_REQUIREMENTS_MARKER}\nRequirements`,
+			).parseError,
+		).toMatch(/cannot be empty/u);
+
+		mkdirSync(__test__.promptPath(feature), { recursive: true });
+		expect(readPromptTemplate(feature).parseError).toMatch(/directory|EISDIR/u);
+	});
+
 	it("rejects reserved markers before writing", () => {
 		expect(() =>
 			writePromptTemplate("period-digest", {
@@ -75,18 +107,33 @@ describe("prompt templates", () => {
 				requirements: "- Fine",
 			}),
 		).toThrow(/reserved prompt marker/u);
+		expect(() =>
+			writePromptTemplate("period-digest", {
+				system: "System",
+				requirements: `Explain ${PROMPT_REQUIREMENTS_MARKER}`,
+			}),
+		).toThrow(/reserved prompt marker/u);
+		expect(() =>
+			writePromptTemplate("period-digest", {
+				system: " ",
+				requirements: "Requirements",
+			}),
+		).toThrow(/cannot be empty/u);
 	});
 
 	it("hashes materialized protocol content but ignores source metadata", () => {
 		const editable = { system: "System", requirements: "Guidance" };
 		const first = materializeEffectivePrompt(editable, {
 			system: "Protocol A",
+			taskInstruction: "Task A",
 			requirements: "Shape A",
 		});
 		const second = materializeEffectivePrompt(editable, {
 			system: "Protocol B",
+			taskInstruction: "Task B",
 			requirements: "Shape A",
 		});
+		expect(first.taskInstruction).toBe("Task A");
 		expect(first.promptHash).not.toBe(second.promptHash);
 		writePromptTemplate("period-digest", {
 			...PROMPT_TEMPLATE_DEFINITIONS["period-digest"].defaults,

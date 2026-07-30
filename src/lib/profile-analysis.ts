@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { Effect } from "effect";
-import { z } from "zod";
 import {
 	createAnalysisRequestBody,
 	extractOpenAIResponseText,
@@ -8,6 +7,10 @@ import {
 	requestHybridAnalysisEffect,
 	resolveAnalysisModelSettings,
 } from "./analysis-runtime";
+import {
+	profileAnalysisSchema as ProfileAnalysisSchema,
+	type ProfileAnalysis,
+} from "./analysis-result-contracts";
 import { getNativeDb } from "./db";
 import { getBirdclawConfig } from "./config";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
@@ -135,28 +138,6 @@ export interface ProfileAnalysisContext {
 	fetchCached: boolean;
 	hash: string;
 }
-
-const ProfileAnalysisSchema = z.object({
-	title: z.string().min(1),
-	summary: z.string().min(1),
-	voice: z.string().min(1),
-	themes: z.array(
-		z.object({
-			title: z.string().min(1),
-			summary: z.string().min(1),
-			tweetIds: z.array(z.string()).default([]),
-			handles: z.array(z.string()).default([]),
-		}),
-	),
-	conversationStyle: z.string().min(1),
-	notableSignals: z.array(z.string()).default([]),
-	risks: z.array(z.string()).default([]),
-	followUps: z.array(z.string()).default([]),
-	sourceTweetIds: z.array(z.string()).default([]),
-	sourceHandles: z.array(z.string()).default([]),
-});
-
-export type ProfileAnalysis = z.infer<typeof ProfileAnalysisSchema>;
 
 export interface ProfileAnalysisRunResult {
 	context: ProfileAnalysisContext;
@@ -1417,7 +1398,7 @@ Fetched conversation tweets: ${String(context.counts.conversationTweets)} across
 Prompt tweets: ${String(tweetCount)} of ${String(context.tweets.length)}
 Prompt conversation tweets: ${String(conversationCount)} of ${String(context.conversations.length)}
 
-Write a high-signal Markdown profile analysis from X/Twitter API data.
+${effectivePrompt.taskInstruction}
 
 Requirements:
 ${effectivePrompt.requirements}${langInstruction}

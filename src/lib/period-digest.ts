@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { Effect } from "effect";
-import { z } from "zod";
 import {
 	createAnalysisRequestBody,
 	type HybridAnalysisResult,
@@ -9,6 +8,10 @@ import {
 	resolveAnalysisModelSettings,
 	streamHybridAnalysisEffect,
 } from "./analysis-runtime";
+import {
+	periodDigestSchema as PeriodDigestSchema,
+	type PeriodDigest,
+} from "./analysis-result-contracts";
 import { maybeAutoSyncBackupEffect } from "./backup";
 import { getBirdclawConfig } from "./config";
 import { runEffectPromise } from "./effect-runtime";
@@ -121,43 +124,6 @@ export interface PeriodDigestPlaygroundResult extends PlaygroundResultBase {
 	digest: PeriodDigest;
 }
 
-const PeriodDigestSchema = z.object({
-	title: z.string().min(1),
-	summary: z.string().min(1),
-	keyTopics: z.array(
-		z.object({
-			title: z.string().min(1),
-			summary: z.string().min(1),
-			tweetIds: z.array(z.string()).default([]),
-			handles: z.array(z.string()).default([]),
-		}),
-	),
-	notableLinks: z.array(
-		z.object({
-			title: z.string().min(1),
-			url: z.string().min(1),
-			why: z.string().min(1),
-			sourceTweetIds: z.array(z.string()).default([]),
-		}),
-	),
-	people: z.array(
-		z.object({
-			handle: z.string().min(1),
-			name: z.string().optional(),
-			why: z.string().min(1),
-		}),
-	),
-	actionItems: z.array(
-		z.object({
-			kind: z.enum(["reply", "follow_up", "read", "sync"]),
-			label: z.string().min(1),
-			tweetId: z.string().optional(),
-			dmConversationId: z.string().optional(),
-		}),
-	),
-	sourceTweetIds: z.array(z.string()).default([]),
-});
-
 const MAX_DIGEST_LANGUAGE_LENGTH = 64;
 
 export function normalizeDigestLanguage(
@@ -183,8 +149,6 @@ export function normalizeDigestLanguage(
 		);
 	}
 }
-
-export type PeriodDigest = z.infer<typeof PeriodDigestSchema>;
 
 interface CompactTweet {
 	id: string;
@@ -1245,7 +1209,7 @@ Content scope: ${contentSourceDescription(context.contentSource ?? "all")}
 Sources: ${JSON.stringify(context.counts)}
 Prompt tweets: ${String(tweetCount)} of ${String(context.tweets.length)} selected context tweets
 
-Write a high-signal "what happened" report from this local Twitter/X dataset.
+${effectivePrompt.taskInstruction}
 
 Requirements:
 ${effectivePrompt.requirements}

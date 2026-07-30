@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+	periodDigestSchema,
+	profileAnalysisSchema,
+	searchDiscussionSchema,
+} from "./analysis-result-contracts";
 import type { PeriodDigestPlaygroundResult } from "./period-digest";
 import type { PlaygroundStreamEvent } from "./prompt-playground";
 import type { ProfileAnalysisPlaygroundResult } from "./profile-analysis";
@@ -41,35 +46,46 @@ export const promptTemplateResponseSchema = z.object({
 	definition: z.object({
 		label: z.string(),
 		description: z.string(),
-		protocol: editablePromptSchema,
+		protocol: z.object({
+			system: z.string(),
+			taskInstruction: z.string(),
+			requirements: z.string(),
+		}),
 	}),
 });
 
-const periodDigestPlaygroundResultSchema = z.object({
-	markdown: z.string(),
-	digest: z.looseObject({}),
-	parseStatus: z.enum(["structured", "fallback"]),
-	generatedAt: z.string(),
-});
+const periodDigestPlaygroundResultSchema: z.ZodType<PeriodDigestPlaygroundResult> =
+	z.object({
+		markdown: z.string(),
+		digest: periodDigestSchema,
+		parseStatus: z.enum(["structured", "fallback"]),
+		generatedAt: z.string(),
+	});
 
-const searchDiscussionPlaygroundResultSchema = z.object({
-	markdown: z.string(),
-	discussion: z.looseObject({}),
-	parseStatus: z.enum(["structured", "fallback"]),
-	generatedAt: z.string(),
-});
+const searchDiscussionPlaygroundResultSchema: z.ZodType<SearchDiscussionPlaygroundResult> =
+	z.object({
+		markdown: z.string(),
+		discussion: searchDiscussionSchema,
+		parseStatus: z.enum(["structured", "fallback"]),
+		generatedAt: z.string(),
+	});
 
-export const profileAnalysisPlaygroundResponseSchema = z.object({
+export const profileAnalysisPlaygroundResponseSchema: z.ZodType<{
+	ok: true;
+	result: ProfileAnalysisPlaygroundResult;
+}> = z.object({
 	ok: z.literal(true),
 	result: z.object({
 		markdown: z.string(),
-		analysis: z.looseObject({}),
+		analysis: profileAnalysisSchema,
 		parseStatus: z.enum(["structured", "fallback"]),
 		generatedAt: z.string(),
 	}),
 });
 
-function playgroundStreamEventSchema<T extends z.ZodType>(result: T) {
+function playgroundStreamEventSchema<T>(
+	result: z.ZodType<T>,
+): z.ZodType<PlaygroundStreamEvent<T>> {
 	return z.discriminatedUnion("type", [
 		z.object({ type: z.literal("delta"), delta: z.string() }),
 		z.object({ type: z.literal("done"), result }),
@@ -78,18 +94,10 @@ function playgroundStreamEventSchema<T extends z.ZodType>(result: T) {
 }
 
 export const periodDigestPlaygroundStreamEventSchema =
-	playgroundStreamEventSchema(
-		periodDigestPlaygroundResultSchema,
-	) as unknown as z.ZodType<
-		PlaygroundStreamEvent<PeriodDigestPlaygroundResult>
-	>;
+	playgroundStreamEventSchema(periodDigestPlaygroundResultSchema);
 
 export const searchDiscussionPlaygroundStreamEventSchema =
-	playgroundStreamEventSchema(
-		searchDiscussionPlaygroundResultSchema,
-	) as unknown as z.ZodType<
-		PlaygroundStreamEvent<SearchDiscussionPlaygroundResult>
-	>;
+	playgroundStreamEventSchema(searchDiscussionPlaygroundResultSchema);
 
 export const periodDigestPlaygroundRequestSchema = z.object({
 	period: z.enum(["today", "yesterday", "24h", "week"]),
@@ -131,4 +139,4 @@ export type PromptTemplateResponse = z.infer<
 >;
 export type ProfileAnalysisPlaygroundResponse = z.infer<
 	typeof profileAnalysisPlaygroundResponseSchema
-> & { result: ProfileAnalysisPlaygroundResult };
+>;
