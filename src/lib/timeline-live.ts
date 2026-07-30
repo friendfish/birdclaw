@@ -51,11 +51,7 @@ function assertLimit(limit: number) {
 }
 
 function parseMode(mode: HomeTimelineMode | undefined) {
-	try {
-		return resolveHomeTimelineReadMode(mode);
-	} catch {
-		throw new Error("--mode must be bird, xurl, or auto");
-	}
+	return resolveHomeTimelineReadMode(mode);
 }
 
 function parseMaxPages(maxPages: number | undefined) {

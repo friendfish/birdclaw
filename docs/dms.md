@@ -50,7 +50,7 @@ Flags:
 
 Sync is idempotent — re-running merges new events without disturbing already-imported message bodies.
 
-`--mode bird` remains the default because it can read accepted DMs and message requests with accept/reject state. `--mode xurl` imports recent OAuth2 `/2/dm_events` as accepted conversations only; use `--mode auto` to try xurl for accepted DMs and fall back to bird. Message-request inbox syncs always require `bird`.
+With no explicit or global live-data setting, `--mode bird` remains the capability default because it can read accepted DMs and message requests with accept/reject state. `--mode xurl` imports recent OAuth2 `/2/dm_events` as accepted conversations only; it does not overwrite an existing local request/accepted classification. Use `--mode auto` to try xurl for accepted DMs and fall back to bird. Message-request inbox syncs always require `bird`.
 
 ## Search
 

@@ -498,9 +498,7 @@ describe("cli", () => {
 		resolveMentionThreadReadModeMock.mockImplementation((mode?: string) => {
 			if (mode === undefined) return "bird";
 			if (mode === "bird" || mode === "xurl") return mode;
-			if (mode === "auto") {
-				throw new Error("Mention-thread sync supports only bird or xurl");
-			}
+			if (mode === "auto") return "xurl";
 			throw new Error("Invalid live-read mode; expected auto, bird, or xurl");
 		});
 		streamProfileAnalysisMock.mockResolvedValue({

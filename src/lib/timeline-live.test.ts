@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
@@ -100,6 +100,15 @@ afterEach(() => {
 });
 
 describe("live home timeline sync", () => {
+	it("preserves malformed config errors while resolving an omitted mode", async () => {
+		const home = makeTempHome();
+		writeFileSync(path.join(home, "config.json"), "{");
+		const { syncHomeTimeline } = await import("./timeline-live");
+
+		await expect(syncHomeTimeline()).rejects.toBeInstanceOf(SyntaxError);
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
+	});
+
 	it("uses configured xurl for omitted home timeline mode", async () => {
 		makeTempHome();
 		writeBirdclawConfig({ live: { dataSource: "xurl" } });
@@ -181,7 +190,7 @@ describe("live home timeline sync", () => {
 		expect(listHomeTimelineViaXurlMock).not.toHaveBeenCalled();
 
 		await expect(Effect.runPromise(effect)).rejects.toThrow(
-			"--mode must be bird, xurl, or auto",
+			"Invalid live-read mode; expected auto, bird, or xurl",
 		);
 		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 		expect(listHomeTimelineViaBirdMock).not.toHaveBeenCalled();

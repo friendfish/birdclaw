@@ -624,11 +624,7 @@ function makeDryRunResponse({
 }
 
 function parseMode(value?: FollowGraphSyncMode) {
-	try {
-		return resolveLiveSyncMode(value);
-	} catch {
-		throw new Error("--mode must be auto, bird, or xurl");
-	}
+	return resolveLiveSyncMode(value);
 }
 
 function errorMessage(error: unknown) {

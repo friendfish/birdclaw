@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
@@ -214,12 +214,21 @@ describe("mention thread sync", () => {
 		expect(mocks.getTweetById).not.toHaveBeenCalled();
 
 		await expect(Effect.runPromise(effect)).rejects.toThrow(
-			"--mode must be bird or xurl",
+			"Invalid live-read mode; expected auto, bird, or xurl",
 		);
 		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 		expect(mocks.listThreadViaBird).not.toHaveBeenCalled();
 		expect(mocks.searchRecentByConversationId).not.toHaveBeenCalled();
 		expect(mocks.getTweetById).not.toHaveBeenCalled();
+	});
+
+	it("preserves malformed config errors while resolving an omitted mode", async () => {
+		const home = makeTempHome();
+		writeFileSync(path.join(home, "config.json"), "{");
+		const { syncMentionThreads } = await import("./mention-threads-live");
+
+		await expect(syncMentionThreads({})).rejects.toBeInstanceOf(SyntaxError);
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 	});
 
 	it("uses configured Bird for omitted mention thread mode without xurl calls", async () => {
@@ -239,48 +248,51 @@ describe("mention thread sync", () => {
 		expect(mocks.getTweetById).not.toHaveBeenCalled();
 	});
 
-	it("uses configured xurl for omitted mention thread mode", async () => {
-		setupTempHome();
-		writeBirdclawConfig({ live: { dataSource: "xurl" } });
-		insertMention(
-			"mention_config_xurl",
-			"configured xurl mention",
-			"2026-05-12T10:00:00.000Z",
-			{
-				id: "mention_config_xurl",
-				text: "configured xurl mention",
-				created_at: "2026-05-12T10:00:00.000Z",
-				conversation_id: "root_config_xurl",
-			},
-		);
-		mocks.searchRecentByConversationId.mockResolvedValueOnce({
-			data: [
-				{
-					id: "root_config_xurl",
-					author_id: "77",
-					text: "root",
-					created_at: "2026-05-12T09:59:00.000Z",
-					conversation_id: "root_config_xurl",
-				},
+	it.each(["xurl", "auto"] as const)(
+		"uses configured %s as xurl for omitted mention thread mode",
+		async (dataSource) => {
+			setupTempHome();
+			writeBirdclawConfig({ live: { dataSource } });
+			insertMention(
+				"mention_config_xurl",
+				"configured xurl mention",
+				"2026-05-12T10:00:00.000Z",
 				{
 					id: "mention_config_xurl",
-					author_id: "42",
 					text: "configured xurl mention",
 					created_at: "2026-05-12T10:00:00.000Z",
 					conversation_id: "root_config_xurl",
-					referenced_tweets: [{ type: "replied_to", id: "root_config_xurl" }],
 				},
-			],
-			meta: { result_count: 2 },
-		});
-		const { syncMentionThreads } = await import("./mention-threads-live");
+			);
+			mocks.searchRecentByConversationId.mockResolvedValueOnce({
+				data: [
+					{
+						id: "root_config_xurl",
+						author_id: "77",
+						text: "root",
+						created_at: "2026-05-12T09:59:00.000Z",
+						conversation_id: "root_config_xurl",
+					},
+					{
+						id: "mention_config_xurl",
+						author_id: "42",
+						text: "configured xurl mention",
+						created_at: "2026-05-12T10:00:00.000Z",
+						conversation_id: "root_config_xurl",
+						referenced_tweets: [{ type: "replied_to", id: "root_config_xurl" }],
+					},
+				],
+				meta: { result_count: 2 },
+			});
+			const { syncMentionThreads } = await import("./mention-threads-live");
 
-		await expect(
-			syncMentionThreads({ limit: 1, delayMs: 0 }),
-		).resolves.toMatchObject({ source: "xurl" });
-		expect(mocks.searchRecentByConversationId).toHaveBeenCalledTimes(1);
-		expect(mocks.listThreadViaBird).not.toHaveBeenCalled();
-	});
+			await expect(
+				syncMentionThreads({ limit: 1, delayMs: 0 }),
+			).resolves.toMatchObject({ source: "xurl" });
+			expect(mocks.searchRecentByConversationId).toHaveBeenCalledTimes(1);
+			expect(mocks.listThreadViaBird).not.toHaveBeenCalled();
+		},
+	);
 
 	it("validates mention thread sync effects only when run", async () => {
 		setupTempHome();
@@ -1750,8 +1762,8 @@ describe("mention thread sync", () => {
 		await expect(syncMentionThreads({ maxPages: -1 })).rejects.toThrow(
 			"--max-pages must be non-negative",
 		);
-		await expect(syncMentionThreads({ mode: "auto" })).rejects.toThrow(
-			"Mention-thread sync supports only bird or xurl",
+		await expect(syncMentionThreads({ mode: "invalid" })).rejects.toThrow(
+			"Invalid live-read mode; expected auto, bird, or xurl",
 		);
 		await expect(syncMentionThreads({ account: "missing" })).rejects.toThrow(
 			"Unknown account: missing",

@@ -273,11 +273,7 @@ function parseMaxPages(value?: number) {
 }
 
 function parseSyncMode(value?: string): MentionSyncMode {
-	try {
-		return resolveLiveSyncMode(value);
-	} catch {
-		throw new Error("--mode must be auto, bird, or xurl");
-	}
+	return resolveLiveSyncMode(value);
 }
 
 function getCachedPaginationToken(

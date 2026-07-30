@@ -126,10 +126,8 @@ describe("live transport policy", () => {
 		expect(resolveDirectMessagesReadMode("auto")).toBe("auto");
 	});
 
-	it("rejects auto for mention-thread sync", () => {
-		expect(() => resolveMentionThreadReadMode("auto")).toThrow(
-			"Mention-thread sync supports only bird or xurl",
-		);
+	it("narrows auto to xurl for mention-thread sync", () => {
+		expect(resolveMentionThreadReadMode("auto")).toBe("xurl");
 	});
 
 	it("builds stable disabled xurl statuses", () => {

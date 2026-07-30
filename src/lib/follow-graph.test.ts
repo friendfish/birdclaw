@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
@@ -113,6 +113,16 @@ afterEach(() => {
 });
 
 describe("follow graph sync and cache-only queries", () => {
+	it("preserves malformed config errors while resolving an omitted mode", async () => {
+		setupTempHome();
+		writeFileSync(path.join(process.env.BIRDCLAW_HOME!, "config.json"), "{");
+		const { syncFollowGraph } = await import("./follow-graph");
+
+		await expect(
+			syncFollowGraph({ direction: "followers" }),
+		).rejects.toBeInstanceOf(SyntaxError);
+	});
+
 	it("defaults to dry-run and does not call xurl", async () => {
 		setupTempHome();
 		const { syncFollowGraph } = await import("./follow-graph");
@@ -216,7 +226,7 @@ describe("follow graph sync and cache-only queries", () => {
 
 		await expect(
 			syncFollowGraph({ direction: "followers", mode: "" as never }),
-		).rejects.toThrow("--mode must be auto, bird, or xurl");
+		).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 		expect(existsSync(path.join(tempRoot, "birdclaw.sqlite"))).toBe(false);
 		expect(mocks.listFollowUsersViaBird).not.toHaveBeenCalled();
 		expect(mocks.listFollowUsersViaXurl).not.toHaveBeenCalled();

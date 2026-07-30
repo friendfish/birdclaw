@@ -80,14 +80,7 @@ function parseNonNegativeInteger(value: number | undefined, name: string) {
 }
 
 function parseMode(value: string | undefined): MentionThreadsMode {
-	try {
-		return resolveMentionThreadReadMode(value);
-	} catch (error) {
-		if (error instanceof Error && error.message.includes("only bird or xurl")) {
-			throw error;
-		}
-		throw new Error("--mode must be bird or xurl");
-	}
+	return resolveMentionThreadReadMode(value);
 }
 
 function getRemainingThreadTimeoutMs(

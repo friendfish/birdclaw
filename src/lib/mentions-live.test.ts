@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
@@ -155,6 +155,17 @@ describe("cached live mentions", () => {
 		});
 	});
 
+	it("preserves malformed config errors while resolving an omitted mode", async () => {
+		const home = makeTempHome();
+		writeFileSync(path.join(home, "config.json"), "{");
+		const { syncMentions } = await import("./mentions-live");
+
+		await expect(syncMentions({ limit: 5 })).rejects.toBeInstanceOf(
+			SyntaxError,
+		);
+		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
+	});
+
 	afterEach(() => {
 		resetDatabaseForTests();
 		resetBirdclawPathsForTests();
@@ -213,7 +224,7 @@ describe("cached live mentions", () => {
 		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 
 		await expect(Effect.runPromise(effect)).rejects.toThrow(
-			"--mode must be auto, bird, or xurl",
+			"Invalid live-read mode; expected auto, bird, or xurl",
 		);
 		expect(existsSync(path.join(home, "birdclaw.sqlite"))).toBe(false);
 		expect(listMentionsViaXurlMock).not.toHaveBeenCalled();
@@ -2089,7 +2100,7 @@ describe("cached live mentions", () => {
 				mode: "weird",
 				limit: 5,
 			}),
-		).rejects.toThrow("--mode must be auto, bird, or xurl");
+		).rejects.toThrow("Invalid live-read mode; expected auto, bird, or xurl");
 		await expect(
 			syncMentions({
 				account: "acct_primary",
