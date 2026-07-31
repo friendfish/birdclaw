@@ -47,6 +47,7 @@ describe("api search discussion route", () => {
 						model: "gpt-5.5",
 						cached: false,
 						serviceTier: "priority",
+						parseStatus: "structured",
 						context: {
 							query: "ChatGPT",
 							source: "search",

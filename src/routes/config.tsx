@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
-import { Save, AlertCircle, CheckCircle, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertCircle, CheckCircle, RefreshCw, Save } from "lucide-react";
+import { PromptTemplatesPanel } from "#/components/PromptTemplatesPanel";
 import { fetchJson } from "#/lib/api-client";
 import { z } from "zod";
 import {
@@ -72,9 +73,9 @@ function parseTime(value: string): { hour: number; minute: number } {
 }
 
 function ConfigRoute() {
-	const [activeTab, setActiveTab] = useState<"ai" | "language" | "schedule">(
-		"ai",
-	);
+	const [activeTab, setActiveTab] = useState<
+		"ai" | "language" | "schedule" | "prompts"
+	>("ai");
 
 	// AI config state
 	const [provider, setProvider] = useState("openai");
@@ -330,9 +331,14 @@ function ConfigRoute() {
 						Loading configuration...
 					</div>
 				) : (
-					<div className="flex flex-col gap-6 max-w-xl">
+					<div
+						className={cx(
+							"flex flex-col gap-6",
+							activeTab === "prompts" ? "max-w-5xl" : "max-w-xl",
+						)}
+					>
 						{/* Tabs Selector */}
-						<div className="flex border-b border-[var(--line)] mb-2">
+						<div className="flex flex-wrap border-b border-[var(--line)] mb-2">
 							<button
 								type="button"
 								onClick={() => {
@@ -380,6 +386,18 @@ function ConfigRoute() {
 								)}
 							>
 								摘要归档调度
+							</button>
+							<button
+								type="button"
+								onClick={() => setActiveTab("prompts")}
+								className={cx(
+									"px-4 py-2.5 font-bold text-[14px] border-b-2 transition-all cursor-pointer",
+									activeTab === "prompts"
+										? "border-[var(--brand)] text-[var(--brand)]"
+										: "border-transparent text-[var(--ink-soft)] hover:text-[var(--ink)]",
+								)}
+							>
+								提示词
 							</button>
 						</div>
 
@@ -500,6 +518,8 @@ function ConfigRoute() {
 									</button>
 								</div>
 							</form>
+						) : activeTab === "prompts" ? (
+							<PromptTemplatesPanel aiLanguage={aiLanguage} />
 						) : (
 							<form onSubmit={handleSave} className="flex flex-col gap-6">
 								{activeTab === "ai" ? (

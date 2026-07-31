@@ -40,6 +40,7 @@ describe("api profile analysis route", () => {
 						model: "gpt-5.5",
 						cached: false,
 						serviceTier: "priority",
+						parseStatus: "structured",
 						context: {
 							handle: "alice",
 							profile: { handle: "alice" },

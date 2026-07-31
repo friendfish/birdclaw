@@ -81,6 +81,7 @@ describe("analysis runtime", () => {
 		expect(parsed).toEqual({
 			markdown: "Summary",
 			value: { title: "ok" },
+			parseStatus: "structured",
 		});
 
 		expect(
@@ -89,9 +90,10 @@ describe("analysis runtime", () => {
 				parse: (value) => value as { title: string },
 				fallback: (markdown) => ({ title: markdown }),
 			}),
-		).toEqual({
+		).toMatchObject({
 			markdown: "Only markdown",
 			value: { title: "Only markdown" },
+			parseStatus: "fallback",
 		});
 	});
 

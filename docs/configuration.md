@@ -19,6 +19,7 @@ The default root is `~/.birdclaw`. It holds:
 ~/.birdclaw/
   birdclaw.sqlite              # canonical local truth
   config.json                  # user config
+  prompts/                     # optional editable AI prompt templates
   media/                       # original media cache
   media/thumbs/avatars/        # avatar cache
   audit/                       # JSONL audit logs (e.g. bookmarks-sync.jsonl)
@@ -94,6 +95,71 @@ aliases. They should be used only for existing installations; they no longer
 describe a mentions-only global setting.
 
 `mentions.birdCommand` overrides the `bird` binary path when you want to point at a non-`PATH` build.
+
+## Prompt templates
+
+The Config page can edit the user-controlled prompt text for Today, Analyse,
+and Discuss. Custom templates use a fixed feature-to-file mapping:
+
+| Feature | File |
+| --- | --- |
+| Today | `~/.birdclaw/prompts/period-digest.md` |
+| Analyse | `~/.birdclaw/prompts/profile-analysis.md` |
+| Discuss | `~/.birdclaw/prompts/search-discussion.md` |
+
+Each file is UTF-8 Markdown with a schema line followed by one system marker
+and one requirements marker, in that order:
+
+```markdown
+<!-- birdclaw-prompt-schema: 1 -->
+
+<!-- birdclaw-prompt-system -->
+Editable system text
+
+<!-- birdclaw-prompt-requirements -->
+Editable requirements
+```
+
+A missing file means the built-in defaults are active. Restore default deletes
+the custom file. Invalid schema or marker structure is surfaced in Config;
+defaults are shown, but saving requires confirmation before the original file
+is replaced. Marker strings are reserved and rejected inside editable content.
+Saves create the `prompts/` directory as needed and use a temporary file plus a
+same-directory rename so readers see either the old complete version or the new
+complete version.
+
+The application owns three locked prompt segments that are not stored in the
+template file: a system protocol sentence combined with the editable system
+text; a fixed feature task instruction inserted after the request's dynamic
+context and before `Requirements:`; and machine-readable output requirements
+appended to the editable requirements. The effective prompt hash covers both
+editable text and all three locked segments. Changing the editable text or any
+locked segment changes result-cache identity; the next production generation
+may therefore incur real AI usage charges. Saving during an active generation
+can also cause its old-prompt result not to match the new prompt and trigger
+another generation.
+
+Prompt Playgrounds send unsaved drafts to the configured AI provider using
+local data only. They bypass result caches, active-generation registries,
+business-table writes, live X reads, avatar prefetch, and automatic backup.
+Today and Discuss stream results; Analyse returns one completed response.
+Discuss intentionally uses local-only search, so its live-search prompt line can
+differ from a production run. Empty local datasets are reported before any AI
+request.
+
+The Config UI uses these internal, local-web API paths:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET`, `POST` | `/api/prompt-templates` | Read or save one feature template |
+| `POST` | `/api/prompt-templates/reset` | Delete one custom template |
+| `POST` | `/api/prompt-playground/period-digest` | Stream a Today draft run |
+| `POST` | `/api/prompt-playground/profile-analysis` | Run an Analyse draft |
+| `POST` | `/api/prompt-playground/search-discussion` | Stream a Discuss draft run |
+
+Custom prompt files are not currently included in portable backups. See the
+[v6 design specification](superpowers/specs/2026-07-28-prompt-templates-playground-design.md)
+for cache, protocol, and isolation decisions.
 
 ### `backup.*`
 
