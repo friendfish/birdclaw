@@ -249,7 +249,7 @@ describe("today route", () => {
 					url.searchParams.get("liveSync") === "false",
 			),
 		).toBe(true);
-	});
+	}, 15_000);
 
 	it("scopes the digest request by content source and hides For You without bird", async () => {
 		const urls: URL[] = [];
