@@ -128,12 +128,16 @@ Saves create the `prompts/` directory as needed and use a temporary file plus a
 same-directory rename so readers see either the old complete version or the new
 complete version.
 
-The machine-readable output protocol remains owned by the application and is
-appended to the editable text. The effective prompt hash covers both editable
-text and that locked protocol. Changing either changes result-cache identity;
-the next production generation may therefore incur real AI usage charges.
-Saving during an active generation can also cause its old-prompt result not to
-match the new prompt and trigger another generation.
+The application owns three locked prompt segments that are not stored in the
+template file: a system protocol sentence combined with the editable system
+text; a fixed feature task instruction inserted after the request's dynamic
+context and before `Requirements:`; and machine-readable output requirements
+appended to the editable requirements. The effective prompt hash covers both
+editable text and all three locked segments. Changing the editable text or any
+locked segment changes result-cache identity; the next production generation
+may therefore incur real AI usage charges. Saving during an active generation
+can also cause its old-prompt result not to match the new prompt and trigger
+another generation.
 
 Prompt Playgrounds send unsaved drafts to the configured AI provider using
 local data only. They bypass result caches, active-generation registries,
