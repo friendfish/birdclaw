@@ -53,7 +53,7 @@ test("navigates across the primary surfaces", async ({ page }) => {
 	await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
 	await expect(page.getByText("Fast search for your archive.")).toBeVisible();
 	await expect(
-		page.getByRole("button", { name: "Sync timeline" }),
+		page.getByRole("button", { name: /^Sync (For You|Following)$/ }),
 	).toBeVisible();
 	await expect(
 		page.locator('img[src="/birdclaw-mark.png"]').first(),
@@ -96,7 +96,7 @@ test("navigates across the primary surfaces", async ({ page }) => {
 test("manual sync controls are available on syncable surfaces", async ({
 	page,
 }) => {
-	async function expectSyncControl(path: string, buttonName: string) {
+	async function expectSyncControl(path: string, buttonName: string | RegExp) {
 		const queryReady = page.waitForResponse(
 			(response) =>
 				response.url().includes("/api/query") &&
@@ -112,7 +112,7 @@ test("manual sync controls are available on syncable surfaces", async ({
 		await expect(button).toBeVisible();
 	}
 
-	await expectSyncControl("/", "Sync timeline");
+	await expectSyncControl("/", /^Sync (For You|Following)$/);
 	await expectSyncControl("/dms", "Sync DMs");
 });
 

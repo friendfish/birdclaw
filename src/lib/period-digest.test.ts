@@ -189,10 +189,7 @@ describe("period digest", () => {
 			expect(forYou.counts.authored).toBe(0);
 			expect(forYou.counts.likes).toBe(0);
 			expect(forYou.counts.bookmarks).toBe(0);
-			// Demo seed data predates tweet_feed_edges and carries no feed tags,
-			// so a feed-scoped home query correctly finds nothing here; the
-			// positive "a tagged tweet is found" case is covered separately.
-			expect(forYou.counts.home).toBe(0);
+			expect(forYou.counts.home).toBeGreaterThan(0);
 		});
 
 		it("only returns home tweets tagged with the matching feed", () => {

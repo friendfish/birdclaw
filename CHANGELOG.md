@@ -1,16 +1,14 @@
 # CHANGELOG
 
-## 0.11.1 - Unreleased
+## 0.11.2 - Unreleased
 
 ### Added
 
 - Add editable prompt templates for Today, Analyse, and Discuss, with strict local Markdown storage, prompt-aware result caches, and isolated local-data Playgrounds for testing unsaved drafts.
-- Preserve explicit X archive deletions as source-attributed tweet, media, and quote tombstones, and retain observable X edit chains as portable revision records while hiding superseded bodies from active views.
 
 ### Changed
 
 - Reorder the default Today and Discuss prompt assembly relative to 0.11.0 so the fixed task instruction follows dynamic context and precedes editable guidance plus locked citation and structured-output rules; the resulting prompt hash change intentionally invalidates matching AI caches.
-- Merge archive and backup imports by default so incomplete snapshots never delete destination-only rows; use explicit `--restore` for exact replacement.
 - Define `live.dataSource` and `BIRDCLAW_LIVE_DATA_SOURCE` as the global live read/sync controls, retaining the mentions config and environment keys as lower-precedence compatibility aliases.
 - Clarify that `actions.transport` controls compose and policy-backed moderation writes; Bird mode rejects xurl-only post, reply, and DM compose operations, while `dms accept`, `dms reject`, and `dms block` remain Bird-only and do not use that preference. Disabled xurl status omits unprobed installation state.
 - Document explicit live-read and xurl-fallback overrides, including `profiles replies --mode xurl` and `--[no-]xurl-fallback` for DM search and identity lookup.
@@ -18,6 +16,27 @@
 ### Fixed
 
 - Preserve existing Bird message-request classifications during xurl/auto DM sync, narrow mention-thread `auto` reads to xurl, and retain configuration parse errors instead of rewriting them as mode errors.
+
+## 0.11.1 - 2026-07-27
+
+### Highlights
+
+- Preserve explicit X archive deletions and observable edit history as portable, source-attributed records without exposing deleted or superseded tweet bodies in active views.
+- Merge archive and backup imports by default so an incomplete snapshot cannot erase destination-only data; exact replacement remains available through explicit `--restore` mode.
+
+### Added
+
+- Preserve explicit X archive deletions as source-attributed tweet, media, and quote tombstones.
+- Retain observable X edit chains as portable revision records while hiding superseded bodies from active views.
+
+### Changed
+
+- Merge archive and backup imports by default so incomplete snapshots never delete destination-only rows; use explicit `--restore` for exact replacement.
+
+### Dependencies and maintenance
+
+- Refresh compatible dependency resolutions, including React 19.2.8, Mapbox GL 3.27.0, Playwright 1.62.0, and Oxlint 1.75.0, without widening declared ranges.
+- Update the remaining pinned test/build tools and override the MCP SDK's Hono server dependency to the patched 2.x line.
 
 ## 0.11.0 - 2026-07-18
 

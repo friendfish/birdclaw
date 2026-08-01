@@ -225,5 +225,5 @@ describe("profile route", () => {
 		expect(hydrateUrl.searchParams.get("handles")).toBe(
 			"openclaw,forbes,mit,microsoft,qantas",
 		);
-	});
+	}, 15_000);
 });

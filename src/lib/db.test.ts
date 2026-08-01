@@ -113,6 +113,21 @@ describe("database init", () => {
 				)
 				.get(),
 		).toEqual({ count: 3 });
+		expect(
+			seededDb
+				.prepare(
+					"select tweet_id, feed from tweet_feed_edges order by tweet_id, feed",
+				)
+				.all(),
+		).toEqual([
+			{ tweet_id: "tweet_001", feed: "following" },
+			{ tweet_id: "tweet_001", feed: "for_you" },
+			{ tweet_id: "tweet_002", feed: "following" },
+			{ tweet_id: "tweet_002", feed: "for_you" },
+			{ tweet_id: "tweet_003", feed: "following" },
+			{ tweet_id: "tweet_003", feed: "for_you" },
+			{ tweet_id: "tweet_006", feed: "following" },
+		]);
 	});
 
 	it("refuses to mix demo data into a partially populated database", () => {

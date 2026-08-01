@@ -612,6 +612,7 @@ describe("birdclaw queries", () => {
 	it("filters home timeline items by feed membership", () => {
 		setupTempHome();
 		const db = getNativeDb();
+		db.exec("delete from tweet_feed_edges");
 
 		insertTestTweet(db, {
 			id: "tweet_following_only",
@@ -693,6 +694,7 @@ describe("birdclaw queries", () => {
 	it("finds every match of a sparse, older feed across full pagination", () => {
 		setupTempHome();
 		const db = getNativeDb();
+		db.exec("delete from tweet_feed_edges");
 
 		const insertTweet = db.prepare(`
 			insert into tweets (id, author_profile_id, text, created_at, is_replied, entities_json, media_json)
@@ -2135,6 +2137,7 @@ describe("birdclaw queries", () => {
 
 	it("returns envelope stats, archives, accounts, and transport", async () => {
 		setupTempHome();
+		getNativeDb().exec("delete from tweet_feed_edges");
 
 		const envelope = await getQueryEnvelope();
 
@@ -2189,6 +2192,7 @@ describe("birdclaw queries", () => {
 	it("counts home items per feed independently of the total", async () => {
 		setupTempHome();
 		const db = getNativeDb();
+		db.exec("delete from tweet_feed_edges");
 
 		insertTestTweet(db, {
 			id: "tweet_env_following",
@@ -2226,6 +2230,7 @@ describe("birdclaw queries", () => {
 	it("excludes feed-tagged tweets that never joined the home timeline", async () => {
 		setupTempHome();
 		const db = getNativeDb();
+		db.exec("delete from tweet_feed_edges");
 
 		// A mention-only tweet that happens to carry a (historical/stray) feed
 		// tag but was never part of the home timeline sync.
