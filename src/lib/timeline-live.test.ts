@@ -212,6 +212,9 @@ describe("live home timeline sync", () => {
 	it("stores account-scoped home timeline edges without moving canonical tweets", async () => {
 		makeTempHome();
 		const db = getNativeDb();
+		db.prepare("delete from tweet_feed_edges where tweet_id = ?").run(
+			"tweet_001",
+		);
 		getAuthenticatedBirdAccountMock.mockResolvedValueOnce({
 			username: "birdclaw_lab",
 		});

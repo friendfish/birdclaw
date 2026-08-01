@@ -85,6 +85,10 @@ export function seedDemoData(db: Database): DemoSeedResult {
 	    source, raw_json, updated_at
 	  ) values (?, ?, ?, ?, ?, 1, 'demo', '{}', ?)
 	`);
+	const insertTweetFeedEdge = db.prepare(`
+	  insert into tweet_feed_edges (tweet_id, feed, first_seen_at)
+	  values (?, ?, ?)
+	`);
 	const insertTweetCollection = db.prepare(`
 	  insert into tweet_collections (
 	    account_id, tweet_id, kind, collected_at, source, raw_json, updated_at
@@ -228,6 +232,7 @@ export function seedDemoData(db: Database): DemoSeedResult {
 			accountId: "acct_primary",
 			authorProfileId: "profile_sam",
 			kind: "home",
+			feeds: ["following", "for_you"],
 			text: "We need more software that defaults to local-first, legible state, and repairable failure modes. https://t.co/local",
 			createdAt: linkMinutesAgo(18),
 			isReplied: 0,
@@ -257,6 +262,7 @@ export function seedDemoData(db: Database): DemoSeedResult {
 			accountId: "acct_primary",
 			authorProfileId: "profile_des",
 			kind: "home",
+			feeds: ["following", "for_you"],
 			text: "@sam The best product teams spend more time pruning scope than adding it.",
 			createdAt: isoMinutesAgo(42),
 			isReplied: 1,
@@ -283,6 +289,7 @@ export function seedDemoData(db: Database): DemoSeedResult {
 			accountId: "acct_primary",
 			authorProfileId: "profile_ava",
 			kind: "home",
+			feeds: ["following", "for_you"],
 			text: "New developer-platform pricing survey out today. Early signal: teams want fewer layers, not more. https://t.co/survey https://t.co/video",
 			createdAt: linkMinutesAgo(91),
 			isReplied: 0,
@@ -331,6 +338,7 @@ export function seedDemoData(db: Database): DemoSeedResult {
 			accountId: "acct_primary",
 			authorProfileId: "profile_amelia",
 			kind: "mention",
+			feeds: [],
 			text: "@steipete curious how you decide when a local tool deserves a real sync engine versus manual import/export.",
 			createdAt: isoMinutesAgo(12),
 			isReplied: 0,
@@ -357,6 +365,7 @@ export function seedDemoData(db: Database): DemoSeedResult {
 			accountId: "acct_primary",
 			authorProfileId: "profile_noah",
 			kind: "mention",
+			feeds: [],
 			text: "@steipete your archive-first note resonated. I still want a path for people with zero clean export data.",
 			createdAt: isoMinutesAgo(54),
 			isReplied: 1,
@@ -383,6 +392,7 @@ export function seedDemoData(db: Database): DemoSeedResult {
 			accountId: "acct_studio",
 			authorProfileId: "profile_sam",
 			kind: "home",
+			feeds: ["following"],
 			text: "Agents need retrieval surfaces with small, stable contracts. Big blobs are not a strategy.",
 			createdAt: isoMinutesAgo(77),
 			isReplied: 0,
@@ -647,6 +657,9 @@ export function seedDemoData(db: Database): DemoSeedResult {
 				tweet.createdAt,
 				tweet.createdAt,
 			);
+			for (const feed of tweet.feeds) {
+				insertTweetFeedEdge.run(tweet.id, feed, tweet.createdAt);
+			}
 			if (tweet.bookmarked) {
 				insertTweetCollection.run(
 					tweet.accountId,
