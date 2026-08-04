@@ -1854,6 +1854,64 @@ describe("today route", () => {
 			).toBeNull();
 		});
 
+		it("shows a batch failure when the scheduled run has no source steps", async () => {
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({
+						ok: true,
+						runningPeriods: [],
+						activeRuns: [],
+						lastRuns: [
+							{
+								period: "yesterday",
+								runDate: "2026-07-29",
+								status: "failed",
+								finishedAt: "2026-07-30T00:02:00.000Z",
+								error: "Invalid Bird credential file",
+								sources: {},
+							},
+						],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					return jsonResponse({ ok: true, dates: [] });
+				}
+				if (url.pathname === "/api/digest-archive-entry") {
+					return jsonResponse({ ok: true, result: null });
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(
+				<TodayRoute
+					searchState={{
+						period: "yesterday",
+						includeDms: false,
+						contentSource: "for_you",
+						archiveDate: "",
+					}}
+				/>,
+			);
+
+			expect(
+				await screen.findByText(
+					"Scheduled digest failed: Invalid Bird credential file",
+				),
+			).toBeInTheDocument();
+			expect(
+				screen.queryByText(/No archived .*digest for this date/i),
+			).toBeNull();
+		});
+
 		it("exposes the digest generation timestamp on screen", async () => {
 			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 				const url = new URL(String(input), "http://localhost");

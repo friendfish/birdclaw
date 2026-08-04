@@ -473,21 +473,23 @@ function runOneContentSourceEffect({
 			if (onAttempt) {
 				yield* tryPromise(() => onAttempt(attempts));
 			}
-			const signal = AbortSignal.timeout(modelTimeoutMs);
-			const result = yield* tryPromise(() =>
-				streamPeriodDigest({
-					period,
-					contentSource,
-					account,
-					includeDms,
-					refresh: true,
-					liveSync,
-					language,
-					since,
-					until,
-					signal,
-				}),
-			);
+			const timeoutSignal = AbortSignal.timeout(modelTimeoutMs);
+			const result = yield* Effect.tryPromise({
+				try: (interruptSignal) =>
+					streamPeriodDigest({
+						period,
+						contentSource,
+						account,
+						includeDms,
+						refresh: true,
+						liveSync,
+						language,
+						since,
+						until,
+						signal: AbortSignal.any([interruptSignal, timeoutSignal]),
+					}),
+				catch: (error) => error,
+			});
 			const { markdownPath, jsonPath } = resolveDigestArchivePaths({
 				archiveDir,
 				runDate,
@@ -1234,6 +1236,7 @@ export interface DigestArchiveFinalRun {
 	runDate: string;
 	status: DigestArchiveBatchStatus;
 	finishedAt: string;
+	error?: string;
 	sources: Partial<
 		Record<
 			PeriodDigestContentSource,
@@ -1366,6 +1369,7 @@ async function readLatestDigestArchiveRuns() {
 				runDate: entry.runDate,
 				status: entry.status ?? (entry.ok ? "ok" : "failed"),
 				finishedAt: entry.finishedAt,
+				...(entry.error ? { error: sensitiveErrorMessage(entry.error) } : {}),
 				sources: Object.fromEntries(
 					entry.steps.map((step) => [
 						step.contentSource,

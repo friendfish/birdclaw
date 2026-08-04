@@ -36,6 +36,7 @@ const digestArchiveStatusResponseSchema = z.object({
 				runDate: z.string(),
 				status: z.enum(["ok", "degraded", "failed"]),
 				finishedAt: z.string(),
+				error: z.string().optional(),
 				sources: z.record(z.string(), sourceRunSchema).default({}),
 			}),
 		)

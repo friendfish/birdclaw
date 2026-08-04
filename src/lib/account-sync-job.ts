@@ -362,6 +362,8 @@ export async function runAccountSyncJob({
 	const releaseLock = await acquireScheduledJobLock(
 		resolvedLockPath,
 		DEFAULT_LOCK_STALE_MS,
+		{},
+		DEFAULT_LOCK_STALE_MS,
 	);
 	if (!releaseLock) {
 		const entry: AccountSyncAuditEntry = {

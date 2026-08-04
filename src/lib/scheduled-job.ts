@@ -118,10 +118,14 @@ async function tryCreateScheduledJobLock(
 	return release;
 }
 
-async function acquireReclamationLease(reclaimPath: string, staleMs: number) {
+async function acquireReclamationLease(
+	reclaimPath: string,
+	staleMs: number,
+	maxAgeMs: number,
+) {
 	const acquired = await tryCreateScheduledJobLock(reclaimPath, {});
 	if (acquired) return acquired;
-	if (await peekScheduledJobLockMetadata(reclaimPath, staleMs)) {
+	if (await peekScheduledJobLockMetadata(reclaimPath, staleMs, maxAgeMs)) {
 		return undefined;
 	}
 
@@ -131,6 +135,7 @@ async function acquireReclamationLease(reclaimPath: string, staleMs: number) {
 	const releaseChild = await acquireReclamationLease(
 		`${reclaimPath}.reclaim`,
 		staleMs,
+		maxAgeMs,
 	);
 	if (!releaseChild) return undefined;
 	let releaseAncestor: ScheduledJobLockRelease | undefined;
@@ -151,7 +156,7 @@ async function acquireReclamationLease(reclaimPath: string, staleMs: number) {
 			});
 		if (
 			ancestorExists &&
-			(await peekScheduledJobLockMetadata(reclaimPath, staleMs))
+			(await peekScheduledJobLockMetadata(reclaimPath, staleMs, maxAgeMs))
 		) {
 			return undefined;
 		}
@@ -202,6 +207,7 @@ export async function acquireScheduledJobLock(
 	lockPath: string,
 	staleMs: number,
 	metadata: Pick<ScheduledJobLockMetadata, "runDate" | "totalSources"> = {},
+	maxAgeMs = DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS,
 ): Promise<ScheduledJobLockRelease | undefined> {
 	await fs.mkdir(path.dirname(lockPath), { recursive: true });
 	const acquired = await tryCreateScheduledJobLock(lockPath, metadata);
@@ -210,15 +216,22 @@ export async function acquireScheduledJobLock(
 	const existingMetadata = await peekScheduledJobLockMetadata(
 		lockPath,
 		staleMs,
+		maxAgeMs,
 	);
 	if (existingMetadata) return undefined;
 
 	const reclaimPath = `${lockPath}.reclaim`;
-	const releaseReclaim = await acquireReclamationLease(reclaimPath, staleMs);
+	const releaseReclaim = await acquireReclamationLease(
+		reclaimPath,
+		staleMs,
+		maxAgeMs,
+	);
 	if (!releaseReclaim) return undefined;
 	try {
 		// Another contender may have reclaimed the lock before this lease was won.
-		if (await peekScheduledJobLockMetadata(lockPath, staleMs)) return undefined;
+		if (await peekScheduledJobLockMetadata(lockPath, staleMs, maxAgeMs)) {
+			return undefined;
+		}
 		await fs.rm(lockPath, { force: true });
 		return await tryCreateScheduledJobLock(lockPath, metadata);
 	} finally {
@@ -230,9 +243,10 @@ export function acquireScheduledJobLockEffect(
 	lockPath: string,
 	staleMs: number,
 	metadata: Pick<ScheduledJobLockMetadata, "runDate" | "totalSources"> = {},
+	maxAgeMs = DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS,
 ): Effect.Effect<(() => Effect.Effect<void>) | undefined, unknown> {
 	return tryPromise(() =>
-		acquireScheduledJobLock(lockPath, staleMs, metadata),
+		acquireScheduledJobLock(lockPath, staleMs, metadata, maxAgeMs),
 	).pipe(
 		Effect.map((release) =>
 			release

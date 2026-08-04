@@ -29,6 +29,10 @@ birdclaw --json jobs install-account-launchd --account acct_openclaw --program /
 
 The default interval is 1,800 seconds (30 minutes). Use `--steps timeline,mentions,dms` for a narrower job, or `--env-path ~/.config/bird/openclaw.env` when launchd needs account cookies. Pass `--allow-bird-account` only when the sourced cookies match `--account`; without it, Bird-backed timeline, mentions, and `--mode bird` DM steps refuse non-default account writes.
 
+The account-sync lock has a one-hour absolute lifetime. A stuck run therefore
+cannot block more than two normal 30-minute schedule windows, even if its process
+is still alive.
+
 ## `jobs sync-bookmarks`
 
 ```bash
@@ -155,6 +159,10 @@ the current host keeps its lock until heartbeats resume. A dead local PID is
 reclaimed immediately, and an expired remote or legacy lock is reclaimed by its
 stale interval. Losing ownership during a run aborts the remaining work and writes
 a failed audit entry.
+
+Batch failures that occur before any content source starts, including credential
+file and lock-ownership failures, are surfaced on the Today page from the latest
+scheduled run instead of appearing as a missing archive.
 
 ## Useful checks
 

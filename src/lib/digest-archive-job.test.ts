@@ -200,6 +200,36 @@ describe("digest-archive-job", () => {
 		}
 	});
 
+	it("exposes a sanitized batch failure from the latest audit run", async () => {
+		const auditPath = getDefaultDigestArchiveAuditLogPath();
+		mkdirSync(path.dirname(auditPath), { recursive: true });
+		writeFileSync(
+			auditPath,
+			`${JSON.stringify({
+				job: "digest-archive",
+				period: "today",
+				ok: false,
+				status: "failed",
+				runDate: "2026-08-04",
+				finishedAt: "2026-08-04T01:00:00.000Z",
+				steps: [],
+				error: "credential failed AUTH_TOKEN=secret-value",
+			})}\n`,
+			"utf8",
+		);
+
+		const status = await getDigestArchiveStatus();
+
+		expect(status.lastRuns).toEqual([
+			expect.objectContaining({
+				period: "today",
+				status: "failed",
+				error: "credential failed AUTH_TOKEN=[REDACTED]",
+				sources: {},
+			}),
+		]);
+	});
+
 	it("pre-syncs once before generating every source from local data", async () => {
 		const order: string[] = [];
 		preSyncEffectMock.mockImplementation(() => {
@@ -811,11 +841,20 @@ describe("digest-archive-job", () => {
 		const archiveDir = tempArchiveDir();
 		const lockPath = path.join(archiveDir, "digest.lock");
 		const logPath = path.join(archiveDir, "audit.jsonl");
-		streamPeriodDigestMock.mockImplementation(async () => {
-			rmSync(lockPath, { force: true });
-			await new Promise((resolve) => setTimeout(resolve, 50));
-			return digestResult();
-		});
+		let requestSignal: AbortSignal | undefined;
+		streamPeriodDigestMock.mockImplementation(
+			(options: { signal: AbortSignal }) => {
+				requestSignal = options.signal;
+				rmSync(lockPath, { force: true });
+				return new Promise((_resolve, reject) => {
+					options.signal.addEventListener(
+						"abort",
+						() => reject(new DOMException("aborted", "AbortError")),
+						{ once: true },
+					);
+				});
+			},
+		);
 
 		await expect(
 			runEffectPromise(
@@ -842,6 +881,7 @@ describe("digest-archive-job", () => {
 			error: "Scheduled digest lock ownership was lost",
 			steps: [],
 		});
+		await vi.waitFor(() => expect(requestSignal?.aborted).toBe(true));
 	});
 
 	it("continues to read legacy schema v1 archive files", async () => {

@@ -39,7 +39,7 @@ endpoint therefore tests the saved pair, not an inherited pair.
 The digest lock is a renewable lease rather than a one-time PID marker. Its
 validity is evaluated as follows:
 
-- `startedAt` must be younger than the six-hour absolute maximum;
+- `startedAt` must be younger than the job-specific absolute maximum;
 - a current-host owner remains active while its PID is alive, including across a
   system sleep that pauses the file heartbeat;
 - a dead current-host PID is stale immediately;
@@ -48,12 +48,13 @@ validity is evaluated as follows:
 
 The existing digest run-state heartbeat also refreshes the owned lock every 15
 seconds. Refresh and release operations verify `ownerId`; a previous owner cannot
-refresh a replacement lock. The six-hour cap prevents a reused PID or a runaway
-heartbeat from preserving a lock indefinitely.
+refresh a replacement lock. The digest's six-hour cap prevents a reused PID or a
+runaway heartbeat from preserving a lock indefinitely.
 
 Other scheduled jobs retain their configured stale intervals for remote and legacy
 owners, and now also reclaim a dead current-host PID immediately. A live
-current-host owner remains bounded by the six-hour absolute maximum.
+current-host account-sync owner is bounded by its one-hour maximum; bookmark-sync
+and digest owners retain the six-hour maximum.
 
 ## Status Polling
 
@@ -67,9 +68,11 @@ four periods has been found.
 - A missing strict credential file produces no explicit Bird override, so the job
   can continue through the existing degraded/local-data path and use the file on
   a later run after Config creates it. Invalid contents and file I/O failures are
-  reported distinctly and written to the digest audit log before the job fails.
+  reported distinctly, written to the digest audit log, and exposed as a sanitized
+  batch-level error in the Today UI before the job fails.
 - A lock heartbeat that reports lost ownership interrupts the digest workflow and
-  writes a failed audit entry. Run-state cleanup remains owner-checked.
+  aborts the in-flight model request before writing a failed audit entry. Run-state
+  cleanup remains owner-checked.
 - Audit stat/read failures return an empty snapshot and do not retain stale cached
   data for a missing file.
 
@@ -80,6 +83,7 @@ four periods has been found.
 - CLI and Config schedule tests cover the new option wiring.
 - Credential tests prove managed-over-process and explicit-over-managed order.
 - Lock tests prove heartbeat renewal, sleep-safe live-PID retention, dead-PID
-  reclamation, absolute expiry, owner-safe refresh, and lost-lock interruption.
-- Status tests prove unchanged audit logs are read once and changed logs invalidate
-  the cache.
+  reclamation, per-job absolute expiry, owner-safe refresh, lost-lock interruption,
+  and in-flight request cancellation.
+- Status tests prove unchanged audit logs are read once, changed logs invalidate
+  the cache, and sanitized batch failures reach the Today UI.

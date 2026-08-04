@@ -631,9 +631,11 @@ export function TodayRouteView({
 		? latestArchiveRun?.runDate === archiveDate
 		: !archived.effectiveDate ||
 			latestArchiveRun?.runDate === archived.effectiveDate;
-	const scheduledSourceError =
-		!result && showingLatestArchiveRun && latestSourceRun?.state === "failed"
-			? latestSourceRun.error || "unknown error"
+	const scheduledRunError =
+		!result && showingLatestArchiveRun
+			? latestSourceRun?.state === "failed"
+				? latestSourceRun.error || "unknown error"
+				: latestArchiveRun?.error || null
 			: null;
 	useEffect(() => {
 		const root = document.documentElement;
@@ -921,8 +923,8 @@ export function TodayRouteView({
 								? isArchivedPeriod
 									? "No digest was generated. Retry to load the archive again."
 									: "No digest was generated. Retry to start a new run."
-								: scheduledSourceError
-									? `Scheduled digest failed: ${scheduledSourceError}`
+								: scheduledRunError
+									? `Scheduled digest failed: ${scheduledRunError}`
 									: useArchivedResult
 										? archived.neverArchived
 											? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
