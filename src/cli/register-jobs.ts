@@ -13,6 +13,8 @@ import {
 	parseDigestContentSources,
 	runDigestArchiveJob,
 } from "#/lib/digest-archive-job";
+import { readBirdCredentialsFile } from "#/lib/bird-credentials";
+import { resolveUserPath } from "#/lib/launchd";
 import type { PeriodDigestPreset } from "#/lib/period-digest";
 import { resolveLiveSyncMode } from "#/lib/live-transport-policy";
 import type { TimelineCollectionMode } from "#/lib/timeline-collections-live";
@@ -34,6 +36,22 @@ function parseOptionalJobMode(
 	mode: string | undefined,
 ): TimelineCollectionMode | undefined {
 	return mode === undefined ? undefined : resolveLiveSyncMode(mode);
+}
+
+function loadDigestCredentialEnvironment(credentialsPath: string) {
+	const resolvedPath = resolveUserPath(credentialsPath);
+	const credentials = readBirdCredentialsFile(resolvedPath);
+	if (!credentials) return () => {};
+	const previousAuthToken = process.env.AUTH_TOKEN;
+	const previousCt0 = process.env.CT0;
+	process.env.AUTH_TOKEN = credentials.authToken;
+	process.env.CT0 = credentials.ct0;
+	return () => {
+		if (previousAuthToken === undefined) delete process.env.AUTH_TOKEN;
+		else process.env.AUTH_TOKEN = previousAuthToken;
+		if (previousCt0 === undefined) delete process.env.CT0;
+		else process.env.CT0 = previousCt0;
+	};
 }
 
 export function registerJobCommands({ program, print }: CliCommandContext) {
@@ -221,26 +239,36 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			"--no-live-sync",
 			"Skip live X sync; summarize only what's already stored locally (for backfilling historical windows)",
 		)
+		.option("--env-path <path>", "Strict Bird credential env file")
+		.option("--env-file <path>", "Deprecated alias for --env-path")
 		.action(async (options) => {
 			const runDate = options.runDate
 				? new Date(`${options.runDate}T00:00:00`)
 				: undefined;
-			const result = await runDigestArchiveJob({
-				period: parsePeriod(options.period),
-				account: options.account,
-				includeDms: Boolean(options.includeDms),
-				contentSources: parseDigestContentSources(options.contentSources),
-				archiveDir: options.archiveDir,
-				retries: Number(options.retries),
-				retryDelayMs: Number(options.retryDelaySeconds) * 1000,
-				logPath: options.log,
-				since: options.since,
-				until: options.until,
-				liveSync: Boolean(options.liveSync),
-				...(runDate ? { now: () => runDate } : {}),
-			});
-			print(result, true);
-			if (!result.ok) process.exitCode = 1;
+			const credentialPath = options.envPath ?? options.envFile;
+			const restoreEnvironment = credentialPath
+				? loadDigestCredentialEnvironment(credentialPath)
+				: () => {};
+			try {
+				const result = await runDigestArchiveJob({
+					period: parsePeriod(options.period),
+					account: options.account,
+					includeDms: Boolean(options.includeDms),
+					contentSources: parseDigestContentSources(options.contentSources),
+					archiveDir: options.archiveDir,
+					retries: Number(options.retries),
+					retryDelayMs: Number(options.retryDelaySeconds) * 1000,
+					logPath: options.log,
+					since: options.since,
+					until: options.until,
+					liveSync: Boolean(options.liveSync),
+					...(runDate ? { now: () => runDate } : {}),
+				});
+				print(result, true);
+				if (!result.ok) process.exitCode = 1;
+			} finally {
+				restoreEnvironment();
+			}
 		});
 
 	jobsCommand
@@ -259,7 +287,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.option("--retries <n>", "Retries per content source", "2")
 		.option("--retry-delay-seconds <seconds>", "Delay between retries", "120")
 		.option("--log <path>", "Audit JSONL path")
-		.option("--env-path <path>", "Shell env file to source before running")
+		.option("--env-path <path>", "Strict Bird credential env file")
 		.option("--env-file <path>", "Deprecated alias for --env-path")
 		.option("--stdout <path>", "launchd stdout path")
 		.option("--stderr <path>", "launchd stderr path")
@@ -278,6 +306,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				retries: Number(options.retries),
 				retryDelaySeconds: Number(options.retryDelaySeconds),
 				logPath: options.log,
+				envFile: options.envPath ?? options.envFile,
 			};
 			const installOptions = {
 				launchAgentsDir: options.launchAgentsDir,
@@ -305,7 +334,6 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 					options.weekday === undefined ? undefined : Number(options.weekday),
 				label: options.label,
 				program: options.program,
-				envFile: options.envPath ?? options.envFile,
 				stdoutPath: options.stdout,
 				stderrPath: options.stderr,
 				...installOptions,

@@ -185,14 +185,15 @@ describe("digest-archive-job", () => {
 
 		expect(order).toEqual(["pre-sync", "all", "following", "for_you"]);
 		expect(preSyncEffectMock).toHaveBeenCalledTimes(1);
-		expect(preSyncEffectMock).toHaveBeenCalledWith({
+			expect(preSyncEffectMock).toHaveBeenCalledWith({
 			period: "yesterday",
 			contentSources: ["all", "following", "for_you"],
 			account: undefined,
 			since: undefined,
-			until: undefined,
-			liveSync: true,
-		});
+				until: undefined,
+				liveSync: true,
+				nonInteractiveBird: true,
+			});
 		expect(streamPeriodDigestMock).toHaveBeenCalledTimes(3);
 		for (const [call] of streamPeriodDigestMock.mock.calls) {
 			expect(call).toEqual(expect.objectContaining({ liveSync: false }));
@@ -908,9 +909,10 @@ describe("digest-archive-job", () => {
 			{ since: undefined, until: undefined, liveSync: false },
 		]);
 		expect(preSyncEffectMock).toHaveBeenCalledWith(
-			expect.objectContaining({
-				liveSync: true,
-				since: undefined,
+				expect.objectContaining({
+					liveSync: true,
+					nonInteractiveBird: true,
+					since: undefined,
 				until: undefined,
 			}),
 		);
@@ -931,5 +933,28 @@ describe("digest-archive-job", () => {
 			hour: 8,
 			minute: 45,
 		});
+	});
+
+	it("passes the credential file to BirdClaw without a shell wrapper or token arguments", () => {
+		const agent = buildDigestArchiveLaunchAgentPlist({
+			period: "today",
+			envFile: "/tmp/bird.env",
+		});
+
+		expect(agent.programArguments).toEqual(
+			expect.arrayContaining([
+				"jobs",
+				"run-digest-archive",
+				"--env-path",
+				"/tmp/bird.env",
+			]),
+		);
+		expect(agent.programArguments).not.toContain("/bin/bash");
+		expect(agent.programArguments).not.toContain("-lc");
+		expect(JSON.stringify(agent.programArguments)).not.toMatch(
+			/AUTH_TOKEN|CT0/u,
+		);
+		expect(agent.plist).not.toContain("/bin/bash");
+		expect(agent.envFile).toBe("/tmp/bird.env");
 	});
 });

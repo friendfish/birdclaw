@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 	syncHomeTimelineEffect: vi.fn(),
 	syncMentionsEffect: vi.fn(),
 	syncMentionThreadsEffect: vi.fn(),
+	readBirdCredentials: vi.fn(),
 }));
 
 vi.mock("./config", () => ({
@@ -37,6 +38,10 @@ vi.mock("./mentions-live", () => ({
 vi.mock("./mention-threads-live", () => ({
 	syncMentionThreadsEffect: (...args: unknown[]) =>
 		mocks.syncMentionThreadsEffect(...args),
+}));
+
+vi.mock("./bird-credentials", () => ({
+	readBirdCredentials: () => mocks.readBirdCredentials(),
 }));
 
 import { runDigestArchivePreSyncEffect } from "./digest-archive-sync";
@@ -91,6 +96,10 @@ describe("digest archive pre-sync", () => {
 				partial: false,
 			}),
 		);
+		mocks.readBirdCredentials.mockReturnValue({
+			authToken: "managed-auth",
+			ct0: "managed-ct0",
+		});
 	});
 
 	afterEach(() => {
@@ -321,6 +330,51 @@ describe("digest archive pre-sync", () => {
 		expect(mocks.syncHomeTimelineEffect).not.toHaveBeenCalled();
 		expect(mocks.syncMentionsEffect).not.toHaveBeenCalled();
 		expect(mocks.syncMentionThreadsEffect).not.toHaveBeenCalled();
+	});
+
+	it("degrades every Bird step without invoking live fetches when non-interactive credentials are missing", async () => {
+		mocks.readBirdCredentials.mockReturnValue(null);
+
+		const result = await runEffectPromise(
+			runDigestArchivePreSyncEffect({
+				period: "today",
+				contentSources: ["all", "following", "for_you"],
+				liveSync: true,
+				nonInteractiveBird: true,
+			}),
+		);
+
+		expect(result.status).toBe("degraded");
+		expect(result.steps).toEqual([
+			{
+				operation: "following",
+				status: "degraded",
+				transport: "bird",
+				error: "X credentials are not configured for non-interactive Bird sync",
+			},
+			{
+				operation: "for_you",
+				status: "degraded",
+				transport: "bird",
+				error: "X credentials are not configured for non-interactive Bird sync",
+			},
+			{
+				operation: "mentions",
+				status: "degraded",
+				transport: "bird",
+				error: "X credentials are not configured for non-interactive Bird sync",
+			},
+			{
+				operation: "mention_threads",
+				status: "degraded",
+				transport: "bird",
+				error: "X credentials are not configured for non-interactive Bird sync",
+			},
+		]);
+		expect(mocks.syncHomeTimelineEffect).not.toHaveBeenCalled();
+		expect(mocks.syncMentionsEffect).not.toHaveBeenCalled();
+		expect(mocks.syncMentionThreadsEffect).not.toHaveBeenCalled();
+		expect(mocks.collectPeriodDigestContext).not.toHaveBeenCalled();
 	});
 
 	it("records a failed operation as degraded and continues", async () => {

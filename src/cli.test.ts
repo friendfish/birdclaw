@@ -1,5 +1,12 @@
 // @vitest-environment node
-import { readFileSync } from "node:fs";
+import {
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ensureBirdclawDirsMock = vi.fn();
@@ -76,6 +83,9 @@ const installAccountSyncLaunchAgentMock = vi.hoisted(() => vi.fn());
 const parseAccountSyncStepsMock = vi.hoisted(() => vi.fn());
 const runBookmarkSyncJobMock = vi.hoisted(() => vi.fn());
 const installBookmarkSyncLaunchAgentMock = vi.hoisted(() => vi.fn());
+const runDigestArchiveJobMock = vi.hoisted(() => vi.fn());
+const installDigestArchiveLaunchAgentMock = vi.hoisted(() => vi.fn());
+const installAllDigestArchiveLaunchAgentsMock = vi.hoisted(() => vi.fn());
 const syncHomeTimelineMock = vi.hoisted(() => vi.fn());
 const syncXListsMock = vi.hoisted(() => vi.fn());
 const exportBackupMock = vi.fn();
@@ -132,6 +142,19 @@ vi.mock("#/lib/bookmark-sync-job", () => ({
 	installBookmarkSyncLaunchAgent: (...args: unknown[]) =>
 		installBookmarkSyncLaunchAgentMock(...args),
 }));
+
+vi.mock("#/lib/digest-archive-job", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("#/lib/digest-archive-job")>();
+	return {
+		...actual,
+		runDigestArchiveJob: (...args: unknown[]) =>
+			runDigestArchiveJobMock(...args),
+		installDigestArchiveLaunchAgent: (...args: unknown[]) =>
+			installDigestArchiveLaunchAgentMock(...args),
+		installAllDigestArchiveLaunchAgents: (...args: unknown[]) =>
+			installAllDigestArchiveLaunchAgentsMock(...args),
+	};
+});
 
 vi.mock("#/lib/db", () => ({
 	closeDatabase: vi.fn(),
@@ -441,6 +464,9 @@ describe("cli", () => {
 		parseAccountSyncStepsMock.mockReset();
 		runBookmarkSyncJobMock.mockReset();
 		installBookmarkSyncLaunchAgentMock.mockReset();
+		runDigestArchiveJobMock.mockReset();
+		installDigestArchiveLaunchAgentMock.mockReset();
+		installAllDigestArchiveLaunchAgentsMock.mockReset();
 		syncHomeTimelineMock.mockReset();
 		syncXListsMock.mockReset();
 		exportBackupMock.mockReset();
@@ -712,6 +738,9 @@ describe("cli", () => {
 		parseAccountSyncStepsMock.mockReturnValue(undefined);
 		runBookmarkSyncJobMock.mockResolvedValue({ ok: true });
 		installBookmarkSyncLaunchAgentMock.mockResolvedValue({ ok: true });
+		runDigestArchiveJobMock.mockResolvedValue({ ok: true });
+		installDigestArchiveLaunchAgentMock.mockResolvedValue({ ok: true });
+		installAllDigestArchiveLaunchAgentsMock.mockResolvedValue({});
 		syncHomeTimelineMock.mockResolvedValue({
 			ok: true,
 			source: "bird",
@@ -841,6 +870,95 @@ describe("cli", () => {
 			expect(installBookmarkSyncLaunchAgentMock).toHaveBeenLastCalledWith(
 				expect.objectContaining({ mode }),
 			);
+		}
+	});
+
+	it("passes one credential path to all four digest LaunchAgents", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"install-digest-archive-launchd",
+			"--period",
+			"all",
+			"--env-path",
+			"/tmp/bird.env",
+			"--no-load",
+		]);
+
+		expect(installAllDigestArchiveLaunchAgentsMock).toHaveBeenCalledWith(
+			{
+				today: expect.objectContaining({ envFile: "/tmp/bird.env" }),
+				"24h": expect.objectContaining({ envFile: "/tmp/bird.env" }),
+				yesterday: expect.objectContaining({ envFile: "/tmp/bird.env" }),
+				week: expect.objectContaining({ envFile: "/tmp/bird.env" }),
+			},
+			{ launchAgentsDir: undefined, load: false },
+		);
+	});
+
+	it("strictly loads a digest credential file before running the job", async () => {
+		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-cli-env-"));
+		const validPath = path.join(tempRoot, "bird.env");
+		const invalidPath = path.join(tempRoot, "invalid.env");
+		writeFileSync(validPath, "AUTH_TOKEN=cli-auth\nCT0=cli-ct0\n", "utf8");
+		writeFileSync(
+			invalidPath,
+			"AUTH_TOKEN=cli-auth\nCT0=cli-ct0\nEXTRA=bad\n",
+			"utf8",
+		);
+		const originalAuthToken = process.env.AUTH_TOKEN;
+		const originalCt0 = process.env.CT0;
+		const environmentsDuringRun: NodeJS.ProcessEnv[] = [];
+		process.env.AUTH_TOKEN = "existing-auth";
+		process.env.CT0 = "existing-ct0";
+		runDigestArchiveJobMock.mockImplementation(async () => {
+			environmentsDuringRun.push({ ...process.env });
+			return { ok: true };
+		});
+
+		try {
+			const { runCli } = await loadCli();
+			await runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"run-digest-archive",
+				"--period",
+				"today",
+				"--env-path",
+				validPath,
+			]);
+			expect(environmentsDuringRun[0]).toMatchObject({
+				AUTH_TOKEN: "cli-auth",
+				CT0: "cli-ct0",
+			});
+			expect(process.env.AUTH_TOKEN).toBe("existing-auth");
+			expect(process.env.CT0).toBe("existing-ct0");
+
+			await runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"run-digest-archive",
+				"--period",
+				"today",
+				"--env-path",
+				invalidPath,
+			]);
+			expect(environmentsDuringRun[1]).toMatchObject({
+				AUTH_TOKEN: "existing-auth",
+				CT0: "existing-ct0",
+			});
+			expect(runDigestArchiveJobMock).toHaveBeenCalledTimes(2);
+		} finally {
+			if (originalAuthToken === undefined) delete process.env.AUTH_TOKEN;
+			else process.env.AUTH_TOKEN = originalAuthToken;
+			if (originalCt0 === undefined) delete process.env.CT0;
+			else process.env.CT0 = originalCt0;
+			rmSync(tempRoot, { recursive: true, force: true });
 		}
 	});
 

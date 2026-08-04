@@ -23,6 +23,7 @@ vi.mock("#/lib/digest-archive-job", async () => {
 
 import { Route } from "./digest-schedule";
 import { resetBirdclawPathsForTests } from "#/lib/config";
+import { getBirdCredentialsPath } from "#/lib/bird-credentials";
 
 const GET = getRouteHandler(Route, "GET");
 const POST = getRouteHandler(Route, "POST");
@@ -91,10 +92,27 @@ describe("api digest-schedule route", () => {
 		});
 
 		expect(installAllDigestArchiveLaunchAgentsEffectMock).toHaveBeenCalledWith({
-			today: { hour: 9, minute: 30 },
-			"24h": { hour: 10, minute: 0 },
-			yesterday: { hour: 2, minute: 0 },
-			week: { hour: 3, minute: 15, weekday: 1 },
+			today: {
+				hour: 9,
+				minute: 30,
+				envFile: getBirdCredentialsPath(),
+			},
+			"24h": {
+				hour: 10,
+				minute: 0,
+				envFile: getBirdCredentialsPath(),
+			},
+			yesterday: {
+				hour: 2,
+				minute: 0,
+				envFile: getBirdCredentialsPath(),
+			},
+			week: {
+				hour: 3,
+				minute: 15,
+				weekday: 1,
+				envFile: getBirdCredentialsPath(),
+			},
 		});
 		const body = await response.json();
 		expect(body).toMatchObject({

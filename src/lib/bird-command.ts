@@ -2,6 +2,7 @@ import type { ExecFileOptions } from "node:child_process";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { Data, Effect } from "effect";
+import { mergeBirdCredentialEnvironment } from "./bird-credentials";
 import { getBirdCommand } from "./config";
 import { runEffectPromise } from "./effect-runtime";
 import { runSubprocessEffect, SubprocessError } from "./subprocess";
@@ -112,12 +113,17 @@ export function runBirdCommandEffect(
 	return Effect.gen(function* () {
 		const birdCommand = yield* getBirdCommandEffect();
 		yield* assertBirdCommandAvailableEffect(birdCommand);
+		const environment = mergeBirdCredentialEnvironment(options?.env);
+		const redactValues = [environment.AUTH_TOKEN, environment.CT0].filter(
+			(value): value is string => Boolean(value),
+		);
 
 		return yield* runSubprocessEffect({
 			command: birdCommand,
 			args,
 			...(typeof options?.cwd === "string" ? { cwd: options.cwd } : {}),
-			...(options?.env ? { env: options.env } : {}),
+			env: environment,
+			redactValues,
 			...(typeof options?.timeout === "number"
 				? { timeoutMs: options.timeout }
 				: {}),

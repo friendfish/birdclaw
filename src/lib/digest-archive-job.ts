@@ -661,6 +661,7 @@ export function runDigestArchiveJobEffect(
 						since: options.since,
 						until: options.until,
 						liveSync: options.liveSync ?? true,
+						nonInteractiveBird: true,
 					});
 				yield* tryPromise(() =>
 					updateDigestArchiveRunState(statePath, stateOwnerId, (state) => ({
@@ -829,7 +830,8 @@ function buildProgramArguments({
 	if (retryDelaySeconds !== undefined) {
 		args.push("--retry-delay-seconds", String(retryDelaySeconds));
 	}
-	return buildLaunchProgramArguments({ program, args, envFile });
+	if (envFile) args.push("--env-path", resolveUserPath(envFile));
+	return buildLaunchProgramArguments({ program, args });
 }
 
 export function buildDigestArchiveLaunchAgentPlist(

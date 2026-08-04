@@ -66,8 +66,14 @@ function parseCredentials(content: string): BirdCredentials | null {
 }
 
 export function readBirdCredentials(): BirdCredentials | null {
+	return readBirdCredentialsFile(getBirdCredentialsPath());
+}
+
+export function readBirdCredentialsFile(
+	credentialsPath: string,
+): BirdCredentials | null {
 	try {
-		return parseCredentials(readFileSync(getBirdCredentialsPath(), "utf8"));
+		return parseCredentials(readFileSync(credentialsPath, "utf8"));
 	} catch {
 		return null;
 	}
