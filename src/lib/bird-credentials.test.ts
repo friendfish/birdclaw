@@ -19,6 +19,7 @@ import {
 	getBirdCredentialsPath,
 	mergeBirdCredentialEnvironment,
 	readBirdCredentials,
+	readBirdCredentialsFileStrict,
 	writeBirdCredentials,
 } from "./bird-credentials";
 
@@ -113,6 +114,22 @@ describe("bird credential store", () => {
 				complete: false,
 			});
 		}
+	});
+
+	it("strictly distinguishes missing, invalid, and unreadable files", () => {
+		const missingPath = path.join(tempRoot, "missing.env");
+		const invalidPath = path.join(tempRoot, "invalid.env");
+		const unreadablePath = path.join(tempRoot, "credential-directory");
+		writeFileSync(invalidPath, "AUTH_TOKEN=only-one-value\n", "utf8");
+		mkdirSync(unreadablePath);
+
+		expect(readBirdCredentialsFileStrict(missingPath)).toBeUndefined();
+		expect(() => readBirdCredentialsFileStrict(invalidPath)).toThrow(
+			/invalid Bird credential file/iu,
+		);
+		expect(() => readBirdCredentialsFileStrict(unreadablePath)).toThrow(
+			/unable to read Bird credential file/iu,
+		);
 	});
 
 	it("treats shell-looking values as inert text", () => {

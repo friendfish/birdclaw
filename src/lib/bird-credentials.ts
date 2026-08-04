@@ -79,6 +79,32 @@ export function readBirdCredentialsFile(
 	}
 }
 
+export function readBirdCredentialsFileStrict(
+	credentialsPath: string,
+): BirdCredentials | undefined {
+	let content: string;
+	try {
+		content = readFileSync(credentialsPath, "utf8");
+	} catch (error) {
+		if (
+			error &&
+			typeof error === "object" &&
+			"code" in error &&
+			error.code === "ENOENT"
+		) {
+			return undefined;
+		}
+		throw new Error(`Unable to read Bird credential file: ${credentialsPath}`, {
+			cause: error,
+		});
+	}
+	const credentials = parseCredentials(content);
+	if (!credentials) {
+		throw new Error(`Invalid Bird credential file: ${credentialsPath}`);
+	}
+	return credentials;
+}
+
 export function getBirdCredentialStatus(): BirdCredentialStatus {
 	try {
 		const credentialsPath = getBirdCredentialsPath();

@@ -9,7 +9,10 @@ import {
 	type DigestSchedulePeriod,
 	type DigestScheduleTime,
 } from "./config";
-import type { BirdCredentials } from "./bird-credentials";
+import {
+	readBirdCredentialsFileStrict,
+	type BirdCredentials,
+} from "./bird-credentials";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
 import {
 	createDigestArchiveRunState,
@@ -97,6 +100,7 @@ export interface DigestArchiveJobOptions {
 	// should pass false.
 	liveSync?: boolean;
 	birdCredentials?: BirdCredentials | null;
+	birdCredentialsPath?: string;
 }
 
 export interface DigestArchiveStepResult {
@@ -150,6 +154,7 @@ export interface DigestArchiveJobDependencies {
 		steps: DigestArchiveStepResult[],
 		status: DigestArchiveBatchStatus,
 	) => Effect.Effect<DigestArchivePersistenceError[], never>;
+	heartbeatIntervalMs?: number;
 }
 
 interface PeriodDigestArchiveFileBase {
@@ -644,6 +649,32 @@ export function runDigestArchiveJobEffect(
 			...auditOptionsBase,
 			...(language ? { language } : {}),
 		};
+		let birdCredentials = options.birdCredentials;
+		const birdCredentialsPath = options.birdCredentialsPath;
+		if (birdCredentialsPath) {
+			const credentialResult = yield* Effect.either(
+				trySync(() =>
+					readBirdCredentialsFileStrict(resolveUserPath(birdCredentialsPath)),
+				),
+			);
+			if (credentialResult._tag === "Left") {
+				const entry: DigestArchiveAuditEntry = {
+					job: "digest-archive",
+					period,
+					ok: false,
+					status: "failed",
+					...run.finish(),
+					runDate,
+					options: auditOptions,
+					sync: { status: "skipped", steps: [] },
+					steps: [],
+					error: sensitiveErrorMessage(credentialResult.left),
+				};
+				yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
+				return yield* Effect.fail(credentialResult.left);
+			}
+			birdCredentials = credentialResult.right;
+		}
 
 		const lockResult = yield* Effect.either(
 			tryPromise(() =>
@@ -707,10 +738,11 @@ export function runDigestArchiveJobEffect(
 			const heartbeat = startDigestArchiveHeartbeat({
 				statePath,
 				ownerId: stateOwnerId,
+				intervalMs: dependencies.heartbeatIntervalMs,
 				onHeartbeat: () => releaseLock.heartbeat(),
 			});
 
-			return yield* Effect.gen(function* () {
+			const workflow = Effect.gen(function* () {
 				const sync: DigestArchiveSyncResult =
 					yield* runDigestArchivePreSyncEffect({
 						period,
@@ -720,7 +752,7 @@ export function runDigestArchiveJobEffect(
 						until: options.until,
 						liveSync: options.liveSync ?? true,
 						nonInteractiveBird: true,
-						birdCredentials: options.birdCredentials,
+						birdCredentials,
 					});
 				observedSync = sync;
 				yield* tryPromise(() =>
@@ -815,7 +847,16 @@ export function runDigestArchiveJobEffect(
 				};
 				yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
 				return entry;
-			}).pipe(
+			});
+			const lockLost = tryPromise(async () => {
+				await heartbeat.lost;
+				throw new Error("Scheduled digest lock ownership was lost");
+			});
+
+			return yield* Effect.raceFirst(
+				Effect.disconnect(workflow),
+				lockLost,
+			).pipe(
 				Effect.ensuring(
 					tryPromise(async () => {
 						await heartbeat.stop();

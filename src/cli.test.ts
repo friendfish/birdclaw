@@ -909,17 +909,10 @@ describe("cli", () => {
 		);
 	});
 
-	it("strictly loads a digest credential file before running the job", async () => {
+	it("forwards a strict digest credential path to the auditable job boundary", async () => {
 		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-cli-env-"));
 		const validPath = path.join(tempRoot, "bird.env");
-		const invalidPath = path.join(tempRoot, "invalid.env");
-		const missingPath = path.join(tempRoot, "missing.env");
 		writeFileSync(validPath, "AUTH_TOKEN=cli-auth\nCT0=cli-ct0\n", "utf8");
-		writeFileSync(
-			invalidPath,
-			"AUTH_TOKEN=cli-auth\nCT0=cli-ct0\nEXTRA=bad\n",
-			"utf8",
-		);
 		const originalAuthToken = process.env.AUTH_TOKEN;
 		const originalCt0 = process.env.CT0;
 		process.env.AUTH_TOKEN = "existing-auth";
@@ -938,47 +931,18 @@ describe("cli", () => {
 				"--bird-credentials-path",
 				validPath,
 			]);
-			expect(runDigestArchiveJobMock).toHaveBeenNthCalledWith(
-				1,
+			expect(runDigestArchiveJobMock).toHaveBeenCalledWith(
 				expect.objectContaining({
-					birdCredentials: { authToken: "cli-auth", ct0: "cli-ct0" },
+					birdCredentialsPath: validPath,
 				}),
 			);
 			expect(process.env).toMatchObject({
 				AUTH_TOKEN: "existing-auth",
 				CT0: "existing-ct0",
 			});
-
-			await runCli([
-				"node",
-				"birdclaw",
-				"jobs",
-				"run-digest-archive",
-				"--period",
-				"today",
-				"--bird-credentials-path",
-				missingPath,
-			]);
-			expect(runDigestArchiveJobMock).toHaveBeenNthCalledWith(
-				2,
-				expect.not.objectContaining({ birdCredentials: expect.anything() }),
-			);
-
-			await expect(
-				runCli([
-					"node",
-					"birdclaw",
-					"jobs",
-					"run-digest-archive",
-					"--period",
-					"today",
-					"--bird-credentials-path",
-					invalidPath,
-				]),
-			).rejects.toThrow(/invalid Bird credential file/iu);
 			expect(process.env.AUTH_TOKEN).toBe("existing-auth");
 			expect(process.env.CT0).toBe("existing-ct0");
-			expect(runDigestArchiveJobMock).toHaveBeenCalledTimes(2);
+			expect(runDigestArchiveJobMock).toHaveBeenCalledTimes(1);
 		} finally {
 			if (originalAuthToken === undefined) delete process.env.AUTH_TOKEN;
 			else process.env.AUTH_TOKEN = originalAuthToken;

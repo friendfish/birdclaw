@@ -109,6 +109,30 @@ describe("digest archive run state", () => {
 		});
 	});
 
+	it("signals when a lock heartbeat reports lost ownership", async () => {
+		vi.useFakeTimers();
+		const statePath = makeStatePath();
+		await writeDigestArchiveRunState(
+			statePath,
+			createDigestArchiveRunState({
+				period: "today",
+				runDate: "2026-08-04",
+				ownerId: "owner-lost",
+				contentSources: ["all"],
+			}),
+		);
+		const heartbeat = startDigestArchiveHeartbeat({
+			statePath,
+			ownerId: "owner-lost",
+			intervalMs: 1_000,
+			onHeartbeat: async () => false,
+		});
+
+		await vi.advanceTimersByTimeAsync(1_000);
+		await expect(heartbeat.lost).resolves.toBeUndefined();
+		await heartbeat.stop();
+	});
+
 	it("serializes concurrent mutations so heartbeats cannot erase progress", async () => {
 		const statePath = makeStatePath();
 		await writeDigestArchiveRunState(

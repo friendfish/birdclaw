@@ -134,9 +134,11 @@ CT0=...
 
 `--bird-credentials-path <path>` passes the strict credential path to Birdclaw
 without putting cookie values in the plist or invoking a shell. An invalid
-existing file fails the command instead of silently falling back. A missing
-managed file leaves the explicit override unset, allowing the scheduled digest
-to continue from local data and pick up credentials after Config creates it.
+existing file fails the command instead of silently falling back and records the
+failure in the digest audit log. An unreadable path is reported separately from
+invalid contents. A missing managed file leaves the explicit override unset,
+allowing the scheduled digest to continue from local data and pick up credentials
+after Config creates it.
 
 `--env-path <path>` remains the backward-compatible launch environment option.
 It sources a trusted shell file and can carry variables such as
@@ -148,7 +150,11 @@ Credential precedence for Bird subprocesses is inherited process environment,
 then Config-managed credentials, then an explicit strict credential file. Each
 digest lock is renewed by a heartbeat while the job runs and has a six-hour
 absolute lifetime, so a PID reused after reboot cannot preserve an old lock
-indefinitely.
+indefinitely. During system sleep the heartbeat pauses; on wake, a live PID on
+the current host keeps its lock until heartbeats resume. A dead local PID is
+reclaimed immediately, and an expired remote or legacy lock is reclaimed by its
+stale interval. Losing ownership during a run aborts the remaining work and writes
+a failed audit entry.
 
 ## Useful checks
 

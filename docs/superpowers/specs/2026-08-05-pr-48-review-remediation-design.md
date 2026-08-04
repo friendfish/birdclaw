@@ -36,21 +36,24 @@ endpoint therefore tests the saved pair, not an inherited pair.
 
 ## Scheduled Lock Lease
 
-The digest lock is a renewable lease rather than a one-time PID marker. A lock is
-active only while all applicable conditions hold:
+The digest lock is a renewable lease rather than a one-time PID marker. Its
+validity is evaluated as follows:
 
-- its file heartbeat is newer than the stale interval;
-- its `startedAt` is younger than the six-hour absolute maximum;
-- when the owner is on the current host, the recorded PID is still alive.
+- `startedAt` must be younger than the six-hour absolute maximum;
+- a current-host owner remains active while its PID is alive, including across a
+  system sleep that pauses the file heartbeat;
+- a dead current-host PID is stale immediately;
+- remote-host and legacy owners remain active only while their file heartbeat is
+  newer than the stale interval.
 
 The existing digest run-state heartbeat also refreshes the owned lock every 15
 seconds. Refresh and release operations verify `ownerId`; a previous owner cannot
 refresh a replacement lock. The six-hour cap prevents a reused PID or a runaway
 heartbeat from preserving a lock indefinitely.
 
-Other scheduled jobs retain their existing stale intervals. Because they do not
-renew their locks, their stale interval remains their maximum expected runtime,
-matching the behavior before PR #48.
+Other scheduled jobs retain their configured stale intervals for remote and legacy
+owners, and now also reclaim a dead current-host PID immediately. A live
+current-host owner remains bounded by the six-hour absolute maximum.
 
 ## Status Polling
 
@@ -63,9 +66,10 @@ four periods has been found.
 
 - A missing strict credential file produces no explicit Bird override, so the job
   can continue through the existing degraded/local-data path and use the file on
-  a later run after Config creates it. An existing but invalid file is reported.
-- A failed lock heartbeat is isolated from the run-state heartbeat loop. The lock
-  naturally becomes stale within the configured interval and can be reclaimed.
+  a later run after Config creates it. Invalid contents and file I/O failures are
+  reported distinctly and written to the digest audit log before the job fails.
+- A lock heartbeat that reports lost ownership interrupts the digest workflow and
+  writes a failed audit entry. Run-state cleanup remains owner-checked.
 - Audit stat/read failures return an empty snapshot and do not retain stale cached
   data for a missing file.
 
@@ -75,7 +79,7 @@ four periods has been found.
   credential arguments independently and together.
 - CLI and Config schedule tests cover the new option wiring.
 - Credential tests prove managed-over-process and explicit-over-managed order.
-- Lock tests prove heartbeat renewal, stale same-PID reclamation, absolute expiry,
-  and owner-safe refresh.
+- Lock tests prove heartbeat renewal, sleep-safe live-PID retention, dead-PID
+  reclamation, absolute expiry, owner-safe refresh, and lost-lock interruption.
 - Status tests prove unchanged audit logs are read once and changed logs invalidate
   the cache.

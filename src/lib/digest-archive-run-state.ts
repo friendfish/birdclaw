@@ -201,6 +201,10 @@ export function startDigestArchiveHeartbeat({
 	onHeartbeat?: () => Promise<unknown>;
 }) {
 	let pending = Promise.resolve<unknown>(undefined);
+	let signalLost: (() => void) | undefined;
+	const lost = new Promise<void>((resolve) => {
+		signalLost = resolve;
+	});
 	const heartbeat = () => {
 		pending = pending
 			.then(async () => {
@@ -210,7 +214,8 @@ export function startDigestArchiveHeartbeat({
 					(state) => state,
 					now(),
 				).catch(() => undefined);
-				await onHeartbeat?.().catch(() => undefined);
+				const lockRetained = await onHeartbeat?.().catch(() => undefined);
+				if (lockRetained === false) signalLost?.();
 			})
 			.catch(() => undefined);
 		return pending;
@@ -219,6 +224,7 @@ export function startDigestArchiveHeartbeat({
 	timer.unref?.();
 
 	return {
+		lost,
 		async stop() {
 			clearInterval(timer);
 			await pending;

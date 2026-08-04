@@ -726,6 +726,124 @@ describe("digest-archive-job", () => {
 		});
 	});
 
+	it("audits an invalid explicit Bird credential file", async () => {
+		const archiveDir = tempArchiveDir();
+		const credentialsPath = path.join(archiveDir, "bird.env");
+		const logPath = path.join(archiveDir, "audit.jsonl");
+		writeFileSync(
+			credentialsPath,
+			"AUTH_TOKEN=auth\nCT0=ct0\nEXTRA=unexpected\n",
+			"utf8",
+		);
+		streamPeriodDigestMock.mockResolvedValue(digestResult());
+
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect({
+					period: "today",
+					archiveDir,
+					contentSources: ["all"],
+					birdCredentialsPath: credentialsPath,
+					logPath,
+					now: () => new Date(2026, 6, 29),
+				}),
+			),
+		).rejects.toThrow("Invalid Bird credential file");
+
+		expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+			job: "digest-archive",
+			period: "today",
+			ok: false,
+			status: "failed",
+			error: expect.stringContaining("Invalid Bird credential file"),
+			steps: [],
+		});
+		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
+	});
+
+	it("audits an unreadable explicit Bird credential path distinctly", async () => {
+		const archiveDir = tempArchiveDir();
+		const credentialsPath = path.join(archiveDir, "credential-directory");
+		const logPath = path.join(archiveDir, "audit.jsonl");
+		mkdirSync(credentialsPath);
+
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect({
+					period: "today",
+					archiveDir,
+					contentSources: ["all"],
+					birdCredentialsPath: credentialsPath,
+					logPath,
+					now: () => new Date(2026, 6, 29),
+				}),
+			),
+		).rejects.toThrow("Unable to read Bird credential file");
+
+		expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+			ok: false,
+			status: "failed",
+			error: expect.stringContaining("Unable to read Bird credential file"),
+		});
+	});
+
+	it("treats a missing explicit Bird credential file as no override", async () => {
+		const archiveDir = tempArchiveDir();
+		streamPeriodDigestMock.mockResolvedValue(digestResult());
+
+		const entry = await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir,
+				contentSources: ["all"],
+				birdCredentialsPath: path.join(archiveDir, "missing.env"),
+				now: () => new Date(2026, 6, 29),
+			}),
+		);
+
+		expect(entry.ok).toBe(true);
+		expect(preSyncEffectMock).toHaveBeenCalledWith(
+			expect.objectContaining({ birdCredentials: undefined }),
+		);
+	});
+
+	it("aborts and audits a run after losing its scheduled lock", async () => {
+		const archiveDir = tempArchiveDir();
+		const lockPath = path.join(archiveDir, "digest.lock");
+		const logPath = path.join(archiveDir, "audit.jsonl");
+		streamPeriodDigestMock.mockImplementation(async () => {
+			rmSync(lockPath, { force: true });
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			return digestResult();
+		});
+
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect(
+					{
+						period: "today",
+						archiveDir,
+						contentSources: ["all"],
+						lockPath,
+						logPath,
+						retries: 0,
+						now: () => new Date(2026, 6, 29),
+					},
+					{ heartbeatIntervalMs: 5 },
+				),
+			),
+		).rejects.toThrow("Scheduled digest lock ownership was lost");
+
+		expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+			job: "digest-archive",
+			period: "today",
+			ok: false,
+			status: "failed",
+			error: "Scheduled digest lock ownership was lost",
+			steps: [],
+		});
+	});
+
 	it("continues to read legacy schema v1 archive files", async () => {
 		const archiveDir = tempArchiveDir();
 		const { jsonPath } = resolveDigestArchivePaths({

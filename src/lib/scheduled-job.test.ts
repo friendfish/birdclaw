@@ -87,7 +87,7 @@ describe("scheduled job runtime", () => {
 		await staleRelease?.();
 	});
 
-	it("reclaims a lock whose heartbeat expired even when its pid is alive", async () => {
+	it("keeps a lock whose heartbeat expired while its pid is still alive", async () => {
 		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
 		mkdirSync(path.dirname(lockPath), { recursive: true });
 		writeFileSync(
@@ -102,6 +102,27 @@ describe("scheduled job runtime", () => {
 		);
 		const old = new Date(Date.now() - 3_600_000);
 		utimesSync(lockPath, old, old);
+
+		await expect(
+			peekScheduledJobLockMetadata(lockPath, 60_000),
+		).resolves.toMatchObject({ ownerId: "live-owner", pid: process.pid });
+		const replacement = await acquireScheduledJobLock(lockPath, 60_000);
+		expect(replacement).toBeUndefined();
+	});
+
+	it("reclaims a lock whose owner pid is no longer alive", async () => {
+		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
+		mkdirSync(path.dirname(lockPath), { recursive: true });
+		writeFileSync(
+			lockPath,
+			`${JSON.stringify({
+				ownerId: "dead-owner",
+				startedAt: new Date().toISOString(),
+				host: os.hostname(),
+				pid: 2_147_483_647,
+			})}\n`,
+			"utf8",
+		);
 
 		await expect(
 			peekScheduledJobLockMetadata(lockPath, 60_000),

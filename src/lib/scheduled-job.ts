@@ -265,7 +265,7 @@ export async function peekScheduledJobLockMetadata(
 	const stats = await fs.stat(lockPath).catch(() => undefined);
 	if (!stats) return undefined;
 	const now = Date.now();
-	if (now - stats.mtimeMs > staleMs) return undefined;
+	const heartbeatExpired = now - stats.mtimeMs > staleMs;
 	const raw = await fs.readFile(lockPath, "utf8").catch(() => undefined);
 	if (raw === undefined) return undefined;
 	try {
@@ -297,11 +297,15 @@ export async function peekScheduledJobLockMetadata(
 				: {}),
 		};
 		if (now - startedAt.getTime() > maxAgeMs) return undefined;
-		if (metadata.host === os.hostname() && !processIsAlive(metadata.pid)) {
+		const ownerIsLocal = metadata.host === os.hostname();
+		if (ownerIsLocal) {
+			if (!processIsAlive(metadata.pid)) return undefined;
+		} else if (heartbeatExpired) {
 			return undefined;
 		}
 		return metadata;
 	} catch {
+		if (heartbeatExpired) return undefined;
 		// Older or partially-written locks still represent active work. Their
 		// mtime gives status readers a stable date without mutating the lock.
 		return {

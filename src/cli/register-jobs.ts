@@ -13,12 +13,9 @@ import {
 	parseDigestContentSources,
 	runDigestArchiveJob,
 } from "#/lib/digest-archive-job";
-import { readBirdCredentialsFile } from "#/lib/bird-credentials";
-import { resolveUserPath } from "#/lib/launchd";
 import type { PeriodDigestPreset } from "#/lib/period-digest";
 import { resolveLiveSyncMode } from "#/lib/live-transport-policy";
 import type { TimelineCollectionMode } from "#/lib/timeline-collections-live";
-import { existsSync } from "node:fs";
 import type { CliCommandContext } from "./command-context";
 
 function parsePeriod(value: string): PeriodDigestPreset {
@@ -37,16 +34,6 @@ function parseOptionalJobMode(
 	mode: string | undefined,
 ): TimelineCollectionMode | undefined {
 	return mode === undefined ? undefined : resolveLiveSyncMode(mode);
-}
-
-function readDigestCredentialContext(credentialsPath: string) {
-	const resolvedPath = resolveUserPath(credentialsPath);
-	const credentials = readBirdCredentialsFile(resolvedPath);
-	if (!credentials && !existsSync(resolvedPath)) return undefined;
-	if (!credentials) {
-		throw new Error(`Invalid Bird credential file: ${resolvedPath}`);
-	}
-	return credentials;
 }
 
 export function registerJobCommands({ program, print }: CliCommandContext) {
@@ -242,10 +229,6 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			const runDate = options.runDate
 				? new Date(`${options.runDate}T00:00:00`)
 				: undefined;
-			const credentialPath = options.birdCredentialsPath;
-			const birdCredentials = credentialPath
-				? readDigestCredentialContext(credentialPath)
-				: undefined;
 			const result = await runDigestArchiveJob({
 				period: parsePeriod(options.period),
 				account: options.account,
@@ -258,7 +241,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				since: options.since,
 				until: options.until,
 				liveSync: Boolean(options.liveSync),
-				...(birdCredentials ? { birdCredentials } : {}),
+				birdCredentialsPath: options.birdCredentialsPath,
 				...(runDate ? { now: () => runDate } : {}),
 			});
 			print(result, true);
