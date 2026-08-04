@@ -8,6 +8,7 @@ import {
 	type PeriodDigestContentSource,
 	type PeriodDigestPreset,
 } from "./period-digest";
+import { sensitiveErrorMessage } from "./sensitive-values";
 import { syncHomeTimelineEffect } from "./timeline-live";
 
 export type DigestArchiveSyncStatus = "fresh" | "degraded" | "skipped";
@@ -38,36 +39,6 @@ export interface DigestArchivePreSyncOptions {
 	since?: string;
 	until?: string;
 	liveSync: boolean;
-}
-
-const SENSITIVE_PARAMETER_PATTERN =
-	/^(?:access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|api[_-]?key|authorization)$/iu;
-
-function redactSensitiveUrl(value: string) {
-	try {
-		const url = new URL(value);
-		if (url.username) url.username = "[REDACTED]";
-		if (url.password) url.password = "[REDACTED]";
-		for (const key of url.searchParams.keys()) {
-			if (SENSITIVE_PARAMETER_PATTERN.test(key)) {
-				url.searchParams.set(key, "[REDACTED]");
-			}
-		}
-		return url.toString();
-	} catch {
-		return value;
-	}
-}
-
-function durableErrorMessage(error: unknown) {
-	const message = error instanceof Error ? error.message : String(error);
-	return message
-		.replace(/https?:\/\/[^\s<>"']+/giu, redactSensitiveUrl)
-		.replace(/\b(Bearer\s+)[^\s,;]+/giu, "$1[REDACTED]")
-		.replace(
-			/(["']?)\b(access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|api[_-]?key|authorization)\b\1(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
-			"$1$2$1$3[REDACTED]",
-		);
 }
 
 function configuredTransport(): DigestArchiveSyncTransport {
@@ -109,7 +80,7 @@ function recordStep<A>({
 				operation,
 				status: "degraded",
 				transport,
-				error: durableErrorMessage(error),
+				error: sensitiveErrorMessage(error),
 			} satisfies DigestArchiveSyncStep),
 		),
 	);
@@ -239,7 +210,7 @@ export function runDigestArchivePreSyncEffect(
 						operation: "mentions",
 						status: "degraded",
 						transport,
-						error: durableErrorMessage(mentionResult.error),
+						error: sensitiveErrorMessage(mentionResult.error),
 					});
 				}
 			}
@@ -273,7 +244,7 @@ export function runDigestArchivePreSyncEffect(
 							operation: "mention_threads",
 							status: "degraded",
 							transport: mentionThreadTransport,
-							error: durableErrorMessage(error),
+							error: sensitiveErrorMessage(error),
 						});
 						return Effect.succeed(undefined);
 					}),
@@ -309,7 +280,7 @@ export function runDigestArchivePreSyncEffect(
 								operation: "mention_threads",
 								status: "degraded",
 								transport: threadTransport,
-								error: durableErrorMessage(error),
+								error: sensitiveErrorMessage(error),
 							} satisfies DigestArchiveSyncStep),
 						),
 					);

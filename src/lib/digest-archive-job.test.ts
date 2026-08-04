@@ -34,6 +34,10 @@ import {
 	peekDigestArchiveRunningRuns,
 	runDigestArchiveJobEffect,
 } from "./digest-archive-job";
+import {
+	digestArchiveRunStatePath,
+	readDigestArchiveRunState,
+} from "./digest-archive-run-state";
 import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import { runEffectPromise } from "./effect-runtime";
 
@@ -299,6 +303,83 @@ describe("digest-archive-job", () => {
 			ok: true,
 			runDate: "2020-01-02",
 		});
+	});
+
+	it("publishes source progress while running and removes state when finished", async () => {
+		let resolveDigest: (result: ReturnType<typeof digestResult>) => void = (
+			_result,
+		) => {
+			throw new Error("digest resolver was not initialized");
+		};
+		streamPeriodDigestMock.mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolveDigest = resolve;
+				}),
+		);
+		const job = runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir: tempArchiveDir(),
+				contentSources: ["all"],
+				liveSync: false,
+				now: () => new Date(2026, 7, 4),
+			}),
+		);
+		await vi.waitFor(() => expect(streamPeriodDigestMock).toHaveBeenCalled());
+
+		await expect(
+			readDigestArchiveRunState(digestArchiveRunStatePath("today")),
+		).resolves.toMatchObject({
+			period: "today",
+			runDate: "2026-08-04",
+			phase: "generating",
+			currentSource: "all",
+			totalSources: 1,
+			sources: { all: { state: "running", attempts: 1 } },
+		});
+
+		resolveDigest(digestResult());
+		await expect(job).resolves.toMatchObject({ ok: true });
+		await expect(
+			readDigestArchiveRunState(digestArchiveRunStatePath("today")),
+		).resolves.toBeUndefined();
+	});
+
+	it("aborts a timed-out model attempt and retries with a fresh signal", async () => {
+		let attempts = 0;
+		streamPeriodDigestMock.mockImplementation(
+			(options: { signal?: AbortSignal }) => {
+				if (!options.signal) throw new Error("missing attempt signal");
+				attempts += 1;
+				if (attempts > 1) return Promise.resolve(digestResult());
+				return new Promise((_resolve, reject) => {
+					options.signal?.addEventListener(
+						"abort",
+						() => reject(new Error("attempt timed out")),
+						{ once: true },
+					);
+				});
+			},
+		);
+
+		const entry = await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir: tempArchiveDir(),
+				contentSources: ["all"],
+				liveSync: false,
+				retries: 1,
+				retryDelayMs: 0,
+				modelTimeoutMs: 5,
+				now: () => new Date(2026, 7, 4),
+			}),
+		);
+
+		expect(attempts).toBe(2);
+		expect(entry.steps).toEqual([
+			expect.objectContaining({ contentSource: "all", ok: true, attempts: 2 }),
+		]);
 	});
 
 	it("continues from local data and marks a degraded pre-sync honestly", async () => {

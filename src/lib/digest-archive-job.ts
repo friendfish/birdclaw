@@ -11,6 +11,14 @@ import {
 } from "./config";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
 import {
+	createDigestArchiveRunState,
+	digestArchiveRunStatePath,
+	removeDigestArchiveRunState,
+	startDigestArchiveHeartbeat,
+	updateDigestArchiveRunState,
+	writeDigestArchiveRunState,
+} from "./digest-archive-run-state";
+import {
 	runDigestArchivePreSyncEffect,
 	type DigestArchiveSyncResult,
 } from "./digest-archive-sync";
@@ -37,6 +45,7 @@ import {
 	type PeriodDigestPreset,
 	type PeriodDigestRunResult,
 } from "./period-digest";
+import { sensitiveErrorMessage } from "./sensitive-values";
 
 const DEFAULT_CONTENT_SOURCES: PeriodDigestContentSource[] = [
 	"all",
@@ -45,9 +54,8 @@ const DEFAULT_CONTENT_SOURCES: PeriodDigestContentSource[] = [
 ];
 const DEFAULT_DIGEST_ARCHIVE_RETRIES = 2;
 const DEFAULT_DIGEST_ARCHIVE_RETRY_DELAY_MS = 2 * 60_000;
-// Generous: 3 sources x up to (1 + retries) attempts each, plus the retry
-// delay between attempts, plus actual generation time per attempt.
-export const DEFAULT_LOCK_STALE_MS = 45 * 60 * 1000;
+const DEFAULT_MODEL_TIMEOUT_MS = 10 * 60_000;
+export const DEFAULT_LOCK_STALE_MS = 60_000;
 
 // The reviewed default: 24h was originally 08:20, moved to 08:45 to widen
 // the gap from Today's 08:00 run given the ~30 minute worst-case retry
@@ -71,6 +79,7 @@ export interface DigestArchiveJobOptions {
 	archiveDir?: string;
 	retries?: number;
 	retryDelayMs?: number;
+	modelTimeoutMs?: number;
 	language?: string;
 	logPath?: string;
 	lockPath?: string;
@@ -281,11 +290,13 @@ function runOneContentSourceEffect({
 	runDate,
 	retries,
 	retryDelayMs,
+	modelTimeoutMs,
 	since,
 	until,
 	liveSync,
 	language,
 	sync,
+	onAttempt,
 }: {
 	period: PeriodDigestPreset;
 	contentSource: PeriodDigestContentSource;
@@ -295,16 +306,22 @@ function runOneContentSourceEffect({
 	runDate: string;
 	retries: number;
 	retryDelayMs: number;
+	modelTimeoutMs: number;
 	since?: string;
 	until?: string;
 	liveSync: boolean;
 	language?: string;
 	sync: DigestArchiveSyncResult;
+	onAttempt?: (attempt: number) => Promise<void>;
 }): Effect.Effect<DigestArchiveStepResult, never> {
 	let attempts = 0;
 	const attempt = () =>
 		Effect.gen(function* () {
 			attempts += 1;
+			if (onAttempt) {
+				yield* tryPromise(() => onAttempt(attempts));
+			}
+			const signal = AbortSignal.timeout(modelTimeoutMs);
 			const result = yield* tryPromise(() =>
 				streamPeriodDigest({
 					period,
@@ -316,6 +333,7 @@ function runOneContentSourceEffect({
 					language,
 					since,
 					until,
+					signal,
 				}),
 			);
 			const { markdownPath, jsonPath } = resolveDigestArchivePaths({
@@ -366,7 +384,7 @@ function runOneContentSourceEffect({
 				ok: false,
 				attempts,
 				cached: false,
-				error: messageFromError(error),
+				error: sensitiveErrorMessage(error),
 			} satisfies DigestArchiveStepResult),
 		),
 	);
@@ -421,6 +439,7 @@ export function runDigestArchiveJobEffect(
 		const retries = options.retries ?? DEFAULT_DIGEST_ARCHIVE_RETRIES;
 		const retryDelayMs =
 			options.retryDelayMs ?? DEFAULT_DIGEST_ARCHIVE_RETRY_DELAY_MS;
+		const modelTimeoutMs = options.modelTimeoutMs ?? DEFAULT_MODEL_TIMEOUT_MS;
 		const includeDms = options.includeDms ?? false;
 		const resolvedLogPath = yield* trySync(() =>
 			resolveUserPath(options.logPath ?? getDefaultDigestArchiveAuditLogPath()),
@@ -494,61 +513,133 @@ export function runDigestArchiveJobEffect(
 		}
 
 		return yield* Effect.gen(function* () {
-			const sync: DigestArchiveSyncResult =
-				yield* runDigestArchivePreSyncEffect({
-					period,
-					contentSources,
-					account: options.account,
-					since: options.since,
-					until: options.until,
-					liveSync: options.liveSync ?? true,
-				});
-			const steps: DigestArchiveStepResult[] = [];
-			for (const contentSource of contentSources) {
-				const step = yield* runOneContentSourceEffect({
-					period,
-					contentSource,
-					account: options.account,
-					includeDms,
-					archiveDir,
-					runDate,
-					retries,
-					retryDelayMs,
-					since: options.since,
-					until: options.until,
-					liveSync: false,
-					language,
-					sync,
-				});
-				steps.push(step);
-			}
-			const generationOk = steps.every((step) => step.ok);
-			const generatedStatus: DigestArchiveBatchStatus = !generationOk
-				? "failed"
-				: sync.status === "degraded"
-					? "degraded"
-					: "ok";
-			const persistenceErrors = yield* (
-				dependencies.updateArchiveBatchStatus ?? updateArchiveBatchStatusEffect
-			)(steps, generatedStatus);
-			const ok = generationOk && persistenceErrors.length === 0;
-			const status: DigestArchiveBatchStatus = persistenceErrors.length
-				? "failed"
-				: generatedStatus;
-			const entry: DigestArchiveAuditEntry = {
-				job: "digest-archive",
+			const statePath = digestArchiveRunStatePath(period);
+			const stateOwnerId = randomUUID();
+			const initialState = createDigestArchiveRunState({
 				period,
-				ok,
-				status,
-				...run.finish(),
 				runDate,
-				options: auditOptions,
-				sync,
-				steps,
-				...(persistenceErrors.length ? { persistenceErrors } : {}),
-			};
-			yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
-			return entry;
+				contentSources,
+				ownerId: stateOwnerId,
+			});
+			yield* tryPromise(() =>
+				writeDigestArchiveRunState(statePath, initialState),
+			);
+			const heartbeat = startDigestArchiveHeartbeat({
+				statePath,
+				ownerId: stateOwnerId,
+			});
+
+			return yield* Effect.gen(function* () {
+				const sync: DigestArchiveSyncResult =
+					yield* runDigestArchivePreSyncEffect({
+						period,
+						contentSources,
+						account: options.account,
+						since: options.since,
+						until: options.until,
+						liveSync: options.liveSync ?? true,
+					});
+				yield* tryPromise(() =>
+					updateDigestArchiveRunState(statePath, stateOwnerId, (state) => ({
+						...state,
+						phase: "generating",
+					})),
+				);
+				const steps: DigestArchiveStepResult[] = [];
+				for (const contentSource of contentSources) {
+					const step = yield* runOneContentSourceEffect({
+						period,
+						contentSource,
+						account: options.account,
+						includeDms,
+						archiveDir,
+						runDate,
+						retries,
+						retryDelayMs,
+						modelTimeoutMs,
+						since: options.since,
+						until: options.until,
+						liveSync: false,
+						language,
+						sync,
+						onAttempt: (attempt) =>
+							updateDigestArchiveRunState(statePath, stateOwnerId, (state) => ({
+								...state,
+								phase: "generating",
+								currentSource: contentSource,
+								sources: {
+									...state.sources,
+									[contentSource]: { state: "running", attempts: attempt },
+								},
+							})).then(() => undefined),
+					});
+					steps.push(step);
+					yield* tryPromise(() =>
+						updateDigestArchiveRunState(statePath, stateOwnerId, (state) => ({
+							...state,
+							currentSource: contentSource,
+							sources: {
+								...state.sources,
+								[contentSource]: step.ok
+									? {
+											state: "completed",
+											attempts: step.attempts,
+											...(step.updatedAt
+												? { generatedAt: step.updatedAt }
+												: {}),
+										}
+									: {
+											state: "failed",
+											attempts: step.attempts,
+											...(step.error ? { error: step.error } : {}),
+										},
+							},
+						})),
+					);
+				}
+				yield* tryPromise(() =>
+					updateDigestArchiveRunState(statePath, stateOwnerId, (state) => ({
+						...state,
+						phase: "finalizing",
+						currentSource: undefined,
+					})),
+				);
+				const generationOk = steps.every((step) => step.ok);
+				const generatedStatus: DigestArchiveBatchStatus = !generationOk
+					? "failed"
+					: sync.status === "degraded"
+						? "degraded"
+						: "ok";
+				const persistenceErrors = yield* (
+					dependencies.updateArchiveBatchStatus ??
+					updateArchiveBatchStatusEffect
+				)(steps, generatedStatus);
+				const ok = generationOk && persistenceErrors.length === 0;
+				const status: DigestArchiveBatchStatus = persistenceErrors.length
+					? "failed"
+					: generatedStatus;
+				const entry: DigestArchiveAuditEntry = {
+					job: "digest-archive",
+					period,
+					ok,
+					status,
+					...run.finish(),
+					runDate,
+					options: auditOptions,
+					sync,
+					steps,
+					...(persistenceErrors.length ? { persistenceErrors } : {}),
+				};
+				yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
+				return entry;
+			}).pipe(
+				Effect.ensuring(
+					tryPromise(async () => {
+						await heartbeat.stop();
+						await removeDigestArchiveRunState(statePath, stateOwnerId);
+					}).pipe(Effect.catchAll(() => Effect.void)),
+				),
+			);
 		}).pipe(Effect.ensuring(releaseLock()));
 	});
 }
