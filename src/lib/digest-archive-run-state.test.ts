@@ -86,11 +86,13 @@ describe("digest archive run state", () => {
 		});
 		await writeDigestArchiveRunState(statePath, state);
 		let now = new Date("2026-08-04T00:00:15.000Z");
+		const onHeartbeat = vi.fn(async () => true);
 		const heartbeat = startDigestArchiveHeartbeat({
 			statePath,
 			ownerId: "owner-2",
 			intervalMs: 15_000,
 			now: () => now,
+			onHeartbeat,
 		});
 
 		await vi.advanceTimersByTimeAsync(15_000);
@@ -98,6 +100,7 @@ describe("digest archive run state", () => {
 		await expect(readDigestArchiveRunState(statePath)).resolves.toMatchObject({
 			lastHeartbeatAt: "2026-08-04T00:00:15.000Z",
 		});
+		expect(onHeartbeat).toHaveBeenCalledTimes(1);
 
 		now = new Date("2026-08-04T00:00:30.000Z");
 		await vi.advanceTimersByTimeAsync(15_000);

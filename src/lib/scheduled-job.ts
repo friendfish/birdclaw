@@ -27,7 +27,11 @@ export interface ScheduledJobLockMetadata {
 	totalSources?: number;
 }
 
-export type ScheduledJobLockRelease = () => Promise<void>;
+export const DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS = 6 * 60 * 60_000;
+
+export type ScheduledJobLockRelease = (() => Promise<void>) & {
+	heartbeat(): Promise<boolean>;
+};
 
 function isFileExistsError(error: unknown) {
 	return (
@@ -36,6 +40,36 @@ function isFileExistsError(error: unknown) {
 		"code" in error &&
 		error.code === "EEXIST"
 	);
+}
+
+async function heartbeatScheduledJobLock(lockPath: string, ownerId: string) {
+	let handle: Awaited<ReturnType<typeof fs.open>>;
+	try {
+		handle = await fs.open(lockPath, "r+");
+	} catch (error) {
+		if (
+			typeof error === "object" &&
+			error !== null &&
+			"code" in error &&
+			error.code === "ENOENT"
+		) {
+			return false;
+		}
+		throw error;
+	}
+	try {
+		const current = JSON.parse(
+			await handle.readFile("utf8"),
+		) as Partial<ScheduledJobLockMetadata>;
+		if (current.ownerId !== ownerId) return false;
+		const now = new Date();
+		await handle.utimes(now, now);
+		return true;
+	} catch {
+		return false;
+	} finally {
+		await handle.close();
+	}
 }
 
 async function tryCreateScheduledJobLock(
@@ -69,7 +103,7 @@ async function tryCreateScheduledJobLock(
 		await handle.close();
 	}
 
-	return async () => {
+	const release = (async () => {
 		const raw = await fs.readFile(lockPath, "utf8").catch(() => undefined);
 		if (raw === undefined) return;
 		try {
@@ -79,7 +113,9 @@ async function tryCreateScheduledJobLock(
 			return;
 		}
 		await fs.rm(lockPath, { force: true });
-	};
+	}) as ScheduledJobLockRelease;
+	release.heartbeat = () => heartbeatScheduledJobLock(lockPath, ownerId);
+	return release;
 }
 
 async function acquireReclamationLease(reclaimPath: string, staleMs: number) {
@@ -224,9 +260,12 @@ export async function peekScheduledJobLock(
 export async function peekScheduledJobLockMetadata(
 	lockPath: string,
 	staleMs: number,
+	maxAgeMs = DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS,
 ): Promise<ScheduledJobLockMetadata | undefined> {
 	const stats = await fs.stat(lockPath).catch(() => undefined);
 	if (!stats) return undefined;
+	const now = Date.now();
+	if (now - stats.mtimeMs > staleMs) return undefined;
 	const raw = await fs.readFile(lockPath, "utf8").catch(() => undefined);
 	if (raw === undefined) return undefined;
 	try {
@@ -257,17 +296,14 @@ export async function peekScheduledJobLockMetadata(
 				? { totalSources: parsed.totalSources }
 				: {}),
 		};
-		if (
-			Date.now() - stats.mtimeMs > staleMs &&
-			!(metadata.host === os.hostname() && processIsAlive(metadata.pid))
-		) {
+		if (now - startedAt.getTime() > maxAgeMs) return undefined;
+		if (metadata.host === os.hostname() && !processIsAlive(metadata.pid)) {
 			return undefined;
 		}
 		return metadata;
 	} catch {
 		// Older or partially-written locks still represent active work. Their
 		// mtime gives status readers a stable date without mutating the lock.
-		if (Date.now() - stats.mtimeMs > staleMs) return undefined;
 		return {
 			startedAt: stats.mtime.toISOString(),
 			host: "unknown",

@@ -192,23 +192,26 @@ export function startDigestArchiveHeartbeat({
 	ownerId,
 	intervalMs = 15_000,
 	now = () => new Date(),
+	onHeartbeat,
 }: {
 	statePath: string;
 	ownerId: string;
 	intervalMs?: number;
 	now?: () => Date;
+	onHeartbeat?: () => Promise<unknown>;
 }) {
 	let pending = Promise.resolve<unknown>(undefined);
 	const heartbeat = () => {
 		pending = pending
-			.then(() =>
-				updateDigestArchiveRunState(
+			.then(async () => {
+				await updateDigestArchiveRunState(
 					statePath,
 					ownerId,
 					(state) => state,
 					now(),
-				),
-			)
+				).catch(() => undefined);
+				await onHeartbeat?.().catch(() => undefined);
+			})
 			.catch(() => undefined);
 		return pending;
 	};

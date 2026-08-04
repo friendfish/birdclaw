@@ -34,7 +34,6 @@ import {
 } from "./launchd";
 import {
 	acquireScheduledJobLock,
-	acquireScheduledJobLockEffect,
 	appendScheduledJobAuditEffect,
 	peekScheduledJobLockMetadata,
 	peekScheduledJobLockMetadataEffect,
@@ -647,10 +646,12 @@ export function runDigestArchiveJobEffect(
 		};
 
 		const lockResult = yield* Effect.either(
-			acquireScheduledJobLockEffect(resolvedLockPath, DEFAULT_LOCK_STALE_MS, {
-				runDate,
-				totalSources: contentSources.length,
-			}),
+			tryPromise(() =>
+				acquireScheduledJobLock(resolvedLockPath, DEFAULT_LOCK_STALE_MS, {
+					runDate,
+					totalSources: contentSources.length,
+				}),
+			),
 		);
 		if (lockResult._tag === "Left") {
 			const entry: DigestArchiveAuditEntry = {
@@ -706,6 +707,7 @@ export function runDigestArchiveJobEffect(
 			const heartbeat = startDigestArchiveHeartbeat({
 				statePath,
 				ownerId: stateOwnerId,
+				onHeartbeat: () => releaseLock.heartbeat(),
 			});
 
 			return yield* Effect.gen(function* () {
@@ -842,7 +844,12 @@ export function runDigestArchiveJobEffect(
 					Effect.andThen(Effect.fail(error)),
 				);
 			}),
-			Effect.ensuring(releaseLock()),
+			Effect.ensuring(
+				tryPromise(releaseLock).pipe(
+					Effect.asVoid,
+					Effect.catchAll(() => Effect.void),
+				),
+			),
 		);
 	});
 }

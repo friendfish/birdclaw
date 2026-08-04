@@ -5,6 +5,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	utimesSync,
 	writeFileSync,
 } from "node:fs";
@@ -86,7 +87,7 @@ describe("scheduled job runtime", () => {
 		await staleRelease?.();
 	});
 
-	it("keeps an old same-host lock while its pid is alive", async () => {
+	it("reclaims a lock whose heartbeat expired even when its pid is alive", async () => {
 		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
 		mkdirSync(path.dirname(lockPath), { recursive: true });
 		writeFileSync(
@@ -104,12 +105,51 @@ describe("scheduled job runtime", () => {
 
 		await expect(
 			peekScheduledJobLockMetadata(lockPath, 60_000),
-		).resolves.toMatchObject({
-			ownerId: "live-owner",
-			pid: process.pid,
-		});
+		).resolves.toBeUndefined();
+		const replacement = await acquireScheduledJobLock(lockPath, 60_000);
+		expect(replacement).toBeTypeOf("function");
+		await replacement?.();
+	});
+
+	it("renews only the lock owned by the current release handle", async () => {
+		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
+		const firstRelease = await acquireScheduledJobLock(lockPath, 1_000);
+		expect(firstRelease).toBeTypeOf("function");
+		const old = new Date(Date.now() - 2_000);
+		utimesSync(lockPath, old, old);
+
+		await expect(firstRelease?.heartbeat()).resolves.toBe(true);
 		await expect(
-			acquireScheduledJobLock(lockPath, 60_000),
+			peekScheduledJobLockMetadata(lockPath, 1_000),
+		).resolves.toMatchObject({ pid: process.pid });
+
+		rmSync(lockPath, { force: true });
+		const successorRelease = await acquireScheduledJobLock(lockPath, 1_000);
+		expect(successorRelease).toBeTypeOf("function");
+		utimesSync(lockPath, old, old);
+		const successorMtime = statSync(lockPath).mtimeMs;
+
+		await expect(firstRelease?.heartbeat()).resolves.toBe(false);
+		expect(statSync(lockPath).mtimeMs).toBe(successorMtime);
+		await successorRelease?.();
+	});
+
+	it("expires a lock at the absolute maximum age", async () => {
+		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
+		mkdirSync(path.dirname(lockPath), { recursive: true });
+		writeFileSync(
+			lockPath,
+			`${JSON.stringify({
+				ownerId: "reused-pid-owner",
+				startedAt: new Date(Date.now() - 7 * 60 * 60_000).toISOString(),
+				host: os.hostname(),
+				pid: process.pid,
+			})}\n`,
+			"utf8",
+		);
+
+		await expect(
+			peekScheduledJobLockMetadata(lockPath, 60_000, 6 * 60 * 60_000),
 		).resolves.toBeUndefined();
 	});
 
