@@ -33,6 +33,7 @@ import {
 	resolveDigestArchivePaths,
 	peekDigestArchiveRunningRuns,
 	runDigestArchiveJobEffect,
+	replaceDigestArchiveEntryEffect,
 } from "./digest-archive-job";
 import {
 	digestArchiveRunStatePath,
@@ -64,7 +65,15 @@ function digestResult(overrides: Partial<Record<string, unknown>> = {}) {
 		context: {
 			window: { label: "Today", since: "", until: "" },
 			includeDms: false,
-			counts: {},
+			counts: {
+				home: 0,
+				mentions: 0,
+				authored: 0,
+				likes: 0,
+				bookmarks: 0,
+				dms: 0,
+				links: 0,
+			},
 			tweets: [],
 			dms: [],
 			links: [],
@@ -83,6 +92,7 @@ function digestResult(overrides: Partial<Record<string, unknown>> = {}) {
 		model: "gpt-5.5",
 		reasoningEffort: "medium",
 		serviceTier: "priority",
+		parseStatus: "structured" as const,
 		cached: false,
 		updatedAt: "2026-07-27T08:00:00.000Z",
 		...overrides,
@@ -439,7 +449,7 @@ describe("digest-archive-job", () => {
 		expect(entry.steps.at(-1)?.ok).toBe(true);
 	});
 
-	it("writes schema v2 metadata with the final batch status", async () => {
+	it("writes scheduled schema v3 metadata with the final batch status", async () => {
 		const sync = {
 			status: "degraded" as const,
 			steps: [
@@ -474,11 +484,102 @@ describe("digest-archive-job", () => {
 		const json = JSON.parse(readFileSync(jsonPath, "utf8"));
 		expect(json).toEqual(
 			expect.objectContaining({
-				schemaVersion: 2,
+				schemaVersion: 3,
+				archiveOrigin: "scheduled",
+				savedAt: expect.any(String),
 				language: "zh-CN",
 				batchStatus: "degraded",
 				sync,
 			}),
+		);
+	});
+
+	it("replaces only one selected archive pair with manual schema v3", async () => {
+		const archiveDir = tempArchiveDir();
+		const runDate = "2026-08-04";
+		const selected = resolveDigestArchivePaths({
+			archiveDir,
+			runDate,
+			period: "today",
+			contentSource: "all",
+		});
+		const following = resolveDigestArchivePaths({
+			archiveDir,
+			runDate,
+			period: "today",
+			contentSource: "following",
+		});
+		const forYou = resolveDigestArchivePaths({
+			archiveDir,
+			runDate,
+			period: "today",
+			contentSource: "for_you",
+		});
+		mkdirSync(path.dirname(selected.jsonPath), { recursive: true });
+		writeFileSync(selected.markdownPath, "# Original All", "utf8");
+		writeFileSync(selected.jsonPath, '{"original":"all"}', "utf8");
+		writeFileSync(following.markdownPath, "# Original Following", "utf8");
+		writeFileSync(following.jsonPath, '{"original":"following"}', "utf8");
+		writeFileSync(forYou.markdownPath, "# Original For You", "utf8");
+		writeFileSync(forYou.jsonPath, '{"original":"for_you"}', "utf8");
+		const followingBefore = {
+			markdown: readFileSync(following.markdownPath, "utf8"),
+			json: readFileSync(following.jsonPath, "utf8"),
+		};
+		const forYouBefore = {
+			markdown: readFileSync(forYou.markdownPath, "utf8"),
+			json: readFileSync(forYou.jsonPath, "utf8"),
+		};
+
+		const replacement = await runEffectPromise(
+			replaceDigestArchiveEntryEffect({
+				archiveDir,
+				runDate,
+				period: "today",
+				contentSource: "all",
+				result: digestResult({
+					markdown: "# Manual All",
+					updatedAt: "2026-08-04T01:23:45.000Z",
+				}),
+				now: () => new Date("2026-08-04T02:00:00.000Z"),
+			}),
+		);
+
+		expect(replacement).toEqual({
+			period: "today",
+			contentSource: "all",
+			runDate,
+			generatedAt: "2026-08-04T01:23:45.000Z",
+			savedAt: "2026-08-04T02:00:00.000Z",
+			markdownPath: selected.markdownPath,
+			jsonPath: selected.jsonPath,
+		});
+		expect(readFileSync(selected.markdownPath, "utf8")).toBe("# Manual All");
+		expect(JSON.parse(readFileSync(selected.jsonPath, "utf8"))).toEqual(
+			expect.objectContaining({
+				schemaVersion: 3,
+				archiveOrigin: "manual",
+				period: "today",
+				contentSource: "all",
+				runDate,
+				generatedAt: "2026-08-04T01:23:45.000Z",
+				savedAt: "2026-08-04T02:00:00.000Z",
+				markdown: "# Manual All",
+			}),
+		);
+		expect(readFileSync(following.markdownPath, "utf8")).toBe(
+			followingBefore.markdown,
+		);
+		expect(readFileSync(following.jsonPath, "utf8")).toBe(followingBefore.json);
+		expect(readFileSync(forYou.markdownPath, "utf8")).toBe(
+			forYouBefore.markdown,
+		);
+		expect(readFileSync(forYou.jsonPath, "utf8")).toBe(forYouBefore.json);
+		expect(
+			readFileSync(selected.jsonPath, "utf8").includes("batchStatus"),
+		).toBe(false);
+		expect(readFileSync(selected.jsonPath, "utf8").includes('"sync"')).toBe(
+			false,
 		);
 	});
 
@@ -550,6 +651,41 @@ describe("digest-archive-job", () => {
 		});
 
 		expect(entry?.schemaVersion).toBe(1);
+		expect(entry?.markdown).toBe("# Hello");
+	});
+
+	it("continues to read legacy schema v2 archive files", async () => {
+		const archiveDir = tempArchiveDir();
+		const { jsonPath } = resolveDigestArchivePaths({
+			archiveDir,
+			runDate: "2026-07-21",
+			period: "yesterday",
+			contentSource: "following",
+		});
+		mkdirSync(path.dirname(jsonPath), { recursive: true });
+		writeFileSync(
+			jsonPath,
+			JSON.stringify({
+				schemaVersion: 2,
+				period: "yesterday",
+				contentSource: "following",
+				runDate: "2026-07-21",
+				generatedAt: "2026-07-21T01:20:00.000Z",
+				batchStatus: "ok",
+				sync: { status: "fresh", steps: [] },
+				...digestResult(),
+			}),
+			"utf8",
+		);
+
+		const entry = await readDigestArchiveEntry({
+			archiveDir,
+			period: "yesterday",
+			contentSource: "following",
+			date: "2026-07-21",
+		});
+
+		expect(entry?.schemaVersion).toBe(2);
 		expect(entry?.markdown).toBe("# Hello");
 	});
 

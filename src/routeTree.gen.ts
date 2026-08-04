@@ -33,6 +33,7 @@ import { Route as ApiConversationRouteImport } from './routes/api/conversation'
 import { Route as ApiDataSourcesRouteImport } from './routes/api/data-sources'
 import { Route as ApiDigestArchiveDatesRouteImport } from './routes/api/digest-archive-dates'
 import { Route as ApiDigestArchiveEntryRouteImport } from './routes/api/digest-archive-entry'
+import { Route as ApiDigestArchiveSaveRouteImport } from './routes/api/digest-archive-save'
 import { Route as ApiDigestArchiveStatusRouteImport } from './routes/api/digest-archive-status'
 import { Route as ApiDigestScheduleRouteImport } from './routes/api/digest-schedule'
 import { Route as ApiInboxRouteImport } from './routes/api/inbox'
@@ -176,6 +177,11 @@ const ApiDigestArchiveEntryRoute = ApiDigestArchiveEntryRouteImport.update({
   path: '/api/digest-archive-entry',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDigestArchiveSaveRoute = ApiDigestArchiveSaveRouteImport.update({
+  id: '/api/digest-archive-save',
+  path: '/api/digest-archive-save',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDigestArchiveStatusRoute = ApiDigestArchiveStatusRouteImport.update({
   id: '/api/digest-archive-status',
   path: '/api/digest-archive-status',
@@ -316,6 +322,7 @@ export interface FileRoutesByFullPath {
   '/api/data-sources': typeof ApiDataSourcesRoute
   '/api/digest-archive-dates': typeof ApiDigestArchiveDatesRoute
   '/api/digest-archive-entry': typeof ApiDigestArchiveEntryRoute
+  '/api/digest-archive-save': typeof ApiDigestArchiveSaveRoute
   '/api/digest-archive-status': typeof ApiDigestArchiveStatusRoute
   '/api/digest-schedule': typeof ApiDigestScheduleRoute
   '/api/inbox': typeof ApiInboxRoute
@@ -364,6 +371,7 @@ export interface FileRoutesByTo {
   '/api/data-sources': typeof ApiDataSourcesRoute
   '/api/digest-archive-dates': typeof ApiDigestArchiveDatesRoute
   '/api/digest-archive-entry': typeof ApiDigestArchiveEntryRoute
+  '/api/digest-archive-save': typeof ApiDigestArchiveSaveRoute
   '/api/digest-archive-status': typeof ApiDigestArchiveStatusRoute
   '/api/digest-schedule': typeof ApiDigestScheduleRoute
   '/api/inbox': typeof ApiInboxRoute
@@ -413,6 +421,7 @@ export interface FileRoutesById {
   '/api/data-sources': typeof ApiDataSourcesRoute
   '/api/digest-archive-dates': typeof ApiDigestArchiveDatesRoute
   '/api/digest-archive-entry': typeof ApiDigestArchiveEntryRoute
+  '/api/digest-archive-save': typeof ApiDigestArchiveSaveRoute
   '/api/digest-archive-status': typeof ApiDigestArchiveStatusRoute
   '/api/digest-schedule': typeof ApiDigestScheduleRoute
   '/api/inbox': typeof ApiInboxRoute
@@ -463,6 +472,7 @@ export interface FileRouteTypes {
     | '/api/data-sources'
     | '/api/digest-archive-dates'
     | '/api/digest-archive-entry'
+    | '/api/digest-archive-save'
     | '/api/digest-archive-status'
     | '/api/digest-schedule'
     | '/api/inbox'
@@ -511,6 +521,7 @@ export interface FileRouteTypes {
     | '/api/data-sources'
     | '/api/digest-archive-dates'
     | '/api/digest-archive-entry'
+    | '/api/digest-archive-save'
     | '/api/digest-archive-status'
     | '/api/digest-schedule'
     | '/api/inbox'
@@ -559,6 +570,7 @@ export interface FileRouteTypes {
     | '/api/data-sources'
     | '/api/digest-archive-dates'
     | '/api/digest-archive-entry'
+    | '/api/digest-archive-save'
     | '/api/digest-archive-status'
     | '/api/digest-schedule'
     | '/api/inbox'
@@ -608,6 +620,7 @@ export interface RootRouteChildren {
   ApiDataSourcesRoute: typeof ApiDataSourcesRoute
   ApiDigestArchiveDatesRoute: typeof ApiDigestArchiveDatesRoute
   ApiDigestArchiveEntryRoute: typeof ApiDigestArchiveEntryRoute
+  ApiDigestArchiveSaveRoute: typeof ApiDigestArchiveSaveRoute
   ApiDigestArchiveStatusRoute: typeof ApiDigestArchiveStatusRoute
   ApiDigestScheduleRoute: typeof ApiDigestScheduleRoute
   ApiInboxRoute: typeof ApiInboxRoute
@@ -799,6 +812,13 @@ declare module '@tanstack/react-router' {
       path: '/api/digest-archive-entry'
       fullPath: '/api/digest-archive-entry'
       preLoaderRoute: typeof ApiDigestArchiveEntryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/digest-archive-save': {
+      id: '/api/digest-archive-save'
+      path: '/api/digest-archive-save'
+      fullPath: '/api/digest-archive-save'
+      preLoaderRoute: typeof ApiDigestArchiveSaveRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/digest-archive-status': {
@@ -994,6 +1014,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDataSourcesRoute: ApiDataSourcesRoute,
   ApiDigestArchiveDatesRoute: ApiDigestArchiveDatesRoute,
   ApiDigestArchiveEntryRoute: ApiDigestArchiveEntryRoute,
+  ApiDigestArchiveSaveRoute: ApiDigestArchiveSaveRoute,
   ApiDigestArchiveStatusRoute: ApiDigestArchiveStatusRoute,
   ApiDigestScheduleRoute: ApiDigestScheduleRoute,
   ApiInboxRoute: ApiInboxRoute,

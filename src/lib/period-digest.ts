@@ -1046,6 +1046,19 @@ function cachedDigestResult(
 	};
 }
 
+export function readLatestPeriodDigestEffect(
+	options: PeriodDigestOptions,
+): Effect.Effect<PeriodDigestRunResult | null, Error> {
+	return tryDigestSync(() => {
+		const effectivePrompt = resolveEffectivePrompt("period-digest");
+		const cached = readSyncCache<CachedPeriodDigestValue>(
+			latestDigestCacheKey(options, effectivePrompt.promptHash),
+		);
+		if (!cached?.value.context) return null;
+		return cachedDigestResult(cached, cached.value.context);
+	});
+}
+
 function getDigestFreshnessMs(): number {
 	const envFreshness = process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS;
 	if (envFreshness) {

@@ -175,9 +175,19 @@ export interface PeriodDigestArchiveFileV2 extends PeriodDigestArchiveFileBase {
 	sync: DigestArchiveSyncResult;
 }
 
+export interface PeriodDigestArchiveFileV3 extends PeriodDigestArchiveFileBase {
+	schemaVersion: 3;
+	archiveOrigin: "scheduled" | "manual";
+	savedAt: string;
+	language?: string;
+	batchStatus?: DigestArchiveBatchStatus;
+	sync?: DigestArchiveSyncResult;
+}
+
 export type PeriodDigestArchiveFile =
 	| PeriodDigestArchiveFileV1
-	| PeriodDigestArchiveFileV2;
+	| PeriodDigestArchiveFileV2
+	| PeriodDigestArchiveFileV3;
 
 function messageFromError(error: unknown) {
 	return error instanceof Error ? error.message : String(error);
@@ -187,7 +197,7 @@ function trySync<T>(try_: () => T) {
 	return Effect.try({ try: try_, catch: (error) => error });
 }
 
-function formatLocalDateFolder(date: Date) {
+export function formatDigestArchiveRunDate(date: Date) {
 	const yyyy = date.getFullYear();
 	const mm = String(date.getMonth() + 1).padStart(2, "0");
 	const dd = String(date.getDate()).padStart(2, "0");
@@ -218,6 +228,40 @@ async function writeJsonAtomically(jsonPath: string, value: unknown) {
 		await fs.rename(temporaryPath, jsonPath);
 	} finally {
 		await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+	}
+}
+
+async function writeDigestArchivePair({
+	markdownPath,
+	jsonPath,
+	markdown,
+	archive,
+}: {
+	markdownPath: string;
+	jsonPath: string;
+	markdown: string;
+	archive: PeriodDigestArchiveFile;
+}) {
+	await fs.mkdir(path.dirname(jsonPath), { recursive: true });
+	const owner = `${process.pid}.${randomUUID()}`;
+	const temporaryMarkdownPath = `${markdownPath}.${owner}.tmp`;
+	const temporaryJsonPath = `${jsonPath}.${owner}.tmp`;
+	try {
+		await Promise.all([
+			fs.writeFile(temporaryMarkdownPath, markdown, "utf8"),
+			fs.writeFile(
+				temporaryJsonPath,
+				JSON.stringify(archive, null, "\t"),
+				"utf8",
+			),
+		]);
+		await fs.rename(temporaryMarkdownPath, markdownPath);
+		await fs.rename(temporaryJsonPath, jsonPath);
+	} finally {
+		await Promise.all([
+			fs.rm(temporaryMarkdownPath, { force: true }).catch(() => undefined),
+			fs.rm(temporaryJsonPath, { force: true }).catch(() => undefined),
+		]);
 	}
 }
 
@@ -262,6 +306,76 @@ export function resolveDigestArchivePaths({
 }) {
 	const base = path.join(archiveDir, runDate, `${period}-${contentSource}`);
 	return { markdownPath: `${base}.md`, jsonPath: `${base}.json` };
+}
+
+export interface DigestArchiveReplacementResult {
+	period: "today" | "24h";
+	contentSource: PeriodDigestContentSource;
+	runDate: string;
+	generatedAt: string;
+	savedAt: string;
+	markdownPath: string;
+	jsonPath: string;
+}
+
+export function replaceDigestArchiveEntryEffect({
+	archiveDir,
+	runDate,
+	period,
+	contentSource,
+	result,
+	language,
+	now = () => new Date(),
+}: {
+	archiveDir: string;
+	runDate: string;
+	period: "today" | "24h";
+	contentSource: PeriodDigestContentSource;
+	result: PeriodDigestRunResult;
+	language?: string;
+	now?: () => Date;
+}): Effect.Effect<DigestArchiveReplacementResult, unknown> {
+	return tryPromise(async () => {
+		const { markdownPath, jsonPath } = resolveDigestArchivePaths({
+			archiveDir,
+			runDate,
+			period,
+			contentSource,
+		});
+		const savedAt = now().toISOString();
+		const archive: PeriodDigestArchiveFileV3 = {
+			schemaVersion: 3,
+			archiveOrigin: "manual",
+			savedAt,
+			period,
+			contentSource,
+			runDate,
+			generatedAt: result.updatedAt,
+			context: result.context,
+			digest: result.digest,
+			markdown: result.markdown,
+			model: result.model,
+			reasoningEffort: result.reasoningEffort,
+			serviceTier: result.serviceTier,
+			cached: result.cached,
+			...(language ? { language } : {}),
+		};
+		await writeDigestArchivePair({
+			markdownPath,
+			jsonPath,
+			markdown: result.markdown,
+			archive,
+		});
+		return {
+			period,
+			contentSource,
+			runDate,
+			generatedAt: result.updatedAt,
+			savedAt,
+			markdownPath,
+			jsonPath,
+		};
+	});
 }
 
 function retryEffect<A>(
@@ -343,11 +457,10 @@ function runOneContentSourceEffect({
 				period,
 				contentSource,
 			});
-			yield* tryPromise(() =>
-				fs.mkdir(path.dirname(markdownPath), { recursive: true }),
-			);
-			const archiveFile: PeriodDigestArchiveFileV2 = {
-				schemaVersion: 2,
+			const archiveFile: PeriodDigestArchiveFileV3 = {
+				schemaVersion: 3,
+				archiveOrigin: "scheduled",
+				savedAt: new Date().toISOString(),
 				period,
 				contentSource,
 				runDate,
@@ -364,9 +477,13 @@ function runOneContentSourceEffect({
 				sync,
 			};
 			yield* tryPromise(() =>
-				fs.writeFile(markdownPath, result.markdown, "utf8"),
+				writeDigestArchivePair({
+					markdownPath,
+					jsonPath,
+					markdown: result.markdown,
+					archive: archiveFile,
+				}),
 			);
-			yield* tryPromise(() => writeJsonAtomically(jsonPath, archiveFile));
 			return {
 				contentSource,
 				ok: true,
@@ -402,7 +519,12 @@ function updateArchiveBatchStatusEffect(
 			return tryPromise(async () => {
 				const raw = await fs.readFile(step.jsonPath as string, "utf8");
 				const archive = JSON.parse(raw) as PeriodDigestArchiveFile;
-				if (archive.schemaVersion !== 2) return;
+				if (
+					archive.schemaVersion === 1 ||
+					(archive.schemaVersion === 3 && archive.archiveOrigin !== "scheduled")
+				) {
+					return;
+				}
 				await writeJsonAtomically(step.jsonPath as string, {
 					...archive,
 					batchStatus: status,
@@ -450,7 +572,7 @@ export function runDigestArchiveJobEffect(
 		);
 		const run = startScheduledJobRun();
 		const runDate = yield* trySync(() =>
-			formatLocalDateFolder(options.now?.() ?? new Date()),
+			formatDigestArchiveRunDate(options.now?.() ?? new Date()),
 		);
 		const selectedLanguage = yield* trySync(() =>
 			selectDigestArchiveLanguage(options.language),
@@ -1011,7 +1133,7 @@ export async function peekDigestArchiveRunningRuns(): Promise<
 				period,
 				runDate:
 					metadata.runDate ??
-					formatLocalDateFolder(new Date(metadata.startedAt)),
+					formatDigestArchiveRunDate(new Date(metadata.startedAt)),
 				totalSources: metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 			});
 		}
@@ -1044,7 +1166,7 @@ export function peekDigestArchiveRunningRunsEffect(): Effect.Effect<
 								period,
 								runDate:
 									metadata.runDate ??
-									formatLocalDateFolder(new Date(metadata.startedAt)),
+									formatDigestArchiveRunDate(new Date(metadata.startedAt)),
 								totalSources:
 									metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 							}
@@ -1151,7 +1273,8 @@ export async function getDigestArchiveStatus(): Promise<DigestArchiveStatusSnaps
 		activeRuns.push({
 			period,
 			runDate:
-				metadata.runDate ?? formatLocalDateFolder(new Date(metadata.startedAt)),
+				metadata.runDate ??
+				formatDigestArchiveRunDate(new Date(metadata.startedAt)),
 			totalSources: metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 			phase: "pre-sync",
 			startedAt: metadata.startedAt,

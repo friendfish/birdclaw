@@ -34,7 +34,7 @@ const digestArchiveStatusResponseSchema = z.object({
 			z.object({
 				period: z.string(),
 				runDate: z.string(),
-				status: z.enum(["ok", "partial", "failed"]),
+				status: z.enum(["ok", "degraded", "failed"]),
 				finishedAt: z.string(),
 				sources: z.record(z.string(), sourceRunSchema).default({}),
 			}),

@@ -1392,7 +1392,7 @@ describe("today route", () => {
 							{
 								period: "yesterday",
 								runDate: "2026-07-29",
-								status: "failed",
+								status: "degraded",
 								finishedAt: "2026-07-30T00:02:00.000Z",
 								sources: {
 									for_you: {
