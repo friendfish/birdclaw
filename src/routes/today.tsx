@@ -594,11 +594,18 @@ export function TodayRouteView({
 		running: archiveRunning,
 		activeRunDate: activeArchiveRun?.runDate,
 	});
+	const liveResultIsCurrent = Boolean(
+		live.result &&
+		(!archived.result ||
+			live.result.updatedAt === archived.result.updatedAt ||
+			Date.parse(live.result.updatedAt) >=
+				Date.parse(archived.result.updatedAt)),
+	);
 	const useArchivedResult =
 		isArchivedPeriod ||
 		archiveRunning ||
 		archived.finalizing ||
-		Boolean(archived.result);
+		(Boolean(archived.result) && !liveResultIsCurrent);
 	const archiveBusy = archived.activeRunInProgress;
 	const context = useArchivedResult ? archived.context : live.context;
 	const markdown = useArchivedResult ? archived.markdown : live.markdown;

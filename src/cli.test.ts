@@ -1,10 +1,5 @@
 // @vitest-environment node
-import {
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -144,7 +139,8 @@ vi.mock("#/lib/bookmark-sync-job", () => ({
 }));
 
 vi.mock("#/lib/digest-archive-job", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("#/lib/digest-archive-job")>();
+	const actual =
+		await importOriginal<typeof import("#/lib/digest-archive-job")>();
 	return {
 		...actual,
 		runDigestArchiveJob: (...args: unknown[]) =>
@@ -911,13 +907,9 @@ describe("cli", () => {
 		);
 		const originalAuthToken = process.env.AUTH_TOKEN;
 		const originalCt0 = process.env.CT0;
-		const environmentsDuringRun: NodeJS.ProcessEnv[] = [];
 		process.env.AUTH_TOKEN = "existing-auth";
 		process.env.CT0 = "existing-ct0";
-		runDigestArchiveJobMock.mockImplementation(async () => {
-			environmentsDuringRun.push({ ...process.env });
-			return { ok: true };
-		});
+		runDigestArchiveJobMock.mockResolvedValue({ ok: true });
 
 		try {
 			const { runCli } = await loadCli();
@@ -931,12 +923,16 @@ describe("cli", () => {
 				"--env-path",
 				validPath,
 			]);
-			expect(environmentsDuringRun[0]).toMatchObject({
-				AUTH_TOKEN: "cli-auth",
-				CT0: "cli-ct0",
+			expect(runDigestArchiveJobMock).toHaveBeenNthCalledWith(
+				1,
+				expect.objectContaining({
+					birdCredentials: { authToken: "cli-auth", ct0: "cli-ct0" },
+				}),
+			);
+			expect(process.env).toMatchObject({
+				AUTH_TOKEN: "existing-auth",
+				CT0: "existing-ct0",
 			});
-			expect(process.env.AUTH_TOKEN).toBe("existing-auth");
-			expect(process.env.CT0).toBe("existing-ct0");
 
 			await runCli([
 				"node",
@@ -948,10 +944,12 @@ describe("cli", () => {
 				"--env-path",
 				invalidPath,
 			]);
-			expect(environmentsDuringRun[1]).toMatchObject({
-				AUTH_TOKEN: "existing-auth",
-				CT0: "existing-ct0",
-			});
+			expect(runDigestArchiveJobMock).toHaveBeenNthCalledWith(
+				2,
+				expect.objectContaining({ birdCredentials: null }),
+			);
+			expect(process.env.AUTH_TOKEN).toBe("existing-auth");
+			expect(process.env.CT0).toBe("existing-ct0");
 			expect(runDigestArchiveJobMock).toHaveBeenCalledTimes(2);
 		} finally {
 			if (originalAuthToken === undefined) delete process.env.AUTH_TOKEN;

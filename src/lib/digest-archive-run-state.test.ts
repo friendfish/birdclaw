@@ -105,4 +105,47 @@ describe("digest archive run state", () => {
 			lastHeartbeatAt: "2026-08-04T00:00:15.000Z",
 		});
 	});
+
+	it("serializes concurrent mutations so heartbeats cannot erase progress", async () => {
+		const statePath = makeStatePath();
+		await writeDigestArchiveRunState(
+			statePath,
+			createDigestArchiveRunState({
+				period: "today",
+				runDate: "2026-08-04",
+				ownerId: "owner-concurrent",
+				contentSources: ["all"],
+				now: new Date("2026-08-04T00:00:00.000Z"),
+			}),
+		);
+
+		await Promise.all([
+			updateDigestArchiveRunState(
+				statePath,
+				"owner-concurrent",
+				(state) => ({ ...state, phase: "generating" }),
+				new Date("2026-08-04T00:00:15.000Z"),
+			),
+			updateDigestArchiveRunState(
+				statePath,
+				"owner-concurrent",
+				(state) => ({
+					...state,
+					currentSource: "all",
+					sources: {
+						...state.sources,
+						all: { state: "running", attempts: 1 },
+					},
+				}),
+				new Date("2026-08-04T00:00:16.000Z"),
+			),
+		]);
+
+		await expect(readDigestArchiveRunState(statePath)).resolves.toMatchObject({
+			phase: "generating",
+			currentSource: "all",
+			sources: { all: { state: "running", attempts: 1 } },
+			lastHeartbeatAt: "2026-08-04T00:00:16.000Z",
+		});
+	});
 });

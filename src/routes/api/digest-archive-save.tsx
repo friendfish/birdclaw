@@ -6,6 +6,7 @@ import { resolveDigestArchiveDir } from "#/lib/config";
 import {
 	DEFAULT_LOCK_STALE_MS,
 	digestArchiveLockPath,
+	digestArchivePublicationLockPath,
 	formatDigestArchiveRunDate,
 	getDefaultDigestArchiveAuditLogPath,
 	replaceDigestArchiveEntryEffect,
@@ -19,6 +20,7 @@ import {
 } from "#/lib/http-effect";
 import { readLatestPeriodDigestEffect } from "#/lib/period-digest";
 import {
+	acquireScheduledJobLockEffect,
 	appendScheduledJobAuditEffect,
 	peekScheduledJobLockMetadataEffect,
 } from "#/lib/scheduled-job";
@@ -55,65 +57,85 @@ export const Route = createFileRoute("/api/digest-archive-save")({
 							return errorResponse("Invalid digest archive save request.", 400);
 						}
 						const body = parsed.data;
-						const activeOwner = yield* peekScheduledJobLockMetadataEffect(
-							digestArchiveLockPath(body.period),
-							DEFAULT_LOCK_STALE_MS,
-						);
-						if (activeOwner) {
-							return errorResponse(
-								"A scheduled digest is currently generating for this period.",
-								409,
-							);
-						}
-
-						const result = yield* readLatestPeriodDigestEffect({
-							period: body.period,
-							contentSource: body.contentSource,
-							includeDms: body.includeDms,
-						});
-						if (!result) {
-							return errorResponse(
-								"No complete manually generated digest is available to save.",
-								404,
-							);
-						}
-						if (result.updatedAt !== body.expectedUpdatedAt) {
-							return errorResponse(
-								"The displayed digest is no longer the latest result. Refresh and try again.",
-								409,
-							);
-						}
-
+						const archiveDir = resolveDigestArchiveDir();
 						const runDate = formatDigestArchiveRunDate(new Date());
-						const replacement = yield* replaceDigestArchiveEntryEffect({
-							archiveDir: resolveDigestArchiveDir(),
-							runDate,
-							period: body.period,
-							contentSource: body.contentSource,
-							result,
-							language: resolveDigestArchiveLanguage(),
-						});
-						yield* appendScheduledJobAuditEffect(
-							getDefaultDigestArchiveAuditLogPath(),
-							{
-								job: "digest-archive-manual-save",
+						const releasePublication = yield* acquireScheduledJobLockEffect(
+							digestArchivePublicationLockPath({
+								archiveDir,
+								runDate,
 								period: body.period,
 								contentSource: body.contentSource,
+							}),
+							DEFAULT_LOCK_STALE_MS,
+						);
+						if (!releasePublication) {
+							return errorResponse(
+								"This digest archive entry is currently being saved.",
+								409,
+							);
+						}
+
+						return yield* Effect.gen(function* () {
+							const activeOwner = yield* peekScheduledJobLockMetadataEffect(
+								digestArchiveLockPath(body.period),
+								DEFAULT_LOCK_STALE_MS,
+							);
+							if (activeOwner) {
+								return errorResponse(
+									"A scheduled digest is currently generating for this period.",
+									409,
+								);
+							}
+
+							const result = yield* readLatestPeriodDigestEffect({
+								period: body.period,
+								contentSource: body.contentSource,
+								includeDms: body.includeDms,
+							});
+							if (!result) {
+								return errorResponse(
+									"No complete manually generated digest is available to save.",
+									404,
+								);
+							}
+							if (result.updatedAt !== body.expectedUpdatedAt) {
+								return errorResponse(
+									"The displayed digest is no longer the latest result. Refresh and try again.",
+									409,
+								);
+							}
+
+							const replacement = yield* replaceDigestArchiveEntryEffect({
+								archiveDir,
 								runDate,
+								period: body.period,
+								contentSource: body.contentSource,
+								result,
+								language: resolveDigestArchiveLanguage(),
+								publicationLeaseHeld: true,
+							});
+							yield* appendScheduledJobAuditEffect(
+								getDefaultDigestArchiveAuditLogPath(),
+								{
+									job: "digest-archive-manual-save",
+									period: body.period,
+									contentSource: body.contentSource,
+									runDate,
+									generatedAt: replacement.generatedAt,
+									savedAt: replacement.savedAt,
+									host: os.hostname(),
+									pid: process.pid,
+								},
+							);
+
+							return jsonResponse({
+								ok: true,
+								period: body.period,
+								contentSource: body.contentSource,
 								generatedAt: replacement.generatedAt,
 								savedAt: replacement.savedAt,
-								host: os.hostname(),
-								pid: process.pid,
-							},
-						);
-
-						return jsonResponse({
-							ok: true,
-							period: body.period,
-							contentSource: body.contentSource,
-							generatedAt: replacement.generatedAt,
-							savedAt: replacement.savedAt,
-						});
+							});
+						}).pipe(Effect.ensuring(releasePublication()));
 					}),
 				),
 		},

@@ -2,6 +2,13 @@ process.env.BIRDCLAW_DISABLE_LIVE_WRITES ??= "1";
 // Existing integration fixtures opt into the same sample dataset as `init --demo`.
 process.env.BIRDCLAW_TEST_SEED_DEMO_DATA = "1";
 
+// Never let workstation credentials enter mocks or assertion failure output.
+for (const name of Object.keys(process.env)) {
+	if (/(?:AUTH_TOKEN|CT0|API_KEY|TOKEN|SECRET|PASSWORD|COOKIE)/iu.test(name)) {
+		delete process.env[name];
+	}
+}
+
 export {};
 
 function installMemoryStorage(

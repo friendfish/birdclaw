@@ -185,15 +185,15 @@ describe("digest-archive-job", () => {
 
 		expect(order).toEqual(["pre-sync", "all", "following", "for_you"]);
 		expect(preSyncEffectMock).toHaveBeenCalledTimes(1);
-			expect(preSyncEffectMock).toHaveBeenCalledWith({
+		expect(preSyncEffectMock).toHaveBeenCalledWith({
 			period: "yesterday",
 			contentSources: ["all", "following", "for_you"],
 			account: undefined,
 			since: undefined,
-				until: undefined,
-				liveSync: true,
-				nonInteractiveBird: true,
-			});
+			until: undefined,
+			liveSync: true,
+			nonInteractiveBird: true,
+		});
 		expect(streamPeriodDigestMock).toHaveBeenCalledTimes(3);
 		for (const [call] of streamPeriodDigestMock.mock.calls) {
 			expect(call).toEqual(expect.objectContaining({ liveSync: false }));
@@ -622,6 +622,71 @@ describe("digest-archive-job", () => {
 		});
 	});
 
+	it("audits unexpected job failures without leaking credentials", async () => {
+		const archiveDir = tempArchiveDir();
+		const logPath = path.join(archiveDir, "audit.jsonl");
+		const credential = "test-auth-token-not-a-real-secret";
+		preSyncEffectMock.mockReturnValue(
+			Effect.fail(new Error(`pre-sync failed AUTH_TOKEN=${credential}`)),
+		);
+
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect({
+					period: "today",
+					archiveDir,
+					contentSources: ["all"],
+					logPath,
+					now: () => new Date(2026, 6, 29),
+				}),
+			),
+		).rejects.toThrow("pre-sync failed");
+
+		const audit = readFileSync(logPath, "utf8");
+		expect(audit).not.toContain(credential);
+		expect(JSON.parse(audit)).toMatchObject({
+			job: "digest-archive",
+			period: "today",
+			ok: false,
+			status: "failed",
+			runDate: "2026-07-29",
+			sync: { status: "skipped", steps: [] },
+			steps: [],
+			error: "pre-sync failed AUTH_TOKEN=[REDACTED]",
+		});
+	});
+
+	it("audits a failure to acquire the scheduled job lock", async () => {
+		const archiveDir = tempArchiveDir();
+		const lockPath = path.join(archiveDir, "lock-is-a-directory");
+		const logPath = path.join(archiveDir, "audit.jsonl");
+		mkdirSync(lockPath);
+
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect({
+					period: "today",
+					archiveDir,
+					contentSources: ["all"],
+					lockPath,
+					logPath,
+					now: () => new Date(2026, 6, 29),
+				}),
+			),
+		).rejects.toThrow(/EISDIR|directory/iu);
+
+		expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+			job: "digest-archive",
+			period: "today",
+			ok: false,
+			status: "failed",
+			runDate: "2026-07-29",
+			sync: { status: "skipped", steps: [] },
+			steps: [],
+			error: expect.any(String),
+		});
+	});
+
 	it("continues to read legacy schema v1 archive files", async () => {
 		const archiveDir = tempArchiveDir();
 		const { jsonPath } = resolveDigestArchivePaths({
@@ -909,10 +974,10 @@ describe("digest-archive-job", () => {
 			{ since: undefined, until: undefined, liveSync: false },
 		]);
 		expect(preSyncEffectMock).toHaveBeenCalledWith(
-				expect.objectContaining({
-					liveSync: true,
-					nonInteractiveBird: true,
-					since: undefined,
+			expect.objectContaining({
+				liveSync: true,
+				nonInteractiveBird: true,
+				since: undefined,
 				until: undefined,
 			}),
 		);

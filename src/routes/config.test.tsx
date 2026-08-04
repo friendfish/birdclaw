@@ -534,4 +534,45 @@ describe("config X credentials panel", () => {
 		expect(screen.queryByText(authToken)).not.toBeInTheDocument();
 		expect(screen.queryByText(ct0)).not.toBeInTheDocument();
 	});
+
+	it("allows an incomplete credential file to be cleared or replaced", async () => {
+		let credentialStatus = { configured: true, complete: false };
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/config") {
+					return jsonResponse(configResponse());
+				}
+				if (url.pathname === "/api/digest-schedule") {
+					return jsonResponse(scheduleResponse());
+				}
+				if (
+					url.pathname === "/api/bird-credentials" &&
+					init?.method === "DELETE"
+				) {
+					credentialStatus = { configured: false, complete: false };
+					return jsonResponse({ ok: true, status: credentialStatus });
+				}
+				if (url.pathname === "/api/bird-credentials") {
+					return jsonResponse({ ok: true, status: credentialStatus });
+				}
+				throw new Error(`Unexpected request: ${url.pathname}`);
+			}),
+		);
+
+		render(<ConfigRoute />);
+		fireEvent.click(
+			await screen.findByRole("button", { name: "X Credentials" }),
+		);
+
+		expect(await screen.findByText("Incomplete configuration")).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: "Test Credentials" }),
+		).toBeDisabled();
+		const clear = screen.getByRole("button", { name: "Clear Credentials" });
+		expect(clear).toBeEnabled();
+		fireEvent.click(clear);
+		expect(await screen.findByText("Not configured")).toBeVisible();
+	});
 });

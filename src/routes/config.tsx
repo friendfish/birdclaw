@@ -136,7 +136,8 @@ function CredentialsPanel() {
 		};
 	}, []);
 
-	const configured = status?.complete === true;
+	const credentialFilePresent = status?.configured === true;
+	const credentialsUsable = status?.complete === true;
 	const canSave =
 		authToken.trim().length > 0 &&
 		ct0.trim().length > 0 &&
@@ -164,9 +165,7 @@ function CredentialsPanel() {
 			setCt0("");
 			setSuccessMessage("Credentials saved.");
 		} catch (saveError) {
-			setError(
-				saveError instanceof Error ? saveError.message : "Save failed",
-			);
+			setError(saveError instanceof Error ? saveError.message : "Save failed");
 		} finally {
 			setActiveOperation(null);
 		}
@@ -190,7 +189,9 @@ function CredentialsPanel() {
 			setSuccessMessage("Credentials verified.");
 		} catch (testError) {
 			setError(
-				testError instanceof Error ? testError.message : "Credential test failed",
+				testError instanceof Error
+					? testError.message
+					: "Credential test failed",
 			);
 		} finally {
 			setActiveOperation(null);
@@ -228,11 +229,13 @@ function CredentialsPanel() {
 					<div className="text-[14px] font-bold text-[var(--ink)]">
 						{status === null
 							? "Loading status..."
-							: configured
+							: credentialsUsable
 								? "Configured"
-								: "Not configured"}
+								: credentialFilePresent
+									? "Incomplete configuration"
+									: "Not configured"}
 					</div>
-					{configured && status?.updatedAt ? (
+					{credentialFilePresent && status?.updatedAt ? (
 						<time
 							dateTime={status.updatedAt}
 							className="text-[12px] text-[var(--ink-soft)]"
@@ -244,7 +247,11 @@ function CredentialsPanel() {
 				<span
 					className={cx(
 						"size-2.5 shrink-0 rounded-full",
-						configured ? "bg-emerald-500" : "bg-[var(--ink-faint)]",
+						credentialsUsable
+							? "bg-emerald-500"
+							: credentialFilePresent
+								? "bg-amber-500"
+								: "bg-[var(--ink-faint)]",
 					)}
 					aria-hidden="true"
 				/>
@@ -307,14 +314,14 @@ function CredentialsPanel() {
 					<Save className="size-4" />
 					{activeOperation === "save"
 						? "Saving..."
-						: configured
+						: credentialFilePresent
 							? "Replace"
 							: "Save"}
 				</button>
 				<button
 					type="button"
 					onClick={handleTestCredentials}
-					disabled={!configured || activeOperation !== null}
+					disabled={!credentialsUsable || activeOperation !== null}
 					className={secondaryButtonClass}
 				>
 					<ShieldCheck className="size-4" />
@@ -323,7 +330,7 @@ function CredentialsPanel() {
 				<button
 					type="button"
 					onClick={handleClearCredentials}
-					disabled={!configured || activeOperation !== null}
+					disabled={!credentialFilePresent || activeOperation !== null}
 					className={secondaryButtonClass}
 				>
 					<Trash2 className="size-4" />

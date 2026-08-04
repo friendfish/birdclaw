@@ -809,13 +809,25 @@ describe("bird transport wrapper", () => {
 		const { listHomeTimelineViaBird } = await import("./bird");
 
 		await expect(
-			listHomeTimelineViaBird({ maxResults: 9, following: true }),
+			listHomeTimelineViaBird({
+				maxResults: 9,
+				following: true,
+				env: { AUTH_TOKEN: "scheduled-auth", CT0: "scheduled-ct0" },
+			}),
 		).resolves.toEqual({
 			data: [expect.objectContaining({ id: "home_1", author_id: "45" })],
 			includes: { users: [{ id: "45", username: "riley", name: "Riley" }] },
 			meta: expect.objectContaining({ result_count: 1 }),
 		});
 		expectBirdCommandCall(1, ["home", "-n", "9", "--following", "--json-full"]);
+		expect(execFileAsyncMock.mock.calls[0]?.[2]).toEqual(
+			expect.objectContaining({
+				env: expect.objectContaining({
+					AUTH_TOKEN: "scheduled-auth",
+					CT0: "scheduled-ct0",
+				}),
+			}),
+		);
 	});
 
 	it("maps bird follower lists into xurl-compatible users", async () => {

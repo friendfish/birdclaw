@@ -26,7 +26,10 @@ let tempRoot = "";
 const originalAuthToken = process.env.AUTH_TOKEN;
 const originalCt0 = process.env.CT0;
 
-function restoreEnvironmentVariable(name: "AUTH_TOKEN" | "CT0", value?: string) {
+function restoreEnvironmentVariable(
+	name: "AUTH_TOKEN" | "CT0",
+	value?: string,
+) {
 	if (value === undefined) {
 		delete process.env[name];
 		return;
@@ -171,8 +174,8 @@ describe("bird credential store", () => {
 		writeBirdCredentials({ authToken: "managed-auth", ct0: "managed-ct0" });
 
 		expect(mergeBirdCredentialEnvironment()).toMatchObject({
-			AUTH_TOKEN: "managed-auth",
-			CT0: "managed-ct0",
+			AUTH_TOKEN: "process-auth",
+			CT0: "process-ct0",
 			BIRDCLAW_CREDENTIAL_TEST: "preserved",
 		});
 		expect(
@@ -182,7 +185,7 @@ describe("bird credential store", () => {
 			}),
 		).toMatchObject({
 			AUTH_TOKEN: "explicit-auth",
-			CT0: "managed-ct0",
+			CT0: "process-ct0",
 			EXPLICIT_ONLY: "yes",
 		});
 		delete process.env.BIRDCLAW_CREDENTIAL_TEST;

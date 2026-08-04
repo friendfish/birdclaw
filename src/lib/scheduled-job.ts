@@ -38,6 +38,104 @@ function isFileExistsError(error: unknown) {
 	);
 }
 
+async function tryCreateScheduledJobLock(
+	lockPath: string,
+	metadata: Pick<ScheduledJobLockMetadata, "runDate" | "totalSources">,
+): Promise<ScheduledJobLockRelease | undefined> {
+	const ownerId = randomUUID();
+	let handle: Awaited<ReturnType<typeof fs.open>>;
+	try {
+		handle = await fs.open(lockPath, "wx");
+	} catch (error) {
+		if (isFileExistsError(error)) return undefined;
+		throw error;
+	}
+	try {
+		await handle.writeFile(
+			`${JSON.stringify({
+				ownerId,
+				pid: process.pid,
+				host: os.hostname(),
+				startedAt: new Date().toISOString(),
+				...(metadata.runDate ? { runDate: metadata.runDate } : {}),
+				...(Number.isInteger(metadata.totalSources) &&
+				(metadata.totalSources ?? 0) > 0
+					? { totalSources: metadata.totalSources }
+					: {}),
+			})}\n`,
+			"utf8",
+		);
+	} finally {
+		await handle.close();
+	}
+
+	return async () => {
+		const raw = await fs.readFile(lockPath, "utf8").catch(() => undefined);
+		if (raw === undefined) return;
+		try {
+			const current = JSON.parse(raw) as Partial<ScheduledJobLockMetadata>;
+			if (current.ownerId !== ownerId) return;
+		} catch {
+			return;
+		}
+		await fs.rm(lockPath, { force: true });
+	};
+}
+
+async function acquireReclamationLease(reclaimPath: string, staleMs: number) {
+	const acquired = await tryCreateScheduledJobLock(reclaimPath, {});
+	if (acquired) return acquired;
+	if (await peekScheduledJobLockMetadata(reclaimPath, staleMs)) {
+		return undefined;
+	}
+
+	// Never delete a stale lease based on an earlier observation: another
+	// contender could already have replaced it. A child lease provides the same
+	// exclusive-create arbitration recursively, including after repeated crashes.
+	const releaseChild = await acquireReclamationLease(
+		`${reclaimPath}.reclaim`,
+		staleMs,
+	);
+	if (!releaseChild) return undefined;
+	let releaseAncestor: ScheduledJobLockRelease | undefined;
+	try {
+		const ancestorExists = await fs
+			.stat(reclaimPath)
+			.then(() => true)
+			.catch((error) => {
+				if (
+					typeof error === "object" &&
+					error !== null &&
+					"code" in error &&
+					error.code === "ENOENT"
+				) {
+					return false;
+				}
+				throw error;
+			});
+		if (
+			ancestorExists &&
+			(await peekScheduledJobLockMetadata(reclaimPath, staleMs))
+		) {
+			return undefined;
+		}
+		if (ancestorExists) {
+			await fs.rm(reclaimPath, { force: true });
+		}
+
+		// A delayed contender can create the ancestor as soon as it disappears.
+		// Proceed only if this process wins the ancestor's exclusive create too.
+		releaseAncestor = await tryCreateScheduledJobLock(reclaimPath, {});
+		if (!releaseAncestor) return undefined;
+		return async () => {
+			await releaseAncestor?.();
+			await releaseChild();
+		};
+	} finally {
+		if (!releaseAncestor) await releaseChild();
+	}
+}
+
 export function startScheduledJobRun(started = Date.now()): ScheduledJobRun {
 	const startedAt = new Date(started).toISOString();
 	return {
@@ -70,49 +168,25 @@ export async function acquireScheduledJobLock(
 	metadata: Pick<ScheduledJobLockMetadata, "runDate" | "totalSources"> = {},
 ): Promise<ScheduledJobLockRelease | undefined> {
 	await fs.mkdir(path.dirname(lockPath), { recursive: true });
-	const ownerId = randomUUID();
+	const acquired = await tryCreateScheduledJobLock(lockPath, metadata);
+	if (acquired) return acquired;
+
+	const existingMetadata = await peekScheduledJobLockMetadata(
+		lockPath,
+		staleMs,
+	);
+	if (existingMetadata) return undefined;
+
+	const reclaimPath = `${lockPath}.reclaim`;
+	const releaseReclaim = await acquireReclamationLease(reclaimPath, staleMs);
+	if (!releaseReclaim) return undefined;
 	try {
-		const handle = await fs.open(lockPath, "wx");
-		try {
-			await handle.writeFile(
-				`${JSON.stringify({
-					ownerId,
-					pid: process.pid,
-					host: os.hostname(),
-					startedAt: new Date().toISOString(),
-					...(metadata.runDate ? { runDate: metadata.runDate } : {}),
-					...(Number.isInteger(metadata.totalSources) &&
-					(metadata.totalSources ?? 0) > 0
-						? { totalSources: metadata.totalSources }
-						: {}),
-				})}\n`,
-				"utf8",
-			);
-		} finally {
-			await handle.close();
-		}
-		return async () => {
-			const raw = await fs.readFile(lockPath, "utf8").catch(() => undefined);
-			if (raw === undefined) return;
-			try {
-				const metadata = JSON.parse(raw) as Partial<ScheduledJobLockMetadata>;
-				if (metadata.ownerId !== ownerId) return;
-			} catch {
-				return;
-			}
-			await fs.rm(lockPath, { force: true });
-		};
-	} catch (error) {
-		if (!isFileExistsError(error)) throw error;
-		const existingMetadata = await peekScheduledJobLockMetadata(
-			lockPath,
-			staleMs,
-		);
-		if (!existingMetadata) {
-			await fs.rm(lockPath, { force: true });
-			return acquireScheduledJobLock(lockPath, staleMs, metadata);
-		}
-		return undefined;
+		// Another contender may have reclaimed the lock before this lease was won.
+		if (await peekScheduledJobLockMetadata(lockPath, staleMs)) return undefined;
+		await fs.rm(lockPath, { force: true });
+		return await tryCreateScheduledJobLock(lockPath, metadata);
+	} finally {
+		await releaseReclaim();
 	}
 }
 

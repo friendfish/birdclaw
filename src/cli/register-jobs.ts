@@ -38,20 +38,9 @@ function parseOptionalJobMode(
 	return mode === undefined ? undefined : resolveLiveSyncMode(mode);
 }
 
-function loadDigestCredentialEnvironment(credentialsPath: string) {
+function readDigestCredentialContext(credentialsPath: string) {
 	const resolvedPath = resolveUserPath(credentialsPath);
-	const credentials = readBirdCredentialsFile(resolvedPath);
-	if (!credentials) return () => {};
-	const previousAuthToken = process.env.AUTH_TOKEN;
-	const previousCt0 = process.env.CT0;
-	process.env.AUTH_TOKEN = credentials.authToken;
-	process.env.CT0 = credentials.ct0;
-	return () => {
-		if (previousAuthToken === undefined) delete process.env.AUTH_TOKEN;
-		else process.env.AUTH_TOKEN = previousAuthToken;
-		if (previousCt0 === undefined) delete process.env.CT0;
-		else process.env.CT0 = previousCt0;
-	};
+	return readBirdCredentialsFile(resolvedPath);
 }
 
 export function registerJobCommands({ program, print }: CliCommandContext) {
@@ -116,7 +105,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			"Assert bird cookies match --account for Bird-backed steps",
 		)
 		.option("--log <path>", "Audit JSONL path")
-		.option("--env-path <path>", "Shell env file to source before running")
+		.option("--env-path <path>", "Bird credential env file to load")
 		.option("--env-file <path>", "Deprecated alias for --env-path")
 		.option("--stdout <path>", "launchd stdout path")
 		.option("--stderr <path>", "launchd stderr path")
@@ -185,7 +174,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
 		.option("--no-refresh", "Allow live-cache reuse")
 		.option("--log <path>", "Audit JSONL path")
-		.option("--env-path <path>", "Shell env file to source before running")
+		.option("--env-path <path>", "Bird credential env file to load")
 		.option("--env-file <path>", "Deprecated alias for --env-path")
 		.option("--stdout <path>", "launchd stdout path")
 		.option("--stderr <path>", "launchd stderr path")
@@ -246,29 +235,26 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				? new Date(`${options.runDate}T00:00:00`)
 				: undefined;
 			const credentialPath = options.envPath ?? options.envFile;
-			const restoreEnvironment = credentialPath
-				? loadDigestCredentialEnvironment(credentialPath)
-				: () => {};
-			try {
-				const result = await runDigestArchiveJob({
-					period: parsePeriod(options.period),
-					account: options.account,
-					includeDms: Boolean(options.includeDms),
-					contentSources: parseDigestContentSources(options.contentSources),
-					archiveDir: options.archiveDir,
-					retries: Number(options.retries),
-					retryDelayMs: Number(options.retryDelaySeconds) * 1000,
-					logPath: options.log,
-					since: options.since,
-					until: options.until,
-					liveSync: Boolean(options.liveSync),
-					...(runDate ? { now: () => runDate } : {}),
-				});
-				print(result, true);
-				if (!result.ok) process.exitCode = 1;
-			} finally {
-				restoreEnvironment();
-			}
+			const birdCredentials = credentialPath
+				? readDigestCredentialContext(credentialPath)
+				: undefined;
+			const result = await runDigestArchiveJob({
+				period: parsePeriod(options.period),
+				account: options.account,
+				includeDms: Boolean(options.includeDms),
+				contentSources: parseDigestContentSources(options.contentSources),
+				archiveDir: options.archiveDir,
+				retries: Number(options.retries),
+				retryDelayMs: Number(options.retryDelaySeconds) * 1000,
+				logPath: options.log,
+				since: options.since,
+				until: options.until,
+				liveSync: Boolean(options.liveSync),
+				...(credentialPath ? { birdCredentials } : {}),
+				...(runDate ? { now: () => runDate } : {}),
+			});
+			print(result, true);
+			if (!result.ok) process.exitCode = 1;
 		});
 
 	jobsCommand

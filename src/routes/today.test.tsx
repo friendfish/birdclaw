@@ -5,6 +5,7 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import { focusManager } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ndjsonResponse } from "#/test/ndjson";
 import { renderWithQueryClient as render } from "#/test/render";
@@ -131,6 +132,7 @@ describe("today route", () => {
 
 	afterEach(() => {
 		cleanup();
+		focusManager.setFocused(undefined);
 		vi.unstubAllGlobals();
 	});
 
@@ -753,6 +755,7 @@ describe("today route", () => {
 			const streamControllers: ReadableStreamDefaultController<Uint8Array>[] =
 				[];
 			const saveBodies: unknown[] = [];
+			const refreshValues: Array<string | null> = [];
 			const initial = {
 				...digestResult("Initial Today", "# Initial Today"),
 				updatedAt: "2026-08-04T01:00:00.000Z",
@@ -777,7 +780,7 @@ describe("today route", () => {
 						return Response.json({ ok: true, results: [] });
 					}
 					if (url.pathname === "/api/period-digest") {
-						expect(url.searchParams.get("refresh")).toBe("true");
+						refreshValues.push(url.searchParams.get("refresh"));
 						return new Response(
 							new ReadableStream<Uint8Array>({
 								start(controller) {
@@ -809,6 +812,7 @@ describe("today route", () => {
 
 			fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 			await waitFor(() => expect(streamControllers).toHaveLength(1));
+			expect(refreshValues).toEqual(["true"]);
 			expect(saveButton).toBeDisabled();
 			const firstManual = {
 				...digestResult("Manual Today", "# Manual Today"),
@@ -857,6 +861,7 @@ describe("today route", () => {
 				level: 1,
 			});
 			expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+			expect(refreshValues).toEqual(["true", "true"]);
 		});
 
 		it("does not transfer manual eligibility across sources or a remount", async () => {
@@ -1626,6 +1631,91 @@ describe("today route", () => {
 			expect(requestedPaths).not.toContain("/api/period-digest");
 			expect(requestedPaths).not.toContain("/api/period-digest-metadata");
 		});
+
+		it("switches back to the live cache after a Today archive run finishes", async () => {
+			focusManager.setFocused(true);
+			let statusCalls = 0;
+			const scheduled = {
+				...digestResult("Scheduled Today", "# Scheduled Today"),
+				cached: true,
+				updatedAt: "2026-08-04T00:30:00.000Z",
+			};
+			const manual = {
+				...digestResult("Manual Today", "# Manual Today"),
+				updatedAt: "2026-08-04T01:00:00.000Z",
+			};
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					statusCalls += 1;
+					return jsonResponse(
+						statusCalls === 1
+							? {
+									ok: true,
+									runningPeriods: ["today"],
+									activeRuns: [
+										{
+											period: "today",
+											runDate: "2026-08-04",
+											totalSources: 3,
+										},
+									],
+									lastRuns: [],
+								}
+							: {
+									ok: true,
+									runningPeriods: [],
+									activeRuns: [],
+									lastRuns: [],
+								},
+					);
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					return jsonResponse({
+						ok: true,
+						dates: [{ date: "2026-08-04", contentSources: ["all"] }],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-entry") {
+					return jsonResponse({ ok: true, result: scheduled });
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return periodDigestMetadataResponse({ result: scheduled });
+				}
+				if (url.pathname === "/api/profile-hydrate") {
+					return jsonResponse({ ok: true, results: [] });
+				}
+				if (url.pathname === "/api/period-digest") {
+					return ndjsonResponse([{ type: "done", result: manual }]);
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(<TodayRoute />);
+			expect(
+				await screen.findByRole("heading", {
+					name: "Scheduled Today",
+					level: 1,
+				}),
+			).toBeInTheDocument();
+
+			const refresh = screen.getByRole("button", { name: "Refresh" });
+			await waitFor(() => expect(refresh).toBeEnabled(), { timeout: 5_000 });
+			fireEvent.click(refresh);
+
+			expect(
+				await screen.findByRole("heading", { name: "Manual Today", level: 1 }),
+			).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+		}, 8_000);
 
 		it("shows the active source as pending without starting a live Today digest", async () => {
 			const requestedPaths: string[] = [];

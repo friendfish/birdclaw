@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { readBirdCredentials } from "./bird-credentials";
+import { readBirdCredentials, type BirdCredentials } from "./bird-credentials";
 import { resolveMentionsDataSource } from "./config";
 import { syncMentionThreadsEffect } from "./mention-threads-live";
 import { syncMentionsEffect } from "./mentions-live";
@@ -41,6 +41,7 @@ export interface DigestArchivePreSyncOptions {
 	until?: string;
 	liveSync: boolean;
 	nonInteractiveBird?: boolean;
+	birdCredentials?: BirdCredentials | null;
 }
 
 const MISSING_BIRD_CREDENTIALS_ERROR =
@@ -133,8 +134,19 @@ export function runDigestArchivePreSyncEffect(
 		const needsForYou = requested.has("all") || requested.has("for_you");
 		const needsMentions = requested.has("all");
 		const transport = configuredTransport();
+		const birdCredentials =
+			options.birdCredentials === undefined
+				? readBirdCredentials()
+				: options.birdCredentials;
 		const hasBirdCredentials =
-			!options.nonInteractiveBird || readBirdCredentials() !== null;
+			!options.nonInteractiveBird || birdCredentials !== null;
+		const birdEnvironment = birdCredentials
+			? {
+					...process.env,
+					AUTH_TOKEN: birdCredentials.authToken,
+					CT0: birdCredentials.ct0,
+				}
+			: undefined;
 		const blocksBirdCapableTransport =
 			!hasBirdCredentials && (transport === "bird" || transport === "auto");
 		const window = resolvePeriodDigestWindow({
@@ -163,6 +175,7 @@ export function runDigestArchivePreSyncEffect(
 							refresh: true,
 							cacheTtlMs: 2 * 60_000,
 							timeoutMs: 30_000,
+							birdEnvironment,
 						}),
 						count: (value) => value.count,
 					}),
@@ -190,6 +203,7 @@ export function runDigestArchivePreSyncEffect(
 							refresh: true,
 							cacheTtlMs: 2 * 60_000,
 							timeoutMs: 30_000,
+							birdEnvironment,
 						}),
 						count: (value) => value.count,
 					}),
@@ -215,6 +229,7 @@ export function runDigestArchivePreSyncEffect(
 					...(transport === "bird" ? {} : { startTime }),
 					refresh: true,
 					cacheTtlMs: 2 * 60_000,
+					birdEnvironment,
 				}).pipe(
 					Effect.map((value) => ({ ok: true as const, value })),
 					Effect.catchAll((error) =>
@@ -292,6 +307,7 @@ export function runDigestArchivePreSyncEffect(
 						delayMs: 100,
 						timeoutMs: 15_000,
 						maxPages: 2,
+						birdEnvironment,
 					}).pipe(
 						Effect.map((value) => {
 							const problems = [

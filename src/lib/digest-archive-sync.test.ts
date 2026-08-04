@@ -377,6 +377,42 @@ describe("digest archive pre-sync", () => {
 		expect(mocks.collectPeriodDigestContext).not.toHaveBeenCalled();
 	});
 
+	it("uses one explicit credential context for every Bird-capable sync", async () => {
+		mocks.readBirdCredentials.mockReturnValue(null);
+		const birdCredentials = {
+			authToken: "scheduled-auth",
+			ct0: "scheduled-ct0",
+		};
+
+		const result = await runEffectPromise(
+			runDigestArchivePreSyncEffect({
+				period: "today",
+				contentSources: ["all", "for_you"],
+				liveSync: true,
+				nonInteractiveBird: true,
+				birdCredentials,
+			}),
+		);
+
+		expect(result.status).toBe("fresh");
+		for (const mock of [
+			mocks.syncHomeTimelineEffect,
+			mocks.syncMentionsEffect,
+			mocks.syncMentionThreadsEffect,
+		]) {
+			for (const [options] of mock.mock.calls) {
+				expect(options).toEqual(
+					expect.objectContaining({
+						birdEnvironment: expect.objectContaining({
+							AUTH_TOKEN: "scheduled-auth",
+							CT0: "scheduled-ct0",
+						}),
+					}),
+				);
+			}
+		}
+	});
+
 	it("records a failed operation as degraded and continues", async () => {
 		mocks.syncHomeTimelineEffect.mockImplementation(
 			(options: { following: boolean }) =>

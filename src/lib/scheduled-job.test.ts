@@ -134,4 +134,93 @@ describe("scheduled job runtime", () => {
 		await secondRelease?.();
 		expect(existsSync(lockPath)).toBe(false);
 	});
+
+	it("serializes simultaneous stale-lock reclamation", async () => {
+		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
+		mkdirSync(path.dirname(lockPath), { recursive: true });
+		writeFileSync(lockPath, "stale\n", "utf8");
+		const old = new Date(Date.now() - 2_000);
+		utimesSync(lockPath, old, old);
+
+		const contenders = await Promise.all([
+			acquireScheduledJobLock(lockPath, 1_000),
+			acquireScheduledJobLock(lockPath, 1_000),
+		]);
+		const owners = contenders.filter(
+			(release): release is NonNullable<typeof release> => Boolean(release),
+		);
+
+		expect(owners).toHaveLength(1);
+		expect(existsSync(lockPath)).toBe(true);
+		await owners[0]?.();
+		expect(existsSync(lockPath)).toBe(false);
+	});
+
+	it("does not reclaim while another contender holds the reclamation lease", async () => {
+		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
+		mkdirSync(path.dirname(lockPath), { recursive: true });
+		writeFileSync(lockPath, "stale\n", "utf8");
+		const old = new Date(Date.now() - 2_000);
+		utimesSync(lockPath, old, old);
+		writeFileSync(
+			`${lockPath}.reclaim`,
+			`${JSON.stringify({
+				ownerId: "active-reclaimer",
+				startedAt: new Date().toISOString(),
+				host: os.hostname(),
+				pid: process.pid,
+			})}\n`,
+			"utf8",
+		);
+
+		await expect(
+			acquireScheduledJobLock(lockPath, 1_000),
+		).resolves.toBeUndefined();
+		expect(readFileSync(lockPath, "utf8")).toBe("stale\n");
+	});
+
+	it("recovers an abandoned reclamation lease", async () => {
+		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
+		mkdirSync(path.dirname(lockPath), { recursive: true });
+		writeFileSync(lockPath, "stale\n", "utf8");
+		writeFileSync(`${lockPath}.reclaim`, "abandoned\n", "utf8");
+		const old = new Date(Date.now() - 2_000);
+		utimesSync(lockPath, old, old);
+		utimesSync(`${lockPath}.reclaim`, old, old);
+
+		const release = await acquireScheduledJobLock(lockPath, 1_000);
+
+		expect(release).toBeTypeOf("function");
+		expect(existsSync(`${lockPath}.reclaim`)).toBe(false);
+		await release?.();
+	});
+
+	it("serializes concurrent recovery of an abandoned reclamation lease", async () => {
+		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
+		mkdirSync(path.dirname(lockPath), { recursive: true });
+		writeFileSync(lockPath, "stale\n", "utf8");
+		writeFileSync(`${lockPath}.reclaim`, "abandoned\n", "utf8");
+		const old = new Date(Date.now() - 2_000);
+		utimesSync(lockPath, old, old);
+		utimesSync(`${lockPath}.reclaim`, old, old);
+
+		let activeOwners = 0;
+		let maximumActiveOwners = 0;
+		let acquisitions = 0;
+		await Promise.all(
+			Array.from({ length: 32 }, async () => {
+				const release = await acquireScheduledJobLock(lockPath, 1_000);
+				if (!release) return;
+				acquisitions += 1;
+				activeOwners += 1;
+				maximumActiveOwners = Math.max(maximumActiveOwners, activeOwners);
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				await release();
+				activeOwners -= 1;
+			}),
+		);
+
+		expect(acquisitions).toBeGreaterThanOrEqual(1);
+		expect(maximumActiveOwners).toBe(1);
+	});
 });

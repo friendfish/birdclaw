@@ -5,6 +5,7 @@ import { getRouteHandler } from "#/test/route-handlers";
 
 const mocks = vi.hoisted(() => ({
 	resolveDigestArchiveDir: vi.fn(),
+	acquireScheduledJobLockEffect: vi.fn(),
 	peekScheduledJobLockMetadataEffect: vi.fn(),
 	readLatestPeriodDigestEffect: vi.fn(),
 	replaceDigestArchiveEntryEffect: vi.fn(),
@@ -18,6 +19,13 @@ vi.mock("#/lib/config", () => ({
 vi.mock("#/lib/digest-archive-job", () => ({
 	DEFAULT_LOCK_STALE_MS: 60_000,
 	digestArchiveLockPath: (period: string) => `/tmp/${period}.lock`,
+	digestArchivePublicationLockPath: ({
+		period,
+		contentSource,
+	}: {
+		period: string;
+		contentSource: string;
+	}) => `/tmp/${period}-${contentSource}.publish.lock`,
 	formatDigestArchiveRunDate: () => "2026-08-04",
 	getDefaultDigestArchiveAuditLogPath: () => "/tmp/manual-save.jsonl",
 	replaceDigestArchiveEntryEffect: (...args: unknown[]) =>
@@ -29,6 +37,8 @@ vi.mock("#/lib/period-digest", () => ({
 		Effect.promise(() => mocks.readLatestPeriodDigestEffect(...args)),
 }));
 vi.mock("#/lib/scheduled-job", () => ({
+	acquireScheduledJobLockEffect: (...args: unknown[]) =>
+		Effect.promise(() => mocks.acquireScheduledJobLockEffect(...args)),
 	peekScheduledJobLockMetadataEffect: (...args: unknown[]) =>
 		Effect.promise(() => mocks.peekScheduledJobLockMetadataEffect(...args)),
 	appendScheduledJobAuditEffect: (...args: unknown[]) =>
@@ -70,8 +80,20 @@ describe("api digest-archive-save route", () => {
 	beforeEach(() => {
 		for (const mock of Object.values(mocks)) mock.mockReset();
 		mocks.resolveDigestArchiveDir.mockReturnValue("/tmp/archive");
+		mocks.acquireScheduledJobLockEffect.mockResolvedValue(() => Effect.void);
 		mocks.peekScheduledJobLockMetadataEffect.mockResolvedValue(undefined);
 		mocks.appendScheduledJobAuditEffect.mockResolvedValue(undefined);
+	});
+
+	it("returns a conflict before reading cache when the entry publication lease is busy", async () => {
+		mocks.acquireScheduledJobLockEffect.mockResolvedValue(undefined);
+
+		const response = await POST({ request: request(validBody) });
+
+		expect(response.status).toBe(409);
+		expect(mocks.peekScheduledJobLockMetadataEffect).not.toHaveBeenCalled();
+		expect(mocks.readLatestPeriodDigestEffect).not.toHaveBeenCalled();
+		expect(mocks.replaceDigestArchiveEntryEffect).not.toHaveBeenCalled();
 	});
 
 	it.each(["yesterday", "week"])("rejects the %s period", async (period) => {
@@ -149,6 +171,10 @@ describe("api digest-archive-save route", () => {
 			"/tmp/today.lock",
 			60_000,
 		);
+		expect(mocks.acquireScheduledJobLockEffect).toHaveBeenCalledWith(
+			"/tmp/today-following.publish.lock",
+			60_000,
+		);
 		expect(mocks.readLatestPeriodDigestEffect).toHaveBeenCalledWith({
 			period: "today",
 			contentSource: "following",
@@ -161,6 +187,7 @@ describe("api digest-archive-save route", () => {
 			contentSource: "following",
 			result: cachedResult,
 			language: "zh-CN",
+			publicationLeaseHeld: true,
 		});
 		expect(mocks.appendScheduledJobAuditEffect).toHaveBeenCalledWith(
 			"/tmp/manual-save.jsonl",

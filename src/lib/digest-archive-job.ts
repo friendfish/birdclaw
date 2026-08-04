@@ -9,6 +9,7 @@ import {
 	type DigestSchedulePeriod,
 	type DigestScheduleTime,
 } from "./config";
+import type { BirdCredentials } from "./bird-credentials";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
 import {
 	createDigestArchiveRunState,
@@ -32,6 +33,7 @@ import {
 	type LaunchAgentInstallResult,
 } from "./launchd";
 import {
+	acquireScheduledJobLock,
 	acquireScheduledJobLockEffect,
 	appendScheduledJobAuditEffect,
 	peekScheduledJobLockMetadata,
@@ -95,6 +97,7 @@ export interface DigestArchiveJobOptions {
 	// pulling fresh data). Backfilling from already-synced local data only
 	// should pass false.
 	liveSync?: boolean;
+	birdCredentials?: BirdCredentials | null;
 }
 
 export interface DigestArchiveStepResult {
@@ -236,12 +239,23 @@ async function writeDigestArchivePair({
 	jsonPath,
 	markdown,
 	archive,
+	publicationLeaseHeld = false,
 }: {
 	markdownPath: string;
 	jsonPath: string;
 	markdown: string;
 	archive: PeriodDigestArchiveFile;
+	publicationLeaseHeld?: boolean;
 }) {
+	const releasePublication = publicationLeaseHeld
+		? undefined
+		: await acquireScheduledJobLock(
+				digestArchivePublicationLockPathFromJson(jsonPath),
+				DEFAULT_LOCK_STALE_MS,
+			);
+	if (!publicationLeaseHeld && !releasePublication) {
+		throw new Error("Digest archive entry publication is already in progress");
+	}
 	await fs.mkdir(path.dirname(jsonPath), { recursive: true });
 	const owner = `${process.pid}.${randomUUID()}`;
 	const temporaryMarkdownPath = `${markdownPath}.${owner}.tmp`;
@@ -262,6 +276,7 @@ async function writeDigestArchivePair({
 			fs.rm(temporaryMarkdownPath, { force: true }).catch(() => undefined),
 			fs.rm(temporaryJsonPath, { force: true }).catch(() => undefined),
 		]);
+		await releasePublication?.();
 	}
 }
 
@@ -308,6 +323,21 @@ export function resolveDigestArchivePaths({
 	return { markdownPath: `${base}.md`, jsonPath: `${base}.json` };
 }
 
+function digestArchivePublicationLockPathFromJson(jsonPath: string) {
+	return `${jsonPath}.publish.lock`;
+}
+
+export function digestArchivePublicationLockPath(options: {
+	archiveDir: string;
+	runDate: string;
+	period: PeriodDigestPreset;
+	contentSource: PeriodDigestContentSource;
+}) {
+	return digestArchivePublicationLockPathFromJson(
+		resolveDigestArchivePaths(options).jsonPath,
+	);
+}
+
 export interface DigestArchiveReplacementResult {
 	period: "today" | "24h";
 	contentSource: PeriodDigestContentSource;
@@ -326,6 +356,7 @@ export function replaceDigestArchiveEntryEffect({
 	result,
 	language,
 	now = () => new Date(),
+	publicationLeaseHeld = false,
 }: {
 	archiveDir: string;
 	runDate: string;
@@ -334,6 +365,7 @@ export function replaceDigestArchiveEntryEffect({
 	result: PeriodDigestRunResult;
 	language?: string;
 	now?: () => Date;
+	publicationLeaseHeld?: boolean;
 }): Effect.Effect<DigestArchiveReplacementResult, unknown> {
 	return tryPromise(async () => {
 		const { markdownPath, jsonPath } = resolveDigestArchivePaths({
@@ -365,6 +397,7 @@ export function replaceDigestArchiveEntryEffect({
 			jsonPath,
 			markdown: result.markdown,
 			archive,
+			publicationLeaseHeld,
 		});
 		return {
 			period,
@@ -613,11 +646,29 @@ export function runDigestArchiveJobEffect(
 			...(language ? { language } : {}),
 		};
 
-		const releaseLock = yield* acquireScheduledJobLockEffect(
-			resolvedLockPath,
-			DEFAULT_LOCK_STALE_MS,
-			{ runDate, totalSources: contentSources.length },
+		const lockResult = yield* Effect.either(
+			acquireScheduledJobLockEffect(resolvedLockPath, DEFAULT_LOCK_STALE_MS, {
+				runDate,
+				totalSources: contentSources.length,
+			}),
 		);
+		if (lockResult._tag === "Left") {
+			const entry: DigestArchiveAuditEntry = {
+				job: "digest-archive",
+				period,
+				ok: false,
+				status: "failed",
+				...run.finish(),
+				runDate,
+				options: auditOptions,
+				sync: { status: "skipped", steps: [] },
+				steps: [],
+				error: sensitiveErrorMessage(lockResult.left),
+			};
+			yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
+			return yield* Effect.fail(lockResult.left);
+		}
+		const releaseLock = lockResult.right;
 		if (!releaseLock) {
 			const entry: DigestArchiveAuditEntry = {
 				job: "digest-archive",
@@ -635,7 +686,12 @@ export function runDigestArchiveJobEffect(
 			return entry;
 		}
 
-		return yield* Effect.gen(function* () {
+		let observedSync: DigestArchiveSyncResult = {
+			status: "skipped",
+			steps: [],
+		};
+		const observedSteps: DigestArchiveStepResult[] = [];
+		const ownedRun = Effect.gen(function* () {
 			const statePath = digestArchiveRunStatePath(period);
 			const stateOwnerId = randomUUID();
 			const initialState = createDigestArchiveRunState({
@@ -662,14 +718,15 @@ export function runDigestArchiveJobEffect(
 						until: options.until,
 						liveSync: options.liveSync ?? true,
 						nonInteractiveBird: true,
+						birdCredentials: options.birdCredentials,
 					});
+				observedSync = sync;
 				yield* tryPromise(() =>
 					updateDigestArchiveRunState(statePath, stateOwnerId, (state) => ({
 						...state,
 						phase: "generating",
 					})),
 				);
-				const steps: DigestArchiveStepResult[] = [];
 				for (const contentSource of contentSources) {
 					const step = yield* runOneContentSourceEffect({
 						period,
@@ -697,7 +754,7 @@ export function runDigestArchiveJobEffect(
 								},
 							})).then(() => undefined),
 					});
-					steps.push(step);
+					observedSteps.push(step);
 					yield* tryPromise(() =>
 						updateDigestArchiveRunState(statePath, stateOwnerId, (state) => ({
 							...state,
@@ -728,7 +785,7 @@ export function runDigestArchiveJobEffect(
 						currentSource: undefined,
 					})),
 				);
-				const generationOk = steps.every((step) => step.ok);
+				const generationOk = observedSteps.every((step) => step.ok);
 				const generatedStatus: DigestArchiveBatchStatus = !generationOk
 					? "failed"
 					: sync.status === "degraded"
@@ -737,7 +794,7 @@ export function runDigestArchiveJobEffect(
 				const persistenceErrors = yield* (
 					dependencies.updateArchiveBatchStatus ??
 					updateArchiveBatchStatusEffect
-				)(steps, generatedStatus);
+				)(observedSteps, generatedStatus);
 				const ok = generationOk && persistenceErrors.length === 0;
 				const status: DigestArchiveBatchStatus = persistenceErrors.length
 					? "failed"
@@ -751,7 +808,7 @@ export function runDigestArchiveJobEffect(
 					runDate,
 					options: auditOptions,
 					sync,
-					steps,
+					steps: observedSteps,
 					...(persistenceErrors.length ? { persistenceErrors } : {}),
 				};
 				yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
@@ -764,7 +821,29 @@ export function runDigestArchiveJobEffect(
 					}).pipe(Effect.catchAll(() => Effect.void)),
 				),
 			);
-		}).pipe(Effect.ensuring(releaseLock()));
+		});
+
+		return yield* ownedRun.pipe(
+			Effect.catchAll((error) => {
+				const entry: DigestArchiveAuditEntry = {
+					job: "digest-archive",
+					period,
+					ok: false,
+					status: "failed",
+					...run.finish(),
+					runDate,
+					options: auditOptions,
+					sync: observedSync,
+					steps: observedSteps,
+					error: sensitiveErrorMessage(error),
+				};
+				return appendScheduledJobAuditEffect(resolvedLogPath, entry).pipe(
+					Effect.catchAll(() => Effect.void),
+					Effect.andThen(Effect.fail(error)),
+				);
+			}),
+			Effect.ensuring(releaseLock()),
+		);
 	});
 }
 

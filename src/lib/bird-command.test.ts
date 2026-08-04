@@ -53,7 +53,9 @@ describe("bird command Effect boundary", () => {
 	});
 
 	it("merges process, managed, and explicit credentials into the child environment", async () => {
-		const tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-command-env-"));
+		const tempDir = mkdtempSync(
+			path.join(os.tmpdir(), "birdclaw-command-env-"),
+		);
 		tempRoots.push(tempDir);
 		process.env.BIRDCLAW_HOME = tempDir;
 		process.env.BIRDCLAW_COMMAND_TEST = "process-value";
@@ -81,14 +83,18 @@ describe("bird command Effect boundary", () => {
 				}),
 			}),
 		);
-		const serializedArguments = JSON.stringify(execFileAsyncMock.mock.calls[0]?.[1]);
+		const serializedArguments = JSON.stringify(
+			execFileAsyncMock.mock.calls[0]?.[1],
+		);
 		expect(serializedArguments).not.toMatch(
 			/explicit-auth|managed-auth|managed-ct0/u,
 		);
 	});
 
 	it("redacts managed credentials from Bird execution failures", async () => {
-		const tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-command-redact-"));
+		const tempDir = mkdtempSync(
+			path.join(os.tmpdir(), "birdclaw-command-redact-"),
+		);
 		tempRoots.push(tempDir);
 		process.env.BIRDCLAW_HOME = tempDir;
 		const { writeBirdCredentials } = await import("./bird-credentials");

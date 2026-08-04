@@ -16,8 +16,14 @@ import { sensitiveErrorMessage } from "#/lib/sensitive-values";
 
 const credentialRequestSchema = z
 	.object({
-		authToken: z.string().min(1).regex(/^[^\r\n]+$/u),
-		ct0: z.string().min(1).regex(/^[^\r\n]+$/u),
+		authToken: z
+			.string()
+			.min(1)
+			.regex(/^[^\r\n]+$/u),
+		ct0: z
+			.string()
+			.min(1)
+			.regex(/^[^\r\n]+$/u),
 	})
 	.strict();
 
@@ -72,10 +78,7 @@ export const Route = createFileRoute("/api/bird-credentials")({
 									jsonResponse(
 										{
 											ok: false,
-											error: sanitizedCredentialError(error, [
-												authToken,
-												ct0,
-											]),
+											error: sanitizedCredentialError(error, [authToken, ct0]),
 										},
 										{ status: 500 },
 									),

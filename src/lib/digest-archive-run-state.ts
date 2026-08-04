@@ -35,6 +35,26 @@ export interface DigestArchiveRunStateV1 {
 	>;
 }
 
+const mutationQueues = new Map<string, Promise<void>>();
+
+function serializeStateMutation<T>(
+	statePath: string,
+	mutation: () => Promise<T>,
+) {
+	const previous = mutationQueues.get(statePath) ?? Promise.resolve();
+	const operation = previous.then(mutation);
+	const tail = operation.then(
+		() => undefined,
+		() => undefined,
+	);
+	mutationQueues.set(statePath, tail);
+	return operation.finally(() => {
+		if (mutationQueues.get(statePath) === tail) {
+			mutationQueues.delete(statePath);
+		}
+	});
+}
+
 export function digestArchiveRunStatePath(period: PeriodDigestPreset) {
 	return path.join(
 		getBirdclawPaths().rootDir,
@@ -103,7 +123,9 @@ export function writeDigestArchiveRunState(
 	statePath: string,
 	state: DigestArchiveRunStateV1,
 ) {
-	return writeJsonAtomically(statePath, state);
+	return serializeStateMutation(statePath, () =>
+		writeJsonAtomically(statePath, state),
+	);
 }
 
 export async function readDigestArchiveRunState(
@@ -141,24 +163,28 @@ export async function updateDigestArchiveRunState(
 	update: (state: DigestArchiveRunStateV1) => DigestArchiveRunStateV1,
 	now = new Date(),
 ) {
-	const current = await readDigestArchiveRunState(statePath);
-	if (!current || current.ownerId !== ownerId) return undefined;
-	const next = {
-		...update(current),
-		ownerId,
-		lastHeartbeatAt: now.toISOString(),
-	} satisfies DigestArchiveRunStateV1;
-	await writeJsonAtomically(statePath, next);
-	return next;
+	return serializeStateMutation(statePath, async () => {
+		const current = await readDigestArchiveRunState(statePath);
+		if (!current || current.ownerId !== ownerId) return undefined;
+		const next = {
+			...update(current),
+			ownerId,
+			lastHeartbeatAt: now.toISOString(),
+		} satisfies DigestArchiveRunStateV1;
+		await writeJsonAtomically(statePath, next);
+		return next;
+	});
 }
 
 export async function removeDigestArchiveRunState(
 	statePath: string,
 	ownerId: string,
 ) {
-	const current = await readDigestArchiveRunState(statePath);
-	if (!current || current.ownerId !== ownerId) return;
-	await fs.rm(statePath, { force: true });
+	await serializeStateMutation(statePath, async () => {
+		const current = await readDigestArchiveRunState(statePath);
+		if (!current || current.ownerId !== ownerId) return;
+		await fs.rm(statePath, { force: true });
+	});
 }
 
 export function startDigestArchiveHeartbeat({
