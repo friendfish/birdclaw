@@ -91,20 +91,20 @@ export const Route = createFileRoute("/api/digest-schedule")({
 							yield* installAllDigestArchiveLaunchAgentsEffect({
 								today: {
 									...parsed.schedule.today,
-									envFile: getBirdCredentialsPath(),
+									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 								"24h": {
 									...parsed.schedule["24h"],
-									envFile: getBirdCredentialsPath(),
+									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 								yesterday: {
 									...parsed.schedule.yesterday,
-									envFile: getBirdCredentialsPath(),
+									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 								week: {
 									...parsed.schedule.week,
 									weekday: 1,
-									envFile: getBirdCredentialsPath(),
+									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 							});
 

@@ -40,7 +40,11 @@ function parseOptionalJobMode(
 
 function readDigestCredentialContext(credentialsPath: string) {
 	const resolvedPath = resolveUserPath(credentialsPath);
-	return readBirdCredentialsFile(resolvedPath);
+	const credentials = readBirdCredentialsFile(resolvedPath);
+	if (!credentials) {
+		throw new Error(`Invalid Bird credential file: ${resolvedPath}`);
+	}
+	return credentials;
 }
 
 export function registerJobCommands({ program, print }: CliCommandContext) {
@@ -228,13 +232,15 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			"--no-live-sync",
 			"Skip live X sync; summarize only what's already stored locally (for backfilling historical windows)",
 		)
-		.option("--env-path <path>", "Strict Bird credential env file")
-		.option("--env-file <path>", "Deprecated alias for --env-path")
+		.option(
+			"--bird-credentials-path <path>",
+			"Strict AUTH_TOKEN/CT0 credential file",
+		)
 		.action(async (options) => {
 			const runDate = options.runDate
 				? new Date(`${options.runDate}T00:00:00`)
 				: undefined;
-			const credentialPath = options.envPath ?? options.envFile;
+			const credentialPath = options.birdCredentialsPath;
 			const birdCredentials = credentialPath
 				? readDigestCredentialContext(credentialPath)
 				: undefined;
@@ -273,8 +279,12 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.option("--retries <n>", "Retries per content source", "2")
 		.option("--retry-delay-seconds <seconds>", "Delay between retries", "120")
 		.option("--log <path>", "Audit JSONL path")
-		.option("--env-path <path>", "Strict Bird credential env file")
+		.option("--env-path <path>", "Shell environment file to source")
 		.option("--env-file <path>", "Deprecated alias for --env-path")
+		.option(
+			"--bird-credentials-path <path>",
+			"Strict AUTH_TOKEN/CT0 credential file",
+		)
 		.option("--stdout <path>", "launchd stdout path")
 		.option("--stderr <path>", "launchd stderr path")
 		.option("--launch-agents-dir <path>", "LaunchAgents directory")
@@ -293,6 +303,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				retryDelaySeconds: Number(options.retryDelaySeconds),
 				logPath: options.log,
 				envFile: options.envPath ?? options.envFile,
+				birdCredentialsPath: options.birdCredentialsPath,
 			};
 			const installOptions = {
 				launchAgentsDir: options.launchAgentsDir,

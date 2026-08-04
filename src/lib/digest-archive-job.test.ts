@@ -1000,17 +1000,33 @@ describe("digest-archive-job", () => {
 		});
 	});
 
-	it("passes the credential file to BirdClaw without a shell wrapper or token arguments", () => {
+	it("preserves legacy env-file sourcing for digest LaunchAgents", () => {
 		const agent = buildDigestArchiveLaunchAgentPlist({
 			period: "today",
-			envFile: "/tmp/bird.env",
+			envFile: "/tmp/digest.env",
+		});
+
+		expect(agent.programArguments).toEqual([
+			"/bin/bash",
+			"-lc",
+			expect.stringContaining("/tmp/digest.env"),
+		]);
+		expect(agent.programArguments[2]).not.toContain("--bird-credentials-path");
+		expect(agent.plist).toContain("/bin/bash");
+		expect(agent.envFile).toBe("/tmp/digest.env");
+	});
+
+	it("passes managed Bird credentials without a shell wrapper or token arguments", () => {
+		const agent = buildDigestArchiveLaunchAgentPlist({
+			period: "today",
+			birdCredentialsPath: "/tmp/bird.env",
 		});
 
 		expect(agent.programArguments).toEqual(
 			expect.arrayContaining([
 				"jobs",
 				"run-digest-archive",
-				"--env-path",
+				"--bird-credentials-path",
 				"/tmp/bird.env",
 			]),
 		);
@@ -1020,6 +1036,6 @@ describe("digest-archive-job", () => {
 			/AUTH_TOKEN|CT0/u,
 		);
 		expect(agent.plist).not.toContain("/bin/bash");
-		expect(agent.envFile).toBe("/tmp/bird.env");
+		expect(agent.envFile).toBeUndefined();
 	});
 });

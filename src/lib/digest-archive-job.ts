@@ -868,6 +868,7 @@ export interface DigestArchiveLaunchAgentOptions {
 	retryDelaySeconds?: number;
 	logPath?: string;
 	envFile?: string;
+	birdCredentialsPath?: string;
 	stdoutPath?: string;
 	stderrPath?: string;
 	launchAgentsDir?: string;
@@ -889,6 +890,7 @@ function buildProgramArguments({
 	retryDelaySeconds,
 	logPath,
 	envFile,
+	birdCredentialsPath,
 }: DigestArchiveLaunchAgentOptions & { logPath: string }) {
 	const args = [
 		"--json",
@@ -909,8 +911,10 @@ function buildProgramArguments({
 	if (retryDelaySeconds !== undefined) {
 		args.push("--retry-delay-seconds", String(retryDelaySeconds));
 	}
-	if (envFile) args.push("--env-path", resolveUserPath(envFile));
-	return buildLaunchProgramArguments({ program, args });
+	if (birdCredentialsPath) {
+		args.push("--bird-credentials-path", resolveUserPath(birdCredentialsPath));
+	}
+	return buildLaunchProgramArguments({ program, args, envFile });
 }
 
 export function buildDigestArchiveLaunchAgentPlist(

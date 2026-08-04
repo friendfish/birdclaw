@@ -869,7 +869,7 @@ describe("cli", () => {
 		}
 	});
 
-	it("passes one credential path to all four digest LaunchAgents", async () => {
+	it("keeps a legacy env path separate from managed Bird credentials", async () => {
 		const { runCli } = await loadCli();
 
 		await runCli([
@@ -880,16 +880,30 @@ describe("cli", () => {
 			"--period",
 			"all",
 			"--env-path",
+			"/tmp/digest.env",
+			"--bird-credentials-path",
 			"/tmp/bird.env",
 			"--no-load",
 		]);
 
 		expect(installAllDigestArchiveLaunchAgentsMock).toHaveBeenCalledWith(
 			{
-				today: expect.objectContaining({ envFile: "/tmp/bird.env" }),
-				"24h": expect.objectContaining({ envFile: "/tmp/bird.env" }),
-				yesterday: expect.objectContaining({ envFile: "/tmp/bird.env" }),
-				week: expect.objectContaining({ envFile: "/tmp/bird.env" }),
+				today: expect.objectContaining({
+					envFile: "/tmp/digest.env",
+					birdCredentialsPath: "/tmp/bird.env",
+				}),
+				"24h": expect.objectContaining({
+					envFile: "/tmp/digest.env",
+					birdCredentialsPath: "/tmp/bird.env",
+				}),
+				yesterday: expect.objectContaining({
+					envFile: "/tmp/digest.env",
+					birdCredentialsPath: "/tmp/bird.env",
+				}),
+				week: expect.objectContaining({
+					envFile: "/tmp/digest.env",
+					birdCredentialsPath: "/tmp/bird.env",
+				}),
 			},
 			{ launchAgentsDir: undefined, load: false },
 		);
@@ -920,7 +934,7 @@ describe("cli", () => {
 				"run-digest-archive",
 				"--period",
 				"today",
-				"--env-path",
+				"--bird-credentials-path",
 				validPath,
 			]);
 			expect(runDigestArchiveJobMock).toHaveBeenNthCalledWith(
@@ -934,23 +948,21 @@ describe("cli", () => {
 				CT0: "existing-ct0",
 			});
 
-			await runCli([
-				"node",
-				"birdclaw",
-				"jobs",
-				"run-digest-archive",
-				"--period",
-				"today",
-				"--env-path",
-				invalidPath,
-			]);
-			expect(runDigestArchiveJobMock).toHaveBeenNthCalledWith(
-				2,
-				expect.objectContaining({ birdCredentials: null }),
-			);
+			await expect(
+				runCli([
+					"node",
+					"birdclaw",
+					"jobs",
+					"run-digest-archive",
+					"--period",
+					"today",
+					"--bird-credentials-path",
+					invalidPath,
+				]),
+			).rejects.toThrow(/invalid Bird credential file/iu);
 			expect(process.env.AUTH_TOKEN).toBe("existing-auth");
 			expect(process.env.CT0).toBe("existing-ct0");
-			expect(runDigestArchiveJobMock).toHaveBeenCalledTimes(2);
+			expect(runDigestArchiveJobMock).toHaveBeenCalledTimes(1);
 		} finally {
 			if (originalAuthToken === undefined) delete process.env.AUTH_TOKEN;
 			else process.env.AUTH_TOKEN = originalAuthToken;

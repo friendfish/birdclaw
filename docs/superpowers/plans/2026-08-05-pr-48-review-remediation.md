@@ -13,8 +13,10 @@
 ### Task 1: Restore `--env-path` Compatibility
 
 **Files:**
+
 - Modify: `src/lib/digest-archive-job.test.ts`
 - Modify: `src/routes/api/digest-schedule.test.ts`
+- Modify: `src/cli.test.ts`
 - Modify: `src/cli/register-jobs.ts`
 - Modify: `src/lib/digest-archive-job.ts`
 - Modify: `src/routes/api/digest-schedule.tsx`
@@ -55,6 +57,7 @@ Expected: PASS.
 ### Task 2: Correct Credential Precedence
 
 **Files:**
+
 - Modify: `src/lib/bird-credentials.test.ts`
 - Modify: `src/routes/api/bird-credentials-test.test.ts`
 - Modify: `src/lib/bird-credentials.ts`
@@ -78,7 +81,9 @@ Implement:
 ```ts
 return {
 	...process.env,
-	...(credentials ? { AUTH_TOKEN: credentials.authToken, CT0: credentials.ct0 } : {}),
+	...(credentials
+		? { AUTH_TOKEN: credentials.authToken, CT0: credentials.ct0 }
+		: {}),
 	...explicit,
 };
 ```
@@ -92,6 +97,7 @@ Expected: PASS.
 ### Task 3: Convert Digest Locks to Renewable Leases
 
 **Files:**
+
 - Modify: `src/lib/scheduled-job.test.ts`
 - Modify: `src/lib/digest-archive-run-state.test.ts`
 - Modify: `src/lib/scheduled-job.ts`
@@ -133,6 +139,7 @@ Expected: PASS.
 ### Task 4: Cache Digest Status Audit Reads
 
 **Files:**
+
 - Modify: `src/lib/digest-archive-job.test.ts`
 - Modify: `src/lib/digest-archive-job.ts`
 
@@ -162,6 +169,7 @@ Expected: PASS.
 ### Task 5: Update User Documentation and Verify
 
 **Files:**
+
 - Modify: `README.md`
 - Modify: `docs/jobs.md`
 - Modify: `docs/cli.md`
@@ -185,4 +193,3 @@ strict parsing is described only for `--bird-credentials-path`.
 Run: `pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm test`
 
 Expected: PASS with no failures.
-

@@ -95,23 +95,23 @@ describe("api digest-schedule route", () => {
 			today: {
 				hour: 9,
 				minute: 30,
-				envFile: getBirdCredentialsPath(),
+				birdCredentialsPath: getBirdCredentialsPath(),
 			},
 			"24h": {
 				hour: 10,
 				minute: 0,
-				envFile: getBirdCredentialsPath(),
+				birdCredentialsPath: getBirdCredentialsPath(),
 			},
 			yesterday: {
 				hour: 2,
 				minute: 0,
-				envFile: getBirdCredentialsPath(),
+				birdCredentialsPath: getBirdCredentialsPath(),
 			},
 			week: {
 				hour: 3,
 				minute: 15,
 				weekday: 1,
-				envFile: getBirdCredentialsPath(),
+				birdCredentialsPath: getBirdCredentialsPath(),
 			},
 		});
 		const body = await response.json();
