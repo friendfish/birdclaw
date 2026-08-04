@@ -1,0 +1,82 @@
+# PR 48 Review Remediation Design
+
+## Goal
+
+Close the three blocking findings in PR #48 without weakening the managed X
+credential boundary or breaking existing scheduled digest installations. Also
+remove the avoidable full audit-log parse performed by each status poll.
+
+## Compatibility Boundary
+
+`--env-path` keeps its existing launchd contract: it identifies a user-managed
+shell environment file that is sourced by the launch wrapper. Existing files may
+contain `export` assignments and variables other than Bird cookies, including
+`OPENAI_API_KEY`.
+
+Managed X credentials use a separate `--bird-credentials-path` option. That file
+is parsed as inert data and must contain exactly `AUTH_TOKEN` and `CT0`; it is
+never sourced by a shell. Config-created digest LaunchAgents use this new option,
+while CLI callers can still combine a legacy `--env-path` with a managed Bird
+credential path when needed.
+
+The digest run command accepts only `--bird-credentials-path` for strict parsing.
+The install command accepts both options because it owns the launch wrapper.
+
+## Credential Precedence
+
+Bird subprocess environments are composed in this order:
+
+1. inherited process environment;
+2. credentials saved in Config;
+3. explicit per-command credentials.
+
+This makes Config authoritative over stale shell cookies while preserving an
+explicit CLI credential file as the highest-priority override. The Config test
+endpoint therefore tests the saved pair, not an inherited pair.
+
+## Scheduled Lock Lease
+
+The digest lock is a renewable lease rather than a one-time PID marker. A lock is
+active only while all applicable conditions hold:
+
+- its file heartbeat is newer than the stale interval;
+- its `startedAt` is younger than the six-hour absolute maximum;
+- when the owner is on the current host, the recorded PID is still alive.
+
+The existing digest run-state heartbeat also refreshes the owned lock every 15
+seconds. Refresh and release operations verify `ownerId`; a previous owner cannot
+refresh a replacement lock. The six-hour cap prevents a reused PID or a runaway
+heartbeat from preserving a lock indefinitely.
+
+Other scheduled jobs retain their existing stale intervals. Because they do not
+renew their locks, their stale interval remains their maximum expected runtime,
+matching the behavior before PR #48.
+
+## Status Polling
+
+The status reader caches parsed audit results by audit path, file size, and mtime.
+Unchanged polls reuse the parsed four-period snapshot. A changed or replaced file
+invalidates the cache, and reverse scanning stops after the latest record for all
+four periods has been found.
+
+## Error Handling
+
+- A missing or invalid strict credential file produces no explicit Bird override;
+  managed credentials remain available unless the caller explicitly selected an
+  invalid path, in which case the CLI reports the invalid credential file.
+- A failed lock heartbeat is isolated from the run-state heartbeat loop. The lock
+  naturally becomes stale within the configured interval and can be reclaimed.
+- Audit stat/read failures return an empty snapshot and do not retain stale cached
+  data for a missing file.
+
+## Testing
+
+- LaunchAgent tests cover legacy shell env sourcing and shell-free managed Bird
+  credential arguments independently and together.
+- CLI and Config schedule tests cover the new option wiring.
+- Credential tests prove managed-over-process and explicit-over-managed order.
+- Lock tests prove heartbeat renewal, stale same-PID reclamation, absolute expiry,
+  and owner-safe refresh.
+- Status tests prove unchanged audit logs are read once and changed logs invalidate
+  the cache.
+
