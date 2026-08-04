@@ -21,6 +21,8 @@ beforeEach(() => {
 afterEach(() => {
 	delete process.env.BIRDCLAW_HOME;
 	delete process.env.BIRDCLAW_WEB_TOKEN;
+	delete process.env.AUTH_TOKEN;
+	delete process.env.CT0;
 	resetBirdclawPathsForTests();
 	rmSync(tempRoot, { recursive: true, force: true });
 });
@@ -29,6 +31,8 @@ describe("bird credentials test API", () => {
 	it("runs bird whoami with managed credentials in the environment only", async () => {
 		const authToken = "test-auth-secret";
 		const ct0 = "test-ct0-secret";
+		process.env.AUTH_TOKEN = "inherited-auth";
+		process.env.CT0 = "inherited-ct0";
 		writeBirdCredentials({ authToken, ct0 });
 		const runBirdCommand = vi.fn(
 			async (_args: string[], _options?: ExecFileOptions) => ({

@@ -144,10 +144,10 @@ export function mergeBirdCredentialEnvironment(
 ): NodeJS.ProcessEnv {
 	const credentials = readBirdCredentials();
 	return {
+		...process.env,
 		...(credentials
 			? { AUTH_TOKEN: credentials.authToken, CT0: credentials.ct0 }
 			: {}),
-		...process.env,
 		...explicit,
 	};
 }
