@@ -41,7 +41,7 @@ export interface DigestArchiveDateOption {
 	contentSources: PeriodDigestContentSource[];
 }
 
-/** Only meaningful for the "yesterday"/"week" periods — Today/24h stay live. */
+/** Lists persisted scheduled runs for any digest period. */
 export function useDigestArchiveDates(
 	period: PeriodRouteSearch,
 	enabled: boolean,

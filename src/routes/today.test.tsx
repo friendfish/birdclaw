@@ -683,7 +683,16 @@ describe("today route", () => {
 				if (url.pathname === "/api/data-sources") {
 					return jsonResponse({
 						generatedAt: "",
-						sources: [],
+						sources: [
+							{
+								source: "bird",
+								label: "bird",
+								works: true,
+								status: "ok",
+								detail: "ready",
+								accounts: [],
+							},
+						],
 						capabilities: [],
 					});
 				}
@@ -1221,6 +1230,263 @@ describe("today route", () => {
 				name: /refresh/i,
 			});
 			await waitFor(() => expect(refreshButton).toBeDisabled());
+		});
+
+		it("reads a completed Today source from the active scheduled archive", async () => {
+			const requestedPaths: string[] = [];
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				requestedPaths.push(url.pathname);
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({
+						ok: true,
+						runningPeriods: ["today"],
+						activeRuns: [
+							{
+								period: "today",
+								runDate: "2026-07-29",
+								totalSources: 3,
+								phase: "generating",
+								startedAt: "2026-07-29T00:00:00.000Z",
+								lastHeartbeatAt: "2026-07-29T00:01:00.000Z",
+								sources: {
+									all: {
+										state: "completed",
+										attempts: 1,
+										generatedAt: "2026-07-29T00:00:40.000Z",
+									},
+									for_you: { state: "running", attempts: 1 },
+								},
+							},
+						],
+						lastRuns: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					return jsonResponse({
+						ok: true,
+						dates: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-entry") {
+					return jsonResponse({
+						ok: true,
+						result: digestResult(
+							"Scheduled Today",
+							"# Scheduled Today is ready",
+						),
+					});
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(<TodayRoute />);
+
+			expect(
+				await screen.findByRole("heading", {
+					name: "Scheduled Today is ready",
+					level: 1,
+				}),
+			).toBeInTheDocument();
+			expect(requestedPaths).not.toContain("/api/period-digest");
+			expect(requestedPaths).not.toContain("/api/period-digest-metadata");
+		});
+
+		it("shows the active source as pending without starting a live Today digest", async () => {
+			const requestedPaths: string[] = [];
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				requestedPaths.push(url.pathname);
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({
+						ok: true,
+						runningPeriods: ["today"],
+						activeRuns: [
+							{
+								period: "today",
+								runDate: "2026-07-29",
+								totalSources: 3,
+								phase: "generating",
+								startedAt: "2026-07-29T00:00:00.000Z",
+								lastHeartbeatAt: "2026-07-29T00:01:00.000Z",
+								sources: {
+									all: { state: "completed", attempts: 1 },
+									for_you: { state: "running", attempts: 1 },
+								},
+							},
+						],
+						lastRuns: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					return jsonResponse({
+						ok: true,
+						dates: [{ date: "2026-07-29", contentSources: ["all"] }],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-entry") {
+					return jsonResponse({ ok: true, result: null });
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(
+				<TodayRoute
+					searchState={{
+						period: "today",
+						includeDms: false,
+						contentSource: "for_you",
+						archiveDate: "",
+					}}
+				/>,
+			);
+
+			expect(
+				await screen.findByText("This source is still being generated."),
+			).toBeInTheDocument();
+			expect(requestedPaths).not.toContain("/api/period-digest");
+			expect(requestedPaths).not.toContain("/api/period-digest-metadata");
+		});
+
+		it("shows the latest scheduled source failure instead of a missing-archive message", async () => {
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [
+							{
+								source: "bird",
+								label: "bird",
+								works: true,
+								status: "ok",
+								detail: "ready",
+								accounts: [],
+							},
+						],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({
+						ok: true,
+						runningPeriods: [],
+						activeRuns: [],
+						lastRuns: [
+							{
+								period: "yesterday",
+								runDate: "2026-07-29",
+								status: "failed",
+								finishedAt: "2026-07-30T00:02:00.000Z",
+								sources: {
+									for_you: {
+										state: "failed",
+										attempts: 2,
+										error: "attempt timed out",
+									},
+								},
+							},
+						],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					return jsonResponse({
+						ok: true,
+						dates: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-entry") {
+					return jsonResponse({ ok: true, result: null });
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(
+				<TodayRoute
+					searchState={{
+						period: "yesterday",
+						includeDms: false,
+						contentSource: "for_you",
+						archiveDate: "",
+					}}
+				/>,
+			);
+
+			expect(
+				await screen.findByText("Scheduled digest failed: attempt timed out"),
+			).toBeInTheDocument();
+			expect(
+				screen.queryByText(/No archived .*digest for this date/i),
+			).toBeNull();
+		});
+
+		it("exposes the digest generation timestamp on screen", async () => {
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse({
+						generatedAt: "",
+						sources: [],
+						capabilities: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({
+						ok: true,
+						runningPeriods: [],
+						activeRuns: [],
+						lastRuns: [],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-dates") {
+					return jsonResponse({
+						ok: true,
+						dates: [{ date: "2026-07-29", contentSources: ["all"] }],
+					});
+				}
+				if (url.pathname === "/api/digest-archive-entry") {
+					return jsonResponse({
+						ok: true,
+						result: digestResult("Yesterday", "# Yesterday archive"),
+					});
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			render(
+				<TodayRoute
+					searchState={{
+						period: "yesterday",
+						includeDms: false,
+						contentSource: "all",
+						archiveDate: "",
+					}}
+				/>,
+			);
+
+			const generatedAt = await screen.findByLabelText("Generated at");
+			expect(generatedAt).toHaveAttribute(
+				"datetime",
+				"2026-05-16T12:00:00.000Z",
+			);
 		});
 	});
 });

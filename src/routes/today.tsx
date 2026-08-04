@@ -463,36 +463,58 @@ export function TodayRouteView({
 	// latest archived date," and picking an explicit historical date reads
 	// the same way — there's no separate live-generation path for either.
 	const isArchivedPeriod = period === "yesterday" || period === "week";
+	const archiveStatus = useDigestArchiveStatus();
+	const archiveRunning = archiveStatus.runningPeriods.has(period);
+	const activeArchiveRun = archiveStatus.activeRuns.get(period);
 	const live = useDigestStream(
 		period,
 		includeDms,
 		effectiveContentSource,
-		!isArchivedPeriod,
+		!isArchivedPeriod && !archiveStatus.loading && !archiveRunning,
 	);
-	const archiveStatus = useDigestArchiveStatus();
-	const archiveRunning =
-		isArchivedPeriod && archiveStatus.runningPeriods.has(period);
-	const activeArchiveRun = archiveStatus.activeRuns.get(period);
 	const archived = useReadOnlyDigest({
 		period,
 		contentSource: effectiveContentSource,
 		archiveDate,
-		enabled: isArchivedPeriod,
+		enabled: isArchivedPeriod || archiveRunning,
 		running: archiveRunning,
 		activeRunDate: activeArchiveRun?.runDate,
 	});
+	const useArchivedResult =
+		isArchivedPeriod ||
+		archiveRunning ||
+		archived.finalizing ||
+		Boolean(archived.result);
 	const archiveBusy = archived.activeRunInProgress;
-	const context = isArchivedPeriod ? archived.context : live.context;
-	const markdown = isArchivedPeriod ? archived.markdown : live.markdown;
-	const result = isArchivedPeriod ? archived.result : live.result;
-	const loading = isArchivedPeriod ? archived.loading : live.loading;
-	const error = isArchivedPeriod ? archived.error : live.error;
+	const context = useArchivedResult ? archived.context : live.context;
+	const markdown = useArchivedResult ? archived.markdown : live.markdown;
+	const result = useArchivedResult ? archived.result : live.result;
+	const loading = useArchivedResult
+		? archived.loading
+		: archiveStatus.loading || live.loading;
+	const error = useArchivedResult ? archived.error : live.error;
 	const retry = isArchivedPeriod ? archived.retry : () => live.run(true);
-	const status = isArchivedPeriod
+	const activeSourceStates = activeArchiveRun
+		? Object.values(activeArchiveRun.sources)
+		: [];
+	const completedScheduledSources = activeSourceStates.length
+		? activeSourceStates.filter((source) => source.state === "completed").length
+		: archived.completedSources;
+	const status = useArchivedResult
 		? archiveBusy
-			? `Generating scheduled digest ${String(archived.completedSources)}/${String(activeArchiveRun?.totalSources ?? 3)}`
+			? `Generating scheduled digest ${String(completedScheduledSources)}/${String(activeArchiveRun?.totalSources ?? 3)}`
 			: "Loading archive"
 		: live.status;
+	const latestArchiveRun = archiveStatus.lastRuns.get(period);
+	const latestSourceRun = latestArchiveRun?.sources[effectiveContentSource];
+	const showingLatestArchiveRun = archiveDate
+		? latestArchiveRun?.runDate === archiveDate
+		: !archived.effectiveDate ||
+			latestArchiveRun?.runDate === archived.effectiveDate;
+	const scheduledSourceError =
+		!result && showingLatestArchiveRun && latestSourceRun?.state === "failed"
+			? latestSourceRun.error || "unknown error"
+			: null;
 	useEffect(() => {
 		const root = document.documentElement;
 		root.classList.add("today-pdf-route");
@@ -670,7 +692,7 @@ export function TodayRouteView({
 				</div>
 			) : null}
 
-			<div className="today-screen-only border-b border-[var(--line)] px-4 py-2 text-[13px] text-[var(--ink-soft)]">
+			<div className="today-screen-only flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--line)] px-4 py-2 text-[13px] text-[var(--ink-soft)]">
 				<span className="inline-flex items-center gap-1">
 					{loading || archiveBusy ? (
 						<Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -689,6 +711,11 @@ export function TodayRouteView({
 									? "Digest failed"
 									: "Ready"}
 				</span>
+				{result && exportUpdatedAt ? (
+					<time aria-label="Generated at" dateTime={result.updatedAt}>
+						Generated {exportUpdatedAt}
+					</time>
+				) : null}
 			</div>
 
 			{markdown ? (
@@ -706,11 +733,13 @@ export function TodayRouteView({
 								? isArchivedPeriod
 									? "No digest was generated. Retry to load the archive again."
 									: "No digest was generated. Retry to start a new run."
-								: isArchivedPeriod
-									? archived.neverArchived
-										? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
-										: `No archived ${effectiveContentSource === "all" ? "" : `${effectiveContentSource} `}digest for this date. Try a different content-source tab.`
-									: "Waiting for the first tokens..."}
+								: scheduledSourceError
+									? `Scheduled digest failed: ${scheduledSourceError}`
+									: useArchivedResult
+										? archived.neverArchived
+											? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
+											: `No archived ${effectiveContentSource === "all" ? "" : `${effectiveContentSource} `}digest for this date. Try a different content-source tab.`
+										: "Waiting for the first tokens..."}
 				</div>
 			)}
 		</div>
