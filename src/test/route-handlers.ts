@@ -1,4 +1,4 @@
-type RouteMethod = "GET" | "POST";
+type RouteMethod = "DELETE" | "GET" | "POST";
 
 type RouteHandler = (context: {
 	request: Request;

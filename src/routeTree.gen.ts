@@ -26,6 +26,8 @@ import { Route as RateLimitsRouteImport } from './routes/rate-limits'
 import { Route as TodayRouteImport } from './routes/today'
 import { Route as ApiActionRouteImport } from './routes/api/action'
 import { Route as ApiAvatarRouteImport } from './routes/api/avatar'
+import { Route as ApiBirdCredentialsRouteImport } from './routes/api/bird-credentials'
+import { Route as ApiBirdCredentialsTestRouteImport } from './routes/api/bird-credentials-test'
 import { Route as ApiBlocksRouteImport } from './routes/api/blocks'
 import { Route as ApiConfigRouteImport } from './routes/api/config'
 import { Route as ApiConfigModelsRouteImport } from './routes/api/config-models'
@@ -140,6 +142,16 @@ const ApiActionRoute = ApiActionRouteImport.update({
 const ApiAvatarRoute = ApiAvatarRouteImport.update({
   id: '/api/avatar',
   path: '/api/avatar',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiBirdCredentialsRoute = ApiBirdCredentialsRouteImport.update({
+  id: '/api/bird-credentials',
+  path: '/api/bird-credentials',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiBirdCredentialsTestRoute = ApiBirdCredentialsTestRouteImport.update({
+  id: '/api/bird-credentials-test',
+  path: '/api/bird-credentials-test',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiBlocksRoute = ApiBlocksRouteImport.update({
@@ -315,6 +327,8 @@ export interface FileRoutesByFullPath {
   '/today': typeof TodayRoute
   '/api/action': typeof ApiActionRoute
   '/api/avatar': typeof ApiAvatarRoute
+  '/api/bird-credentials': typeof ApiBirdCredentialsRoute
+  '/api/bird-credentials-test': typeof ApiBirdCredentialsTestRoute
   '/api/blocks': typeof ApiBlocksRoute
   '/api/config': typeof ApiConfigRoute
   '/api/config-models': typeof ApiConfigModelsRoute
@@ -364,6 +378,8 @@ export interface FileRoutesByTo {
   '/today': typeof TodayRoute
   '/api/action': typeof ApiActionRoute
   '/api/avatar': typeof ApiAvatarRoute
+  '/api/bird-credentials': typeof ApiBirdCredentialsRoute
+  '/api/bird-credentials-test': typeof ApiBirdCredentialsTestRoute
   '/api/blocks': typeof ApiBlocksRoute
   '/api/config': typeof ApiConfigRoute
   '/api/config-models': typeof ApiConfigModelsRoute
@@ -414,6 +430,8 @@ export interface FileRoutesById {
   '/today': typeof TodayRoute
   '/api/action': typeof ApiActionRoute
   '/api/avatar': typeof ApiAvatarRoute
+  '/api/bird-credentials': typeof ApiBirdCredentialsRoute
+  '/api/bird-credentials-test': typeof ApiBirdCredentialsTestRoute
   '/api/blocks': typeof ApiBlocksRoute
   '/api/config': typeof ApiConfigRoute
   '/api/config-models': typeof ApiConfigModelsRoute
@@ -465,6 +483,8 @@ export interface FileRouteTypes {
     | '/today'
     | '/api/action'
     | '/api/avatar'
+    | '/api/bird-credentials'
+    | '/api/bird-credentials-test'
     | '/api/blocks'
     | '/api/config'
     | '/api/config-models'
@@ -514,6 +534,8 @@ export interface FileRouteTypes {
     | '/today'
     | '/api/action'
     | '/api/avatar'
+    | '/api/bird-credentials'
+    | '/api/bird-credentials-test'
     | '/api/blocks'
     | '/api/config'
     | '/api/config-models'
@@ -563,6 +585,8 @@ export interface FileRouteTypes {
     | '/today'
     | '/api/action'
     | '/api/avatar'
+    | '/api/bird-credentials'
+    | '/api/bird-credentials-test'
     | '/api/blocks'
     | '/api/config'
     | '/api/config-models'
@@ -613,6 +637,8 @@ export interface RootRouteChildren {
   TodayRoute: typeof TodayRoute
   ApiActionRoute: typeof ApiActionRoute
   ApiAvatarRoute: typeof ApiAvatarRoute
+  ApiBirdCredentialsRoute: typeof ApiBirdCredentialsRoute
+  ApiBirdCredentialsTestRoute: typeof ApiBirdCredentialsTestRoute
   ApiBlocksRoute: typeof ApiBlocksRoute
   ApiConfigRoute: typeof ApiConfigRoute
   ApiConfigModelsRoute: typeof ApiConfigModelsRoute
@@ -763,6 +789,20 @@ declare module '@tanstack/react-router' {
       path: '/api/avatar'
       fullPath: '/api/avatar'
       preLoaderRoute: typeof ApiAvatarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/bird-credentials': {
+      id: '/api/bird-credentials'
+      path: '/api/bird-credentials'
+      fullPath: '/api/bird-credentials'
+      preLoaderRoute: typeof ApiBirdCredentialsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/bird-credentials-test': {
+      id: '/api/bird-credentials-test'
+      path: '/api/bird-credentials-test'
+      fullPath: '/api/bird-credentials-test'
+      preLoaderRoute: typeof ApiBirdCredentialsTestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/blocks': {
@@ -1007,6 +1047,8 @@ const rootRouteChildren: RootRouteChildren = {
   TodayRoute: TodayRoute,
   ApiActionRoute: ApiActionRoute,
   ApiAvatarRoute: ApiAvatarRoute,
+  ApiBirdCredentialsRoute: ApiBirdCredentialsRoute,
+  ApiBirdCredentialsTestRoute: ApiBirdCredentialsTestRoute,
   ApiBlocksRoute: ApiBlocksRoute,
   ApiConfigRoute: ApiConfigRoute,
   ApiConfigModelsRoute: ApiConfigModelsRoute,
