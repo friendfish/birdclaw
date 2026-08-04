@@ -1,5 +1,6 @@
 // @vitest-environment node
 import {
+	appendFileSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -7,6 +8,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
@@ -28,6 +30,8 @@ vi.mock("./digest-archive-sync", () => ({
 import {
 	buildDigestArchiveLaunchAgentPlist,
 	digestArchiveLockPath,
+	getDefaultDigestArchiveAuditLogPath,
+	getDigestArchiveStatus,
 	listDigestArchiveDates,
 	readDigestArchiveEntry,
 	resolveDigestArchivePaths,
@@ -158,6 +162,41 @@ describe("digest-archive-job", () => {
 			expect(json.contentSource).toBe(contentSource);
 			expect(json.period).toBe("today");
 			expect(json.runDate).toBe("2026-07-27");
+		}
+	});
+
+	it("caches unchanged audit status and invalidates after an append", async () => {
+		const auditPath = getDefaultDigestArchiveAuditLogPath();
+		mkdirSync(path.dirname(auditPath), { recursive: true });
+		const auditEntry = (period: "today" | "yesterday") =>
+			`${JSON.stringify({
+				job: "digest-archive",
+				period,
+				ok: true,
+				status: "ok",
+				runDate: "2026-08-04",
+				finishedAt: "2026-08-04T01:00:00.000Z",
+				steps: [],
+			})}\n`;
+		writeFileSync(auditPath, auditEntry("today"), "utf8");
+		const readFileSpy = vi.spyOn(fsPromises, "readFile");
+		const auditReadCount = () =>
+			readFileSpy.mock.calls.filter(([target]) => target === auditPath).length;
+
+		try {
+			await getDigestArchiveStatus();
+			await getDigestArchiveStatus();
+			expect(auditReadCount()).toBe(1);
+
+			appendFileSync(auditPath, auditEntry("yesterday"), "utf8");
+			const refreshed = await getDigestArchiveStatus();
+			expect(auditReadCount()).toBe(2);
+			expect(refreshed.lastRuns.map(({ period }) => period)).toEqual([
+				"today",
+				"yesterday",
+			]);
+		} finally {
+			readFileSpy.mockRestore();
 		}
 	});
 

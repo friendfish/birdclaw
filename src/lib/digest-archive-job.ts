@@ -1273,10 +1273,36 @@ export function peekDigestArchiveRunningRunsEffect(): Effect.Effect<
 	);
 }
 
+let latestDigestArchiveRunsCache:
+	| {
+			path: string;
+			size: number;
+			mtimeMs: number;
+			runs: DigestArchiveFinalRun[];
+	  }
+	| undefined;
+
 async function readLatestDigestArchiveRuns() {
-	const raw = await fs
-		.readFile(getDefaultDigestArchiveAuditLogPath(), "utf8")
-		.catch(() => "");
+	const auditPath = getDefaultDigestArchiveAuditLogPath();
+	const stats = await fs.stat(auditPath).catch(() => undefined);
+	if (!stats) {
+		if (latestDigestArchiveRunsCache?.path === auditPath) {
+			latestDigestArchiveRunsCache = undefined;
+		}
+		return [];
+	}
+	if (
+		latestDigestArchiveRunsCache?.path === auditPath &&
+		latestDigestArchiveRunsCache.size === stats.size &&
+		latestDigestArchiveRunsCache.mtimeMs === stats.mtimeMs
+	) {
+		return latestDigestArchiveRunsCache.runs;
+	}
+	const raw = await fs.readFile(auditPath, "utf8").catch(() => undefined);
+	if (raw === undefined) {
+		latestDigestArchiveRunsCache = undefined;
+		return [];
+	}
 	const latest = new Map<PeriodDigestPreset, DigestArchiveFinalRun>();
 	for (const line of raw.split("\n").reverse()) {
 		if (!line.trim()) continue;
@@ -1318,14 +1344,22 @@ async function readLatestDigestArchiveRuns() {
 					]),
 				),
 			});
+			if (latest.size === ALL_PERIODS.length) break;
 		} catch {
 			continue;
 		}
 	}
-	return ALL_PERIODS.flatMap((period) => {
+	const runs = ALL_PERIODS.flatMap((period) => {
 		const entry = latest.get(period);
 		return entry ? [entry] : [];
 	});
+	latestDigestArchiveRunsCache = {
+		path: auditPath,
+		size: stats.size,
+		mtimeMs: stats.mtimeMs,
+		runs,
+	};
+	return runs;
 }
 
 export async function getDigestArchiveStatus(): Promise<DigestArchiveStatusSnapshot> {
