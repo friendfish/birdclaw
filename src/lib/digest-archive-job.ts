@@ -13,6 +13,7 @@ import { runEffectPromise, tryPromise } from "./effect-runtime";
 import {
 	createDigestArchiveRunState,
 	digestArchiveRunStatePath,
+	readDigestArchiveRunState,
 	removeDigestArchiveRunState,
 	startDigestArchiveHeartbeat,
 	updateDigestArchiveRunState,
@@ -955,6 +956,47 @@ export interface DigestArchiveActiveRun {
 	totalSources: number;
 }
 
+export interface DigestArchiveDetailedActiveRun extends DigestArchiveActiveRun {
+	phase: "pre-sync" | "generating" | "finalizing";
+	currentSource?: PeriodDigestContentSource;
+	startedAt: string;
+	lastHeartbeatAt: string;
+	sources: Partial<
+		Record<
+			PeriodDigestContentSource,
+			{
+				state: "pending" | "running" | "completed" | "failed";
+				attempts: number;
+				generatedAt?: string;
+				error?: string;
+			}
+		>
+	>;
+}
+
+export interface DigestArchiveFinalRun {
+	period: PeriodDigestPreset;
+	runDate: string;
+	status: DigestArchiveBatchStatus;
+	finishedAt: string;
+	sources: Partial<
+		Record<
+			PeriodDigestContentSource,
+			{
+				state: "completed" | "failed";
+				attempts: number;
+				generatedAt?: string;
+				error?: string;
+			}
+		>
+	>;
+}
+
+export interface DigestArchiveStatusSnapshot {
+	activeRuns: DigestArchiveDetailedActiveRun[];
+	lastRuns: DigestArchiveFinalRun[];
+}
+
 export async function peekDigestArchiveRunningRuns(): Promise<
 	DigestArchiveActiveRun[]
 > {
@@ -1015,4 +1057,114 @@ export function peekDigestArchiveRunningRunsEffect(): Effect.Effect<
 			values.filter((v): v is DigestArchiveActiveRun => v !== undefined),
 		),
 	);
+}
+
+async function readLatestDigestArchiveRuns() {
+	const raw = await fs
+		.readFile(getDefaultDigestArchiveAuditLogPath(), "utf8")
+		.catch(() => "");
+	const latest = new Map<PeriodDigestPreset, DigestArchiveFinalRun>();
+	for (const line of raw.split("\n").reverse()) {
+		if (!line.trim()) continue;
+		try {
+			const entry = JSON.parse(line) as Partial<DigestArchiveAuditEntry>;
+			if (
+				entry.job !== "digest-archive" ||
+				!ALL_PERIODS.includes(entry.period as PeriodDigestPreset) ||
+				entry.skipped ||
+				latest.has(entry.period as PeriodDigestPreset) ||
+				typeof entry.runDate !== "string" ||
+				typeof entry.finishedAt !== "string" ||
+				!Array.isArray(entry.steps)
+			) {
+				continue;
+			}
+			const period = entry.period as PeriodDigestPreset;
+			latest.set(period, {
+				period,
+				runDate: entry.runDate,
+				status: entry.status ?? (entry.ok ? "ok" : "failed"),
+				finishedAt: entry.finishedAt,
+				sources: Object.fromEntries(
+					entry.steps.map((step) => [
+						step.contentSource,
+						step.ok
+							? {
+									state: "completed",
+									attempts: step.attempts,
+									...(step.updatedAt ? { generatedAt: step.updatedAt } : {}),
+								}
+							: {
+									state: "failed",
+									attempts: step.attempts,
+									...(step.error
+										? { error: sensitiveErrorMessage(step.error) }
+										: {}),
+								},
+					]),
+				),
+			});
+		} catch {
+			continue;
+		}
+	}
+	return ALL_PERIODS.flatMap((period) => {
+		const entry = latest.get(period);
+		return entry ? [entry] : [];
+	});
+}
+
+export async function getDigestArchiveStatus(): Promise<DigestArchiveStatusSnapshot> {
+	const activeRuns: DigestArchiveDetailedActiveRun[] = [];
+	for (const period of ALL_PERIODS) {
+		const metadata = await peekScheduledJobLockMetadata(
+			digestArchiveLockPath(period),
+			DEFAULT_LOCK_STALE_MS,
+		);
+		if (!metadata) continue;
+		const state = await readDigestArchiveRunState(
+			digestArchiveRunStatePath(period),
+		);
+		if (state && state.period === period) {
+			activeRuns.push({
+				period,
+				runDate: state.runDate,
+				totalSources: state.totalSources,
+				phase: state.phase,
+				...(state.currentSource ? { currentSource: state.currentSource } : {}),
+				startedAt: state.startedAt,
+				lastHeartbeatAt: state.lastHeartbeatAt,
+				sources: Object.fromEntries(
+					Object.entries(state.sources).map(([source, sourceState]) => [
+						source,
+						{
+							...sourceState,
+							...(sourceState.error
+								? { error: sensitiveErrorMessage(sourceState.error) }
+								: {}),
+						},
+					]),
+				),
+			});
+			continue;
+		}
+		activeRuns.push({
+			period,
+			runDate:
+				metadata.runDate ?? formatLocalDateFolder(new Date(metadata.startedAt)),
+			totalSources: metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
+			phase: "pre-sync",
+			startedAt: metadata.startedAt,
+			lastHeartbeatAt: metadata.startedAt,
+			sources: {},
+		});
+	}
+	return { activeRuns, lastRuns: await readLatestDigestArchiveRuns() };
+}
+
+export function getDigestArchiveStatusEffect(): Effect.Effect<
+	DigestArchiveStatusSnapshot,
+	unknown
+> {
+	return tryPromise(getDigestArchiveStatus);
 }
