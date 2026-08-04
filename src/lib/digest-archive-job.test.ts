@@ -1,5 +1,6 @@
 // @vitest-environment node
 import {
+	appendFileSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -7,6 +8,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
@@ -28,12 +30,19 @@ vi.mock("./digest-archive-sync", () => ({
 import {
 	buildDigestArchiveLaunchAgentPlist,
 	digestArchiveLockPath,
+	getDefaultDigestArchiveAuditLogPath,
+	getDigestArchiveStatus,
 	listDigestArchiveDates,
 	readDigestArchiveEntry,
 	resolveDigestArchivePaths,
 	peekDigestArchiveRunningRuns,
 	runDigestArchiveJobEffect,
+	replaceDigestArchiveEntryEffect,
 } from "./digest-archive-job";
+import {
+	digestArchiveRunStatePath,
+	readDigestArchiveRunState,
+} from "./digest-archive-run-state";
 import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import { runEffectPromise } from "./effect-runtime";
 
@@ -60,7 +69,15 @@ function digestResult(overrides: Partial<Record<string, unknown>> = {}) {
 		context: {
 			window: { label: "Today", since: "", until: "" },
 			includeDms: false,
-			counts: {},
+			counts: {
+				home: 0,
+				mentions: 0,
+				authored: 0,
+				likes: 0,
+				bookmarks: 0,
+				dms: 0,
+				links: 0,
+			},
 			tweets: [],
 			dms: [],
 			links: [],
@@ -79,6 +96,7 @@ function digestResult(overrides: Partial<Record<string, unknown>> = {}) {
 		model: "gpt-5.5",
 		reasoningEffort: "medium",
 		serviceTier: "priority",
+		parseStatus: "structured" as const,
 		cached: false,
 		updatedAt: "2026-07-27T08:00:00.000Z",
 		...overrides,
@@ -147,6 +165,71 @@ describe("digest-archive-job", () => {
 		}
 	});
 
+	it("caches unchanged audit status and invalidates after an append", async () => {
+		const auditPath = getDefaultDigestArchiveAuditLogPath();
+		mkdirSync(path.dirname(auditPath), { recursive: true });
+		const auditEntry = (period: "today" | "yesterday") =>
+			`${JSON.stringify({
+				job: "digest-archive",
+				period,
+				ok: true,
+				status: "ok",
+				runDate: "2026-08-04",
+				finishedAt: "2026-08-04T01:00:00.000Z",
+				steps: [],
+			})}\n`;
+		writeFileSync(auditPath, auditEntry("today"), "utf8");
+		const readFileSpy = vi.spyOn(fsPromises, "readFile");
+		const auditReadCount = () =>
+			readFileSpy.mock.calls.filter(([target]) => target === auditPath).length;
+
+		try {
+			await getDigestArchiveStatus();
+			await getDigestArchiveStatus();
+			expect(auditReadCount()).toBe(1);
+
+			appendFileSync(auditPath, auditEntry("yesterday"), "utf8");
+			const refreshed = await getDigestArchiveStatus();
+			expect(auditReadCount()).toBe(2);
+			expect(refreshed.lastRuns.map(({ period }) => period)).toEqual([
+				"today",
+				"yesterday",
+			]);
+		} finally {
+			readFileSpy.mockRestore();
+		}
+	});
+
+	it("exposes a sanitized batch failure from the latest audit run", async () => {
+		const auditPath = getDefaultDigestArchiveAuditLogPath();
+		mkdirSync(path.dirname(auditPath), { recursive: true });
+		writeFileSync(
+			auditPath,
+			`${JSON.stringify({
+				job: "digest-archive",
+				period: "today",
+				ok: false,
+				status: "failed",
+				runDate: "2026-08-04",
+				finishedAt: "2026-08-04T01:00:00.000Z",
+				steps: [],
+				error: "credential failed AUTH_TOKEN=secret-value",
+			})}\n`,
+			"utf8",
+		);
+
+		const status = await getDigestArchiveStatus();
+
+		expect(status.lastRuns).toEqual([
+			expect.objectContaining({
+				period: "today",
+				status: "failed",
+				error: "credential failed AUTH_TOKEN=[REDACTED]",
+				sources: {},
+			}),
+		]);
+	});
+
 	it("pre-syncs once before generating every source from local data", async () => {
 		const order: string[] = [];
 		preSyncEffectMock.mockImplementation(() => {
@@ -178,6 +261,7 @@ describe("digest-archive-job", () => {
 			since: undefined,
 			until: undefined,
 			liveSync: true,
+			nonInteractiveBird: true,
 		});
 		expect(streamPeriodDigestMock).toHaveBeenCalledTimes(3);
 		for (const [call] of streamPeriodDigestMock.mock.calls) {
@@ -301,6 +385,83 @@ describe("digest-archive-job", () => {
 		});
 	});
 
+	it("publishes source progress while running and removes state when finished", async () => {
+		let resolveDigest: (result: ReturnType<typeof digestResult>) => void = (
+			_result,
+		) => {
+			throw new Error("digest resolver was not initialized");
+		};
+		streamPeriodDigestMock.mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolveDigest = resolve;
+				}),
+		);
+		const job = runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir: tempArchiveDir(),
+				contentSources: ["all"],
+				liveSync: false,
+				now: () => new Date(2026, 7, 4),
+			}),
+		);
+		await vi.waitFor(() => expect(streamPeriodDigestMock).toHaveBeenCalled());
+
+		await expect(
+			readDigestArchiveRunState(digestArchiveRunStatePath("today")),
+		).resolves.toMatchObject({
+			period: "today",
+			runDate: "2026-08-04",
+			phase: "generating",
+			currentSource: "all",
+			totalSources: 1,
+			sources: { all: { state: "running", attempts: 1 } },
+		});
+
+		resolveDigest(digestResult());
+		await expect(job).resolves.toMatchObject({ ok: true });
+		await expect(
+			readDigestArchiveRunState(digestArchiveRunStatePath("today")),
+		).resolves.toBeUndefined();
+	});
+
+	it("aborts a timed-out model attempt and retries with a fresh signal", async () => {
+		let attempts = 0;
+		streamPeriodDigestMock.mockImplementation(
+			(options: { signal?: AbortSignal }) => {
+				if (!options.signal) throw new Error("missing attempt signal");
+				attempts += 1;
+				if (attempts > 1) return Promise.resolve(digestResult());
+				return new Promise((_resolve, reject) => {
+					options.signal?.addEventListener(
+						"abort",
+						() => reject(new Error("attempt timed out")),
+						{ once: true },
+					);
+				});
+			},
+		);
+
+		const entry = await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir: tempArchiveDir(),
+				contentSources: ["all"],
+				liveSync: false,
+				retries: 1,
+				retryDelayMs: 0,
+				modelTimeoutMs: 5,
+				now: () => new Date(2026, 7, 4),
+			}),
+		);
+
+		expect(attempts).toBe(2);
+		expect(entry.steps).toEqual([
+			expect.objectContaining({ contentSource: "all", ok: true, attempts: 2 }),
+		]);
+	});
+
 	it("continues from local data and marks a degraded pre-sync honestly", async () => {
 		const sync = {
 			status: "degraded" as const,
@@ -358,7 +519,7 @@ describe("digest-archive-job", () => {
 		expect(entry.steps.at(-1)?.ok).toBe(true);
 	});
 
-	it("writes schema v2 metadata with the final batch status", async () => {
+	it("writes scheduled schema v3 metadata with the final batch status", async () => {
 		const sync = {
 			status: "degraded" as const,
 			steps: [
@@ -393,11 +554,102 @@ describe("digest-archive-job", () => {
 		const json = JSON.parse(readFileSync(jsonPath, "utf8"));
 		expect(json).toEqual(
 			expect.objectContaining({
-				schemaVersion: 2,
+				schemaVersion: 3,
+				archiveOrigin: "scheduled",
+				savedAt: expect.any(String),
 				language: "zh-CN",
 				batchStatus: "degraded",
 				sync,
 			}),
+		);
+	});
+
+	it("replaces only one selected archive pair with manual schema v3", async () => {
+		const archiveDir = tempArchiveDir();
+		const runDate = "2026-08-04";
+		const selected = resolveDigestArchivePaths({
+			archiveDir,
+			runDate,
+			period: "today",
+			contentSource: "all",
+		});
+		const following = resolveDigestArchivePaths({
+			archiveDir,
+			runDate,
+			period: "today",
+			contentSource: "following",
+		});
+		const forYou = resolveDigestArchivePaths({
+			archiveDir,
+			runDate,
+			period: "today",
+			contentSource: "for_you",
+		});
+		mkdirSync(path.dirname(selected.jsonPath), { recursive: true });
+		writeFileSync(selected.markdownPath, "# Original All", "utf8");
+		writeFileSync(selected.jsonPath, '{"original":"all"}', "utf8");
+		writeFileSync(following.markdownPath, "# Original Following", "utf8");
+		writeFileSync(following.jsonPath, '{"original":"following"}', "utf8");
+		writeFileSync(forYou.markdownPath, "# Original For You", "utf8");
+		writeFileSync(forYou.jsonPath, '{"original":"for_you"}', "utf8");
+		const followingBefore = {
+			markdown: readFileSync(following.markdownPath, "utf8"),
+			json: readFileSync(following.jsonPath, "utf8"),
+		};
+		const forYouBefore = {
+			markdown: readFileSync(forYou.markdownPath, "utf8"),
+			json: readFileSync(forYou.jsonPath, "utf8"),
+		};
+
+		const replacement = await runEffectPromise(
+			replaceDigestArchiveEntryEffect({
+				archiveDir,
+				runDate,
+				period: "today",
+				contentSource: "all",
+				result: digestResult({
+					markdown: "# Manual All",
+					updatedAt: "2026-08-04T01:23:45.000Z",
+				}),
+				now: () => new Date("2026-08-04T02:00:00.000Z"),
+			}),
+		);
+
+		expect(replacement).toEqual({
+			period: "today",
+			contentSource: "all",
+			runDate,
+			generatedAt: "2026-08-04T01:23:45.000Z",
+			savedAt: "2026-08-04T02:00:00.000Z",
+			markdownPath: selected.markdownPath,
+			jsonPath: selected.jsonPath,
+		});
+		expect(readFileSync(selected.markdownPath, "utf8")).toBe("# Manual All");
+		expect(JSON.parse(readFileSync(selected.jsonPath, "utf8"))).toEqual(
+			expect.objectContaining({
+				schemaVersion: 3,
+				archiveOrigin: "manual",
+				period: "today",
+				contentSource: "all",
+				runDate,
+				generatedAt: "2026-08-04T01:23:45.000Z",
+				savedAt: "2026-08-04T02:00:00.000Z",
+				markdown: "# Manual All",
+			}),
+		);
+		expect(readFileSync(following.markdownPath, "utf8")).toBe(
+			followingBefore.markdown,
+		);
+		expect(readFileSync(following.jsonPath, "utf8")).toBe(followingBefore.json);
+		expect(readFileSync(forYou.markdownPath, "utf8")).toBe(
+			forYouBefore.markdown,
+		);
+		expect(readFileSync(forYou.jsonPath, "utf8")).toBe(forYouBefore.json);
+		expect(
+			readFileSync(selected.jsonPath, "utf8").includes("batchStatus"),
+		).toBe(false);
+		expect(readFileSync(selected.jsonPath, "utf8").includes('"sync"')).toBe(
+			false,
 		);
 	});
 
@@ -439,6 +691,199 @@ describe("digest-archive-job", () => {
 		});
 	});
 
+	it("audits unexpected job failures without leaking credentials", async () => {
+		const archiveDir = tempArchiveDir();
+		const logPath = path.join(archiveDir, "audit.jsonl");
+		const credential = "test-auth-token-not-a-real-secret";
+		preSyncEffectMock.mockReturnValue(
+			Effect.fail(new Error(`pre-sync failed AUTH_TOKEN=${credential}`)),
+		);
+
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect({
+					period: "today",
+					archiveDir,
+					contentSources: ["all"],
+					logPath,
+					now: () => new Date(2026, 6, 29),
+				}),
+			),
+		).rejects.toThrow("pre-sync failed");
+
+		const audit = readFileSync(logPath, "utf8");
+		expect(audit).not.toContain(credential);
+		expect(JSON.parse(audit)).toMatchObject({
+			job: "digest-archive",
+			period: "today",
+			ok: false,
+			status: "failed",
+			runDate: "2026-07-29",
+			sync: { status: "skipped", steps: [] },
+			steps: [],
+			error: "pre-sync failed AUTH_TOKEN=[REDACTED]",
+		});
+	});
+
+	it("audits a failure to acquire the scheduled job lock", async () => {
+		const archiveDir = tempArchiveDir();
+		const lockPath = path.join(archiveDir, "lock-is-a-directory");
+		const logPath = path.join(archiveDir, "audit.jsonl");
+		mkdirSync(lockPath);
+
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect({
+					period: "today",
+					archiveDir,
+					contentSources: ["all"],
+					lockPath,
+					logPath,
+					now: () => new Date(2026, 6, 29),
+				}),
+			),
+		).rejects.toThrow(/EISDIR|directory/iu);
+
+		expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+			job: "digest-archive",
+			period: "today",
+			ok: false,
+			status: "failed",
+			runDate: "2026-07-29",
+			sync: { status: "skipped", steps: [] },
+			steps: [],
+			error: expect.any(String),
+		});
+	});
+
+	it("audits an invalid explicit Bird credential file", async () => {
+		const archiveDir = tempArchiveDir();
+		const credentialsPath = path.join(archiveDir, "bird.env");
+		const logPath = path.join(archiveDir, "audit.jsonl");
+		writeFileSync(
+			credentialsPath,
+			"AUTH_TOKEN=auth\nCT0=ct0\nEXTRA=unexpected\n",
+			"utf8",
+		);
+		streamPeriodDigestMock.mockResolvedValue(digestResult());
+
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect({
+					period: "today",
+					archiveDir,
+					contentSources: ["all"],
+					birdCredentialsPath: credentialsPath,
+					logPath,
+					now: () => new Date(2026, 6, 29),
+				}),
+			),
+		).rejects.toThrow("Invalid Bird credential file");
+
+		expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+			job: "digest-archive",
+			period: "today",
+			ok: false,
+			status: "failed",
+			error: expect.stringContaining("Invalid Bird credential file"),
+			steps: [],
+		});
+		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
+	});
+
+	it("audits an unreadable explicit Bird credential path distinctly", async () => {
+		const archiveDir = tempArchiveDir();
+		const credentialsPath = path.join(archiveDir, "credential-directory");
+		const logPath = path.join(archiveDir, "audit.jsonl");
+		mkdirSync(credentialsPath);
+
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect({
+					period: "today",
+					archiveDir,
+					contentSources: ["all"],
+					birdCredentialsPath: credentialsPath,
+					logPath,
+					now: () => new Date(2026, 6, 29),
+				}),
+			),
+		).rejects.toThrow("Unable to read Bird credential file");
+
+		expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+			ok: false,
+			status: "failed",
+			error: expect.stringContaining("Unable to read Bird credential file"),
+		});
+	});
+
+	it("treats a missing explicit Bird credential file as no override", async () => {
+		const archiveDir = tempArchiveDir();
+		streamPeriodDigestMock.mockResolvedValue(digestResult());
+
+		const entry = await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir,
+				contentSources: ["all"],
+				birdCredentialsPath: path.join(archiveDir, "missing.env"),
+				now: () => new Date(2026, 6, 29),
+			}),
+		);
+
+		expect(entry.ok).toBe(true);
+		expect(preSyncEffectMock).toHaveBeenCalledWith(
+			expect.objectContaining({ birdCredentials: undefined }),
+		);
+	});
+
+	it("aborts and audits a run after losing its scheduled lock", async () => {
+		const archiveDir = tempArchiveDir();
+		const lockPath = path.join(archiveDir, "digest.lock");
+		const logPath = path.join(archiveDir, "audit.jsonl");
+		let requestSignal: AbortSignal | undefined;
+		streamPeriodDigestMock.mockImplementation(
+			(options: { signal: AbortSignal }) => {
+				requestSignal = options.signal;
+				rmSync(lockPath, { force: true });
+				return new Promise((_resolve, reject) => {
+					options.signal.addEventListener(
+						"abort",
+						() => reject(new DOMException("aborted", "AbortError")),
+						{ once: true },
+					);
+				});
+			},
+		);
+
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect(
+					{
+						period: "today",
+						archiveDir,
+						contentSources: ["all"],
+						lockPath,
+						logPath,
+						retries: 0,
+						now: () => new Date(2026, 6, 29),
+					},
+					{ heartbeatIntervalMs: 5 },
+				),
+			),
+		).rejects.toThrow("Scheduled digest lock ownership was lost");
+
+		expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+			job: "digest-archive",
+			period: "today",
+			ok: false,
+			status: "failed",
+			error: "Scheduled digest lock ownership was lost",
+			steps: [],
+		});
+		await vi.waitFor(() => expect(requestSignal?.aborted).toBe(true));
+	});
+
 	it("continues to read legacy schema v1 archive files", async () => {
 		const archiveDir = tempArchiveDir();
 		const { jsonPath } = resolveDigestArchivePaths({
@@ -469,6 +914,41 @@ describe("digest-archive-job", () => {
 		});
 
 		expect(entry?.schemaVersion).toBe(1);
+		expect(entry?.markdown).toBe("# Hello");
+	});
+
+	it("continues to read legacy schema v2 archive files", async () => {
+		const archiveDir = tempArchiveDir();
+		const { jsonPath } = resolveDigestArchivePaths({
+			archiveDir,
+			runDate: "2026-07-21",
+			period: "yesterday",
+			contentSource: "following",
+		});
+		mkdirSync(path.dirname(jsonPath), { recursive: true });
+		writeFileSync(
+			jsonPath,
+			JSON.stringify({
+				schemaVersion: 2,
+				period: "yesterday",
+				contentSource: "following",
+				runDate: "2026-07-21",
+				generatedAt: "2026-07-21T01:20:00.000Z",
+				batchStatus: "ok",
+				sync: { status: "fresh", steps: [] },
+				...digestResult(),
+			}),
+			"utf8",
+		);
+
+		const entry = await readDigestArchiveEntry({
+			archiveDir,
+			period: "yesterday",
+			contentSource: "following",
+			date: "2026-07-21",
+		});
+
+		expect(entry?.schemaVersion).toBe(2);
 		expect(entry?.markdown).toBe("# Hello");
 	});
 
@@ -693,6 +1173,7 @@ describe("digest-archive-job", () => {
 		expect(preSyncEffectMock).toHaveBeenCalledWith(
 			expect.objectContaining({
 				liveSync: true,
+				nonInteractiveBird: true,
 				since: undefined,
 				until: undefined,
 			}),
@@ -714,5 +1195,44 @@ describe("digest-archive-job", () => {
 			hour: 8,
 			minute: 45,
 		});
+	});
+
+	it("preserves legacy env-file sourcing for digest LaunchAgents", () => {
+		const agent = buildDigestArchiveLaunchAgentPlist({
+			period: "today",
+			envFile: "/tmp/digest.env",
+		});
+
+		expect(agent.programArguments).toEqual([
+			"/bin/bash",
+			"-lc",
+			expect.stringContaining("/tmp/digest.env"),
+		]);
+		expect(agent.programArguments[2]).not.toContain("--bird-credentials-path");
+		expect(agent.plist).toContain("/bin/bash");
+		expect(agent.envFile).toBe("/tmp/digest.env");
+	});
+
+	it("passes managed Bird credentials without a shell wrapper or token arguments", () => {
+		const agent = buildDigestArchiveLaunchAgentPlist({
+			period: "today",
+			birdCredentialsPath: "/tmp/bird.env",
+		});
+
+		expect(agent.programArguments).toEqual(
+			expect.arrayContaining([
+				"jobs",
+				"run-digest-archive",
+				"--bird-credentials-path",
+				"/tmp/bird.env",
+			]),
+		);
+		expect(agent.programArguments).not.toContain("/bin/bash");
+		expect(agent.programArguments).not.toContain("-lc");
+		expect(JSON.stringify(agent.programArguments)).not.toMatch(
+			/AUTH_TOKEN|CT0/u,
+		);
+		expect(agent.plist).not.toContain("/bin/bash");
+		expect(agent.envFile).toBeUndefined();
 	});
 });

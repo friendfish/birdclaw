@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 import { z } from "zod";
+import { getBirdCredentialsPath } from "#/lib/bird-credentials";
 import {
 	getBirdclawConfig,
 	resolveDigestArchiveDir,
@@ -88,10 +89,23 @@ export const Route = createFileRoute("/api/digest-schedule")({
 
 						const installResults =
 							yield* installAllDigestArchiveLaunchAgentsEffect({
-								today: parsed.schedule.today,
-								"24h": parsed.schedule["24h"],
-								yesterday: parsed.schedule.yesterday,
-								week: { ...parsed.schedule.week, weekday: 1 },
+								today: {
+									...parsed.schedule.today,
+									birdCredentialsPath: getBirdCredentialsPath(),
+								},
+								"24h": {
+									...parsed.schedule["24h"],
+									birdCredentialsPath: getBirdCredentialsPath(),
+								},
+								yesterday: {
+									...parsed.schedule.yesterday,
+									birdCredentialsPath: getBirdCredentialsPath(),
+								},
+								week: {
+									...parsed.schedule.week,
+									weekday: 1,
+									birdCredentialsPath: getBirdCredentialsPath(),
+								},
 							});
 
 						return jsonResponse({

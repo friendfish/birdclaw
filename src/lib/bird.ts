@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, win32 as win32Path } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
+import { mergeBirdCredentialEnvironment } from "./bird-credentials";
 import { getBirdCommand } from "./config";
 import { runEffectPromise } from "./effect-runtime";
 import type {
@@ -360,9 +361,10 @@ function getBirdStdoutShellEnv(
 }
 
 export const runBirdJsonCommandEffect = Effect.fn("bird.runJsonCommand")(
-	(args: string[], timeoutMs?: number) =>
+	(args: string[], timeoutMs?: number, env?: NodeJS.ProcessEnv) =>
 		Effect.scoped(
 			Effect.gen(function* () {
+				const commandEnvironment = mergeBirdCredentialEnvironment(env);
 				const birdCommand = yield* Effect.try({
 					try: () => getBirdCommand(),
 					catch: (error) =>
@@ -370,7 +372,8 @@ export const runBirdJsonCommandEffect = Effect.fn("bird.runJsonCommand")(
 				});
 				const { stdoutPath } = yield* makeBirdStdoutTempEffect();
 				const shellCommand = yield* Effect.try({
-					try: () => getBirdStdoutShellCommand(),
+					try: () =>
+						getBirdStdoutShellCommand(process.platform, commandEnvironment),
 					catch: (error) =>
 						error instanceof Error ? error : new Error(String(error)),
 				});
@@ -387,7 +390,10 @@ export const runBirdJsonCommandEffect = Effect.fn("bird.runJsonCommand")(
 								...args,
 							],
 							{
-								env: getBirdStdoutShellEnv(),
+								env: getBirdStdoutShellEnv(
+									process.platform,
+									commandEnvironment,
+								),
 								maxBuffer: BIRD_JSON_MAX_BUFFER_BYTES,
 								timeout: timeoutMs,
 							},
@@ -405,9 +411,10 @@ export const runBirdJsonCommandEffect = Effect.fn("bird.runJsonCommand")(
 
 const runBirdJsonCommandAllowFailureEffect = Effect.fn(
 	"bird.runJsonCommandAllowFailure",
-)((args: string[], timeoutMs?: number) =>
+)((args: string[], timeoutMs?: number, env?: NodeJS.ProcessEnv) =>
 	Effect.scoped(
 		Effect.gen(function* () {
+			const commandEnvironment = mergeBirdCredentialEnvironment(env);
 			const birdCommand = yield* Effect.try({
 				try: () => getBirdCommand(),
 				catch: (error) =>
@@ -415,7 +422,8 @@ const runBirdJsonCommandAllowFailureEffect = Effect.fn(
 			});
 			const { stdoutPath } = yield* makeBirdStdoutTempEffect();
 			const shellCommand = yield* Effect.try({
-				try: () => getBirdStdoutShellCommand(),
+				try: () =>
+					getBirdStdoutShellCommand(process.platform, commandEnvironment),
 				catch: (error) =>
 					error instanceof Error ? error : new Error(String(error)),
 			});
@@ -432,7 +440,7 @@ const runBirdJsonCommandAllowFailureEffect = Effect.fn(
 							...args,
 						],
 						{
-							env: getBirdStdoutShellEnv(),
+							env: getBirdStdoutShellEnv(process.platform, commandEnvironment),
 							maxBuffer: BIRD_JSON_MAX_BUFFER_BYTES,
 							timeout: timeoutMs,
 						},
@@ -455,13 +463,21 @@ const runBirdJsonCommandAllowFailureEffect = Effect.fn(
 	),
 );
 
-function runBirdTweetJsonCommandEffect(args: string[], timeoutMs?: number) {
-	return runBirdJsonCommandEffect([...args, "--json-full"], timeoutMs).pipe(
+function runBirdTweetJsonCommandEffect(
+	args: string[],
+	timeoutMs?: number,
+	env?: NodeJS.ProcessEnv,
+) {
+	return runBirdJsonCommandEffect(
+		[...args, "--json-full"],
+		timeoutMs,
+		env,
+	).pipe(
 		Effect.catchAll((error) => {
 			if (!isUnsupportedBirdOptionError(error, "--json-full")) {
 				return Effect.fail(error);
 			}
-			return runBirdJsonCommandEffect([...args, "--json"], timeoutMs);
+			return runBirdJsonCommandEffect([...args, "--json"], timeoutMs, env);
 		}),
 	);
 }
@@ -712,12 +728,18 @@ function normalizeBirdTweetItemEffect(payload: unknown, command: string) {
 }
 
 export const listMentionsViaBirdEffect = Effect.fn("bird.listMentions")(
-	function* ({ maxResults }: { maxResults: number }) {
-		const stdout = yield* runBirdTweetJsonCommandEffect([
-			"mentions",
-			"-n",
-			String(maxResults),
-		]);
+	function* ({
+		maxResults,
+		env,
+	}: {
+		maxResults: number;
+		env?: NodeJS.ProcessEnv;
+	}) {
+		const stdout = yield* runBirdTweetJsonCommandEffect(
+			["mentions", "-n", String(maxResults)],
+			undefined,
+			env,
+		);
 		const payload = yield* parseBirdJsonEffect(stdout);
 		return yield* normalizeBirdTweetsPayloadEffect(payload, "mentions");
 	},
@@ -725,6 +747,7 @@ export const listMentionsViaBirdEffect = Effect.fn("bird.listMentions")(
 
 export function listMentionsViaBird(options: {
 	maxResults: number;
+	env?: NodeJS.ProcessEnv;
 }): Promise<XurlMentionsResponse> {
 	return runEffectPromise(listMentionsViaBirdEffect(options));
 }
@@ -852,15 +875,17 @@ export const listHomeTimelineViaBirdEffect = Effect.fn("bird.listHomeTimeline")(
 	function* ({
 		maxResults,
 		following = true,
+		env,
 	}: {
 		maxResults: number;
 		following?: boolean;
+		env?: NodeJS.ProcessEnv;
 	}) {
 		const args = ["home", "-n", String(maxResults)];
 		if (following) {
 			args.push("--following");
 		}
-		const stdout = yield* runBirdTweetJsonCommandEffect(args);
+		const stdout = yield* runBirdTweetJsonCommandEffect(args, undefined, env);
 		const payload = yield* parseBirdJsonEffect(stdout);
 		return yield* normalizeBirdTweetsPayloadEffect(payload, "home");
 	},
@@ -869,6 +894,7 @@ export const listHomeTimelineViaBirdEffect = Effect.fn("bird.listHomeTimeline")(
 export function listHomeTimelineViaBird(options: {
 	maxResults: number;
 	following?: boolean;
+	env?: NodeJS.ProcessEnv;
 }): Promise<XurlMentionsResponse> {
 	return runEffectPromise(listHomeTimelineViaBirdEffect(options));
 }
@@ -1077,11 +1103,13 @@ export const listThreadViaBirdEffect = Effect.fn("bird.listThread")(function* ({
 	all,
 	maxPages,
 	timeoutMs,
+	env,
 }: {
 	tweetId: string;
 	all?: boolean;
 	maxPages?: number;
 	timeoutMs?: number;
+	env?: NodeJS.ProcessEnv;
 }) {
 	const args = ["thread", tweetId];
 	if (all) {
@@ -1090,7 +1118,7 @@ export const listThreadViaBirdEffect = Effect.fn("bird.listThread")(function* ({
 	if (maxPages !== undefined) {
 		args.push("--max-pages", String(maxPages));
 	}
-	const stdout = yield* runBirdTweetJsonCommandEffect(args, timeoutMs);
+	const stdout = yield* runBirdTweetJsonCommandEffect(args, timeoutMs, env);
 	const payload = yield* parseBirdJsonEffect(stdout);
 	return yield* normalizeBirdTweetsPayloadEffect(payload, "thread");
 });
@@ -1100,6 +1128,7 @@ export function listThreadViaBird(options: {
 	all?: boolean;
 	maxPages?: number;
 	timeoutMs?: number;
+	env?: NodeJS.ProcessEnv;
 }): Promise<XurlMentionsResponse> {
 	return runEffectPromise(listThreadViaBirdEffect(options));
 }
@@ -1156,16 +1185,22 @@ function parseBirdWhoami(stdout: string): BirdAuthenticatedAccount {
 
 export const getAuthenticatedBirdAccountEffect = Effect.fn(
 	"bird.getAuthenticatedAccount",
-)(function* () {
-	const stdout = yield* runBirdJsonCommandEffect(["whoami"]);
+)(function* (options: { env?: NodeJS.ProcessEnv } = {}) {
+	const stdout = yield* runBirdJsonCommandEffect(
+		["whoami"],
+		undefined,
+		options.env,
+	);
 	return yield* Effect.try({
 		try: () => parseBirdWhoami(stdout),
 		catch: (error) => error,
 	});
 });
 
-export function getAuthenticatedBirdAccount(): Promise<BirdAuthenticatedAccount> {
-	return runEffectPromise(getAuthenticatedBirdAccountEffect());
+export function getAuthenticatedBirdAccount(
+	options: { env?: NodeJS.ProcessEnv } = {},
+): Promise<BirdAuthenticatedAccount> {
+	return runEffectPromise(getAuthenticatedBirdAccountEffect(options));
 }
 
 export const listDirectMessagesViaBirdEffect = Effect.fn(

@@ -78,7 +78,7 @@ describe("api digest-archive-entry route", () => {
 		expect(await response.json()).toEqual({ ok: true, result: null });
 	});
 
-	it("defaults period to yesterday and contentSource to all for unrecognized values", async () => {
+	it("accepts Today and defaults an unrecognized contentSource to all", async () => {
 		resolveDigestArchiveDirMock.mockReturnValue("/tmp/archive");
 		readDigestArchiveEntryEffectMock.mockResolvedValue(null);
 
@@ -90,8 +90,26 @@ describe("api digest-archive-entry route", () => {
 
 		expect(readDigestArchiveEntryEffectMock).toHaveBeenCalledWith({
 			archiveDir: "/tmp/archive",
-			period: "yesterday",
+			period: "today",
 			contentSource: "all",
+			date: "2026-07-20",
+		});
+	});
+
+	it("accepts the 24h period", async () => {
+		resolveDigestArchiveDirMock.mockReturnValue("/tmp/archive");
+		readDigestArchiveEntryEffectMock.mockResolvedValue(null);
+
+		await GET({
+			request: new Request(
+				"http://localhost/api/digest-archive-entry?period=24h&contentSource=following&date=2026-07-20",
+			),
+		});
+
+		expect(readDigestArchiveEntryEffectMock).toHaveBeenCalledWith({
+			archiveDir: "/tmp/archive",
+			period: "24h",
+			contentSource: "following",
 			date: "2026-07-20",
 		});
 	});

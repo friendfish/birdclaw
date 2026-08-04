@@ -11,6 +11,7 @@ import {
 	__test__,
 	collectPeriodDigestContext,
 	periodDigestGenerationKey,
+	readLatestPeriodDigestEffect,
 	resolvePeriodDigestWindow,
 	streamPeriodDigest,
 	streamPeriodDigestEffect,
@@ -18,6 +19,7 @@ import {
 } from "./period-digest";
 import { getTweetsByIds } from "./queries";
 import { resolveEffectivePrompt } from "./prompt-templates";
+import { writeSyncCache } from "./sync-cache";
 
 const tempRoots: string[] = [];
 
@@ -98,6 +100,81 @@ afterEach(() => {
 });
 
 describe("period digest", () => {
+	describe("latest digest reader", () => {
+		it("returns the exact latest cached result for the requested identity", async () => {
+			const options = {
+				period: "today",
+				contentSource: "following" as const,
+				includeDms: false,
+			};
+			const context = collectPeriodDigestContext({
+				...options,
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
+			});
+			const updatedAt = "2026-08-04T01:23:45.000Z";
+			writeSyncCache(
+				__test__.latestDigestCacheKey(options, effectivePrompt().promptHash),
+				{
+					context,
+					digest: {
+						title: "Latest Following",
+						summary: "Exact cached summary",
+						keyTopics: [],
+						notableLinks: [],
+						people: [],
+						actionItems: [],
+						sourceTweetIds: [],
+					},
+					markdown: "# Latest Following",
+					model: "gpt-5.5",
+					reasoningEffort: "medium",
+					serviceTier: "priority",
+					parseStatus: "structured",
+					updatedAt,
+				},
+			);
+
+			const result = await Effect.runPromise(
+				readLatestPeriodDigestEffect(options),
+			);
+
+			expect(result).toMatchObject({
+				context,
+				markdown: "# Latest Following",
+				cached: true,
+				updatedAt,
+			});
+		});
+
+		it("returns null when the latest cache lacks its original context", async () => {
+			const options = { period: "24h", contentSource: "all" as const };
+			writeSyncCache(
+				__test__.latestDigestCacheKey(options, effectivePrompt().promptHash),
+				{
+					digest: {
+						title: "Incomplete",
+						summary: "Missing context",
+						keyTopics: [],
+						notableLinks: [],
+						people: [],
+						actionItems: [],
+						sourceTweetIds: [],
+					},
+					markdown: "# Incomplete",
+					model: "gpt-5.5",
+					reasoningEffort: "medium",
+					serviceTier: "priority",
+					parseStatus: "structured",
+				},
+			);
+
+			await expect(
+				Effect.runPromise(readLatestPeriodDigestEffect(options)),
+			).resolves.toBeNull();
+		});
+	});
+
 	it("resolves named local windows", () => {
 		const now = new Date("2026-05-16T10:30:00.000Z");
 		const today = resolvePeriodDigestWindow({ period: "today", now });

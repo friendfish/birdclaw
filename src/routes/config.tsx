@@ -1,6 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle, RefreshCw, Save } from "lucide-react";
+import {
+	AlertCircle,
+	CheckCircle,
+	RefreshCw,
+	Save,
+	ShieldCheck,
+	Trash2,
+} from "lucide-react";
 import { PromptTemplatesPanel } from "#/components/PromptTemplatesPanel";
 import { fetchJson } from "#/lib/api-client";
 import { z } from "zod";
@@ -60,6 +67,28 @@ const digestScheduleResponseSchema = z.object({
 	}),
 });
 
+const birdCredentialStatusSchema = z
+	.object({
+		configured: z.boolean(),
+		complete: z.boolean(),
+		updatedAt: z.string().optional(),
+	})
+	.strict();
+
+const birdCredentialsResponseSchema = z
+	.object({
+		ok: z.boolean(),
+		status: birdCredentialStatusSchema,
+	})
+	.strict();
+
+const birdCredentialsTestResponseSchema = z
+	.object({
+		ok: z.boolean(),
+		error: z.string().optional(),
+	})
+	.strict();
+
 function formatTime(hour: number, minute: number) {
 	return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
@@ -72,9 +101,249 @@ function parseTime(value: string): { hour: number; minute: number } {
 	};
 }
 
+function CredentialsPanel() {
+	const [status, setStatus] = useState<z.infer<
+		typeof birdCredentialStatusSchema
+	> | null>(null);
+	const [authToken, setAuthToken] = useState("");
+	const [ct0, setCt0] = useState("");
+	const [activeOperation, setActiveOperation] = useState<
+		"save" | "test" | "clear" | null
+	>(null);
+	const [error, setError] = useState<string | null>(null);
+	const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+	useEffect(() => {
+		let active = true;
+		fetchJson(
+			"/api/bird-credentials",
+			undefined,
+			birdCredentialsResponseSchema,
+			"Failed to load X credential status",
+		)
+			.then((response) => {
+				if (active) setStatus(response.status);
+			})
+			.catch((loadError) => {
+				if (active) {
+					setError(
+						loadError instanceof Error ? loadError.message : "Load failed",
+					);
+				}
+			});
+		return () => {
+			active = false;
+		};
+	}, []);
+
+	const credentialFilePresent = status?.configured === true;
+	const credentialsUsable = status?.complete === true;
+	const canSave =
+		authToken.trim().length > 0 &&
+		ct0.trim().length > 0 &&
+		activeOperation === null;
+
+	const handleSaveCredentials = async (event: React.FormEvent) => {
+		event.preventDefault();
+		if (!canSave) return;
+		setActiveOperation("save");
+		setError(null);
+		setSuccessMessage(null);
+		try {
+			const response = await fetchJson(
+				"/api/bird-credentials",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ authToken, ct0 }),
+				},
+				birdCredentialsResponseSchema,
+				"Failed to save X credentials",
+			);
+			setStatus(response.status);
+			setAuthToken("");
+			setCt0("");
+			setSuccessMessage("Credentials saved.");
+		} catch (saveError) {
+			setError(saveError instanceof Error ? saveError.message : "Save failed");
+		} finally {
+			setActiveOperation(null);
+		}
+	};
+
+	const handleTestCredentials = async () => {
+		setActiveOperation("test");
+		setError(null);
+		setSuccessMessage(null);
+		try {
+			const response = await fetchJson(
+				"/api/bird-credentials-test",
+				{ method: "POST" },
+				birdCredentialsTestResponseSchema,
+				"Credential test failed",
+			);
+			if (!response.ok) {
+				setError(response.error || "Credential test failed");
+				return;
+			}
+			setSuccessMessage("Credentials verified.");
+		} catch (testError) {
+			setError(
+				testError instanceof Error
+					? testError.message
+					: "Credential test failed",
+			);
+		} finally {
+			setActiveOperation(null);
+		}
+	};
+
+	const handleClearCredentials = async () => {
+		setActiveOperation("clear");
+		setError(null);
+		setSuccessMessage(null);
+		try {
+			const response = await fetchJson(
+				"/api/bird-credentials",
+				{ method: "DELETE" },
+				birdCredentialsResponseSchema,
+				"Failed to clear X credentials",
+			);
+			setStatus(response.status);
+			setAuthToken("");
+			setCt0("");
+			setSuccessMessage("Credentials cleared.");
+		} catch (clearError) {
+			setError(
+				clearError instanceof Error ? clearError.message : "Clear failed",
+			);
+		} finally {
+			setActiveOperation(null);
+		}
+	};
+
+	return (
+		<form onSubmit={handleSaveCredentials} className="flex flex-col gap-6">
+			<div className="flex items-center justify-between gap-4 border-b border-[var(--line)] pb-4">
+				<div className="min-w-0">
+					<div className="text-[14px] font-bold text-[var(--ink)]">
+						{status === null
+							? "Loading status..."
+							: credentialsUsable
+								? "Configured"
+								: credentialFilePresent
+									? "Incomplete configuration"
+									: "Not configured"}
+					</div>
+					{credentialFilePresent && status?.updatedAt ? (
+						<time
+							dateTime={status.updatedAt}
+							className="text-[12px] text-[var(--ink-soft)]"
+						>
+							Updated {new Date(status.updatedAt).toLocaleString()}
+						</time>
+					) : null}
+				</div>
+				<span
+					className={cx(
+						"size-2.5 shrink-0 rounded-full",
+						credentialsUsable
+							? "bg-emerald-500"
+							: credentialFilePresent
+								? "bg-amber-500"
+								: "bg-[var(--ink-faint)]",
+					)}
+					aria-hidden="true"
+				/>
+			</div>
+
+			<div className="flex flex-col gap-1.5">
+				<label
+					htmlFor="bird-auth-token"
+					className="text-[14px] font-bold text-[var(--ink)]"
+				>
+					AUTH_TOKEN
+				</label>
+				<input
+					id="bird-auth-token"
+					type="password"
+					autoComplete="off"
+					value={authToken}
+					onChange={(event) => setAuthToken(event.target.value)}
+					className={textFieldClass}
+				/>
+			</div>
+
+			<div className="flex flex-col gap-1.5">
+				<label
+					htmlFor="bird-ct0"
+					className="text-[14px] font-bold text-[var(--ink)]"
+				>
+					CT0
+				</label>
+				<input
+					id="bird-ct0"
+					type="password"
+					autoComplete="off"
+					value={ct0}
+					onChange={(event) => setCt0(event.target.value)}
+					className={textFieldClass}
+				/>
+			</div>
+
+			{error ? (
+				<div className="flex items-center gap-2 rounded-md border border-[var(--alert)] bg-[var(--alert-soft)] p-3 text-[14px] text-[var(--alert)]">
+					<AlertCircle className="size-4 shrink-0" />
+					<span>{error}</span>
+				</div>
+			) : null}
+
+			{successMessage ? (
+				<div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-[14px] text-emerald-600">
+					<CheckCircle className="size-4 shrink-0" />
+					<span>{successMessage}</span>
+				</div>
+			) : null}
+
+			<div className="flex flex-wrap gap-2">
+				<button
+					type="submit"
+					disabled={!canSave}
+					className={primaryButtonClass}
+				>
+					<Save className="size-4" />
+					{activeOperation === "save"
+						? "Saving..."
+						: credentialFilePresent
+							? "Replace"
+							: "Save"}
+				</button>
+				<button
+					type="button"
+					onClick={handleTestCredentials}
+					disabled={!credentialsUsable || activeOperation !== null}
+					className={secondaryButtonClass}
+				>
+					<ShieldCheck className="size-4" />
+					{activeOperation === "test" ? "Testing..." : "Test Credentials"}
+				</button>
+				<button
+					type="button"
+					onClick={handleClearCredentials}
+					disabled={!credentialFilePresent || activeOperation !== null}
+					className={secondaryButtonClass}
+				>
+					<Trash2 className="size-4" />
+					{activeOperation === "clear" ? "Clearing..." : "Clear Credentials"}
+				</button>
+			</div>
+		</form>
+	);
+}
+
 function ConfigRoute() {
 	const [activeTab, setActiveTab] = useState<
-		"ai" | "language" | "schedule" | "prompts"
+		"ai" | "credentials" | "language" | "schedule" | "prompts"
 	>("ai");
 
 	// AI config state
@@ -357,6 +626,18 @@ function ConfigRoute() {
 							</button>
 							<button
 								type="button"
+								onClick={() => setActiveTab("credentials")}
+								className={cx(
+									"px-4 py-2.5 font-bold text-[14px] border-b-2 transition-all cursor-pointer",
+									activeTab === "credentials"
+										? "border-[var(--brand)] text-[var(--brand)]"
+										: "border-transparent text-[var(--ink-soft)] hover:text-[var(--ink)]",
+								)}
+							>
+								X Credentials
+							</button>
+							<button
+								type="button"
 								onClick={() => {
 									setError(null);
 									setSuccess(false);
@@ -520,6 +801,8 @@ function ConfigRoute() {
 							</form>
 						) : activeTab === "prompts" ? (
 							<PromptTemplatesPanel aiLanguage={aiLanguage} />
+						) : activeTab === "credentials" ? (
+							<CredentialsPanel />
 						) : (
 							<form onSubmit={handleSave} className="flex flex-col gap-6">
 								{activeTab === "ai" ? (

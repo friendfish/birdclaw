@@ -26,6 +26,8 @@ import { Route as RateLimitsRouteImport } from './routes/rate-limits'
 import { Route as TodayRouteImport } from './routes/today'
 import { Route as ApiActionRouteImport } from './routes/api/action'
 import { Route as ApiAvatarRouteImport } from './routes/api/avatar'
+import { Route as ApiBirdCredentialsRouteImport } from './routes/api/bird-credentials'
+import { Route as ApiBirdCredentialsTestRouteImport } from './routes/api/bird-credentials-test'
 import { Route as ApiBlocksRouteImport } from './routes/api/blocks'
 import { Route as ApiConfigRouteImport } from './routes/api/config'
 import { Route as ApiConfigModelsRouteImport } from './routes/api/config-models'
@@ -33,6 +35,7 @@ import { Route as ApiConversationRouteImport } from './routes/api/conversation'
 import { Route as ApiDataSourcesRouteImport } from './routes/api/data-sources'
 import { Route as ApiDigestArchiveDatesRouteImport } from './routes/api/digest-archive-dates'
 import { Route as ApiDigestArchiveEntryRouteImport } from './routes/api/digest-archive-entry'
+import { Route as ApiDigestArchiveSaveRouteImport } from './routes/api/digest-archive-save'
 import { Route as ApiDigestArchiveStatusRouteImport } from './routes/api/digest-archive-status'
 import { Route as ApiDigestScheduleRouteImport } from './routes/api/digest-schedule'
 import { Route as ApiInboxRouteImport } from './routes/api/inbox'
@@ -141,6 +144,16 @@ const ApiAvatarRoute = ApiAvatarRouteImport.update({
   path: '/api/avatar',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiBirdCredentialsRoute = ApiBirdCredentialsRouteImport.update({
+  id: '/api/bird-credentials',
+  path: '/api/bird-credentials',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiBirdCredentialsTestRoute = ApiBirdCredentialsTestRouteImport.update({
+  id: '/api/bird-credentials-test',
+  path: '/api/bird-credentials-test',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiBlocksRoute = ApiBlocksRouteImport.update({
   id: '/api/blocks',
   path: '/api/blocks',
@@ -174,6 +187,11 @@ const ApiDigestArchiveDatesRoute = ApiDigestArchiveDatesRouteImport.update({
 const ApiDigestArchiveEntryRoute = ApiDigestArchiveEntryRouteImport.update({
   id: '/api/digest-archive-entry',
   path: '/api/digest-archive-entry',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDigestArchiveSaveRoute = ApiDigestArchiveSaveRouteImport.update({
+  id: '/api/digest-archive-save',
+  path: '/api/digest-archive-save',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiDigestArchiveStatusRoute = ApiDigestArchiveStatusRouteImport.update({
@@ -309,6 +327,8 @@ export interface FileRoutesByFullPath {
   '/today': typeof TodayRoute
   '/api/action': typeof ApiActionRoute
   '/api/avatar': typeof ApiAvatarRoute
+  '/api/bird-credentials': typeof ApiBirdCredentialsRoute
+  '/api/bird-credentials-test': typeof ApiBirdCredentialsTestRoute
   '/api/blocks': typeof ApiBlocksRoute
   '/api/config': typeof ApiConfigRoute
   '/api/config-models': typeof ApiConfigModelsRoute
@@ -316,6 +336,7 @@ export interface FileRoutesByFullPath {
   '/api/data-sources': typeof ApiDataSourcesRoute
   '/api/digest-archive-dates': typeof ApiDigestArchiveDatesRoute
   '/api/digest-archive-entry': typeof ApiDigestArchiveEntryRoute
+  '/api/digest-archive-save': typeof ApiDigestArchiveSaveRoute
   '/api/digest-archive-status': typeof ApiDigestArchiveStatusRoute
   '/api/digest-schedule': typeof ApiDigestScheduleRoute
   '/api/inbox': typeof ApiInboxRoute
@@ -357,6 +378,8 @@ export interface FileRoutesByTo {
   '/today': typeof TodayRoute
   '/api/action': typeof ApiActionRoute
   '/api/avatar': typeof ApiAvatarRoute
+  '/api/bird-credentials': typeof ApiBirdCredentialsRoute
+  '/api/bird-credentials-test': typeof ApiBirdCredentialsTestRoute
   '/api/blocks': typeof ApiBlocksRoute
   '/api/config': typeof ApiConfigRoute
   '/api/config-models': typeof ApiConfigModelsRoute
@@ -364,6 +387,7 @@ export interface FileRoutesByTo {
   '/api/data-sources': typeof ApiDataSourcesRoute
   '/api/digest-archive-dates': typeof ApiDigestArchiveDatesRoute
   '/api/digest-archive-entry': typeof ApiDigestArchiveEntryRoute
+  '/api/digest-archive-save': typeof ApiDigestArchiveSaveRoute
   '/api/digest-archive-status': typeof ApiDigestArchiveStatusRoute
   '/api/digest-schedule': typeof ApiDigestScheduleRoute
   '/api/inbox': typeof ApiInboxRoute
@@ -406,6 +430,8 @@ export interface FileRoutesById {
   '/today': typeof TodayRoute
   '/api/action': typeof ApiActionRoute
   '/api/avatar': typeof ApiAvatarRoute
+  '/api/bird-credentials': typeof ApiBirdCredentialsRoute
+  '/api/bird-credentials-test': typeof ApiBirdCredentialsTestRoute
   '/api/blocks': typeof ApiBlocksRoute
   '/api/config': typeof ApiConfigRoute
   '/api/config-models': typeof ApiConfigModelsRoute
@@ -413,6 +439,7 @@ export interface FileRoutesById {
   '/api/data-sources': typeof ApiDataSourcesRoute
   '/api/digest-archive-dates': typeof ApiDigestArchiveDatesRoute
   '/api/digest-archive-entry': typeof ApiDigestArchiveEntryRoute
+  '/api/digest-archive-save': typeof ApiDigestArchiveSaveRoute
   '/api/digest-archive-status': typeof ApiDigestArchiveStatusRoute
   '/api/digest-schedule': typeof ApiDigestScheduleRoute
   '/api/inbox': typeof ApiInboxRoute
@@ -456,6 +483,8 @@ export interface FileRouteTypes {
     | '/today'
     | '/api/action'
     | '/api/avatar'
+    | '/api/bird-credentials'
+    | '/api/bird-credentials-test'
     | '/api/blocks'
     | '/api/config'
     | '/api/config-models'
@@ -463,6 +492,7 @@ export interface FileRouteTypes {
     | '/api/data-sources'
     | '/api/digest-archive-dates'
     | '/api/digest-archive-entry'
+    | '/api/digest-archive-save'
     | '/api/digest-archive-status'
     | '/api/digest-schedule'
     | '/api/inbox'
@@ -504,6 +534,8 @@ export interface FileRouteTypes {
     | '/today'
     | '/api/action'
     | '/api/avatar'
+    | '/api/bird-credentials'
+    | '/api/bird-credentials-test'
     | '/api/blocks'
     | '/api/config'
     | '/api/config-models'
@@ -511,6 +543,7 @@ export interface FileRouteTypes {
     | '/api/data-sources'
     | '/api/digest-archive-dates'
     | '/api/digest-archive-entry'
+    | '/api/digest-archive-save'
     | '/api/digest-archive-status'
     | '/api/digest-schedule'
     | '/api/inbox'
@@ -552,6 +585,8 @@ export interface FileRouteTypes {
     | '/today'
     | '/api/action'
     | '/api/avatar'
+    | '/api/bird-credentials'
+    | '/api/bird-credentials-test'
     | '/api/blocks'
     | '/api/config'
     | '/api/config-models'
@@ -559,6 +594,7 @@ export interface FileRouteTypes {
     | '/api/data-sources'
     | '/api/digest-archive-dates'
     | '/api/digest-archive-entry'
+    | '/api/digest-archive-save'
     | '/api/digest-archive-status'
     | '/api/digest-schedule'
     | '/api/inbox'
@@ -601,6 +637,8 @@ export interface RootRouteChildren {
   TodayRoute: typeof TodayRoute
   ApiActionRoute: typeof ApiActionRoute
   ApiAvatarRoute: typeof ApiAvatarRoute
+  ApiBirdCredentialsRoute: typeof ApiBirdCredentialsRoute
+  ApiBirdCredentialsTestRoute: typeof ApiBirdCredentialsTestRoute
   ApiBlocksRoute: typeof ApiBlocksRoute
   ApiConfigRoute: typeof ApiConfigRoute
   ApiConfigModelsRoute: typeof ApiConfigModelsRoute
@@ -608,6 +646,7 @@ export interface RootRouteChildren {
   ApiDataSourcesRoute: typeof ApiDataSourcesRoute
   ApiDigestArchiveDatesRoute: typeof ApiDigestArchiveDatesRoute
   ApiDigestArchiveEntryRoute: typeof ApiDigestArchiveEntryRoute
+  ApiDigestArchiveSaveRoute: typeof ApiDigestArchiveSaveRoute
   ApiDigestArchiveStatusRoute: typeof ApiDigestArchiveStatusRoute
   ApiDigestScheduleRoute: typeof ApiDigestScheduleRoute
   ApiInboxRoute: typeof ApiInboxRoute
@@ -752,6 +791,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAvatarRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/bird-credentials': {
+      id: '/api/bird-credentials'
+      path: '/api/bird-credentials'
+      fullPath: '/api/bird-credentials'
+      preLoaderRoute: typeof ApiBirdCredentialsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/bird-credentials-test': {
+      id: '/api/bird-credentials-test'
+      path: '/api/bird-credentials-test'
+      fullPath: '/api/bird-credentials-test'
+      preLoaderRoute: typeof ApiBirdCredentialsTestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/blocks': {
       id: '/api/blocks'
       path: '/api/blocks'
@@ -799,6 +852,13 @@ declare module '@tanstack/react-router' {
       path: '/api/digest-archive-entry'
       fullPath: '/api/digest-archive-entry'
       preLoaderRoute: typeof ApiDigestArchiveEntryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/digest-archive-save': {
+      id: '/api/digest-archive-save'
+      path: '/api/digest-archive-save'
+      fullPath: '/api/digest-archive-save'
+      preLoaderRoute: typeof ApiDigestArchiveSaveRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/digest-archive-status': {
@@ -987,6 +1047,8 @@ const rootRouteChildren: RootRouteChildren = {
   TodayRoute: TodayRoute,
   ApiActionRoute: ApiActionRoute,
   ApiAvatarRoute: ApiAvatarRoute,
+  ApiBirdCredentialsRoute: ApiBirdCredentialsRoute,
+  ApiBirdCredentialsTestRoute: ApiBirdCredentialsTestRoute,
   ApiBlocksRoute: ApiBlocksRoute,
   ApiConfigRoute: ApiConfigRoute,
   ApiConfigModelsRoute: ApiConfigModelsRoute,
@@ -994,6 +1056,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDataSourcesRoute: ApiDataSourcesRoute,
   ApiDigestArchiveDatesRoute: ApiDigestArchiveDatesRoute,
   ApiDigestArchiveEntryRoute: ApiDigestArchiveEntryRoute,
+  ApiDigestArchiveSaveRoute: ApiDigestArchiveSaveRoute,
   ApiDigestArchiveStatusRoute: ApiDigestArchiveStatusRoute,
   ApiDigestScheduleRoute: ApiDigestScheduleRoute,
   ApiInboxRoute: ApiInboxRoute,

@@ -259,6 +259,32 @@ describe("account sync job", () => {
 		});
 	});
 
+	it("reclaims a live-pid lock after the one-hour account sync maximum", async () => {
+		tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-account-job-"));
+		const logPath = path.join(tempDir, "audit.jsonl");
+		const lockPath = path.join(tempDir, "sync.lock");
+		writeFileSync(
+			lockPath,
+			`${JSON.stringify({
+				ownerId: "stuck-account-sync",
+				startedAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+				host: os.hostname(),
+				pid: process.pid,
+			})}\n`,
+			"utf8",
+		);
+
+		const result = await runAccountSyncJob({
+			steps: [],
+			logPath,
+			lockPath,
+			db: {} as never,
+		});
+
+		expect(result.skipped).toBeUndefined();
+		expect(existsSync(lockPath)).toBe(false);
+	});
+
 	it("refuses Bird-backed non-default account sync without an assertion", async () => {
 		tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-account-job-"));
 		const logPath = path.join(tempDir, "audit.jsonl");

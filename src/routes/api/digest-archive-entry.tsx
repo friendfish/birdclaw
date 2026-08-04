@@ -13,7 +13,12 @@ import type {
 } from "#/lib/period-digest";
 
 function parsePeriod(value: string | null): PeriodDigestPreset {
-	return value === "yesterday" || value === "week" ? value : "yesterday";
+	return value === "today" ||
+		value === "24h" ||
+		value === "yesterday" ||
+		value === "week"
+		? value
+		: "yesterday";
 }
 
 function parseContentSource(value: string | null): PeriodDigestContentSource {

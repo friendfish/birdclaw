@@ -385,3 +385,194 @@ describe("config prompt panel", () => {
 		expect(screen.getByDisplayValue("08:00")).toBeVisible();
 	});
 });
+
+describe("config X credentials panel", () => {
+	it("saves, replaces, tests, and clears credentials without reading values back", async () => {
+		let credentialStatus: {
+			configured: boolean;
+			complete: boolean;
+			updatedAt?: string;
+		} = { configured: false, complete: false };
+		const savedBodies: unknown[] = [];
+		let testCalls = 0;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/config") {
+					return jsonResponse(configResponse());
+				}
+				if (url.pathname === "/api/digest-schedule") {
+					return jsonResponse(scheduleResponse());
+				}
+				if (
+					url.pathname === "/api/bird-credentials" &&
+					init?.method === "POST"
+				) {
+					savedBodies.push(JSON.parse(String(init.body)));
+					credentialStatus = {
+						configured: true,
+						complete: true,
+						updatedAt: "2026-08-04T01:23:45.000Z",
+					};
+					return jsonResponse({ ok: true, status: credentialStatus });
+				}
+				if (
+					url.pathname === "/api/bird-credentials" &&
+					init?.method === "DELETE"
+				) {
+					credentialStatus = { configured: false, complete: false };
+					return jsonResponse({ ok: true, status: credentialStatus });
+				}
+				if (url.pathname === "/api/bird-credentials") {
+					return jsonResponse({ ok: true, status: credentialStatus });
+				}
+				if (url.pathname === "/api/bird-credentials-test") {
+					testCalls += 1;
+					return jsonResponse({ ok: true });
+				}
+				throw new Error(`Unexpected request: ${url.pathname}`);
+			}),
+		);
+
+		render(<ConfigRoute />);
+		fireEvent.click(
+			await screen.findByRole("button", { name: "X Credentials" }),
+		);
+		expect(await screen.findByText("Not configured")).toBeVisible();
+
+		const authToken = screen.getByLabelText("AUTH_TOKEN");
+		const ct0 = screen.getByLabelText("CT0");
+		expect(authToken).toHaveAttribute("type", "password");
+		expect(ct0).toHaveAttribute("type", "password");
+		expect(authToken).toHaveValue("");
+		expect(ct0).toHaveValue("");
+		expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+		fireEvent.change(authToken, { target: { value: "first-auth" } });
+		expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+		fireEvent.change(ct0, { target: { value: "first-ct0" } });
+		fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+		expect(await screen.findByText("Configured")).toBeVisible();
+		expect(savedBodies[0]).toEqual({
+			authToken: "first-auth",
+			ct0: "first-ct0",
+		});
+		expect(authToken).toHaveValue("");
+		expect(ct0).toHaveValue("");
+		expect(screen.getByRole("button", { name: "Replace" })).toBeDisabled();
+
+		fireEvent.click(screen.getByRole("button", { name: "Test Credentials" }));
+		expect(await screen.findByText("Credentials verified.")).toBeVisible();
+		expect(testCalls).toBe(1);
+
+		fireEvent.change(authToken, { target: { value: "second-auth" } });
+		fireEvent.change(ct0, { target: { value: "second-ct0" } });
+		fireEvent.click(screen.getByRole("button", { name: "Replace" }));
+		await waitFor(() => expect(savedBodies).toHaveLength(2));
+		expect(savedBodies[1]).toEqual({
+			authToken: "second-auth",
+			ct0: "second-ct0",
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: "Clear Credentials" }));
+		expect(await screen.findByText("Not configured")).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: "Clear Credentials" }),
+		).toBeDisabled();
+	});
+
+	it("loads configured status into blank inputs and shows sanitized test errors", async () => {
+		const authToken = "must-never-reach-ui";
+		const ct0 = "also-must-never-reach-ui";
+		const responseBodies: unknown[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/config") {
+					return jsonResponse(configResponse());
+				}
+				if (url.pathname === "/api/digest-schedule") {
+					return jsonResponse(scheduleResponse());
+				}
+				if (url.pathname === "/api/bird-credentials") {
+					const body = {
+						ok: true,
+						status: {
+							configured: true,
+							complete: true,
+							updatedAt: "2026-08-04T01:23:45.000Z",
+						},
+					};
+					responseBodies.push(body);
+					return jsonResponse(body);
+				}
+				if (url.pathname === "/api/bird-credentials-test") {
+					return jsonResponse(
+						{ ok: false, error: "AUTH_TOKEN=[REDACTED]" },
+						{ status: 502 },
+					);
+				}
+				throw new Error(`Unexpected request: ${url.pathname}`);
+			}),
+		);
+
+		render(<ConfigRoute />);
+		fireEvent.click(
+			await screen.findByRole("button", { name: "X Credentials" }),
+		);
+		expect(await screen.findByText("Configured")).toBeVisible();
+		expect(screen.getByLabelText("AUTH_TOKEN")).toHaveValue("");
+		expect(screen.getByLabelText("CT0")).toHaveValue("");
+		expect(JSON.stringify(responseBodies)).not.toContain(authToken);
+		expect(JSON.stringify(responseBodies)).not.toContain(ct0);
+
+		fireEvent.click(screen.getByRole("button", { name: "Test Credentials" }));
+		expect(await screen.findByText("AUTH_TOKEN=[REDACTED]")).toBeVisible();
+		expect(screen.queryByText(authToken)).not.toBeInTheDocument();
+		expect(screen.queryByText(ct0)).not.toBeInTheDocument();
+	});
+
+	it("allows an incomplete credential file to be cleared or replaced", async () => {
+		let credentialStatus = { configured: true, complete: false };
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/config") {
+					return jsonResponse(configResponse());
+				}
+				if (url.pathname === "/api/digest-schedule") {
+					return jsonResponse(scheduleResponse());
+				}
+				if (
+					url.pathname === "/api/bird-credentials" &&
+					init?.method === "DELETE"
+				) {
+					credentialStatus = { configured: false, complete: false };
+					return jsonResponse({ ok: true, status: credentialStatus });
+				}
+				if (url.pathname === "/api/bird-credentials") {
+					return jsonResponse({ ok: true, status: credentialStatus });
+				}
+				throw new Error(`Unexpected request: ${url.pathname}`);
+			}),
+		);
+
+		render(<ConfigRoute />);
+		fireEvent.click(
+			await screen.findByRole("button", { name: "X Credentials" }),
+		);
+
+		expect(await screen.findByText("Incomplete configuration")).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: "Test Credentials" }),
+		).toBeDisabled();
+		const clear = screen.getByRole("button", { name: "Clear Credentials" });
+		expect(clear).toBeEnabled();
+		fireEvent.click(clear);
+		expect(await screen.findByText("Not configured")).toBeVisible();
+	});
+});

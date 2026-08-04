@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { readBirdCredentials, type BirdCredentials } from "./bird-credentials";
 import { resolveMentionsDataSource } from "./config";
 import { syncMentionThreadsEffect } from "./mention-threads-live";
 import { syncMentionsEffect } from "./mentions-live";
@@ -8,6 +9,7 @@ import {
 	type PeriodDigestContentSource,
 	type PeriodDigestPreset,
 } from "./period-digest";
+import { sensitiveErrorMessage } from "./sensitive-values";
 import { syncHomeTimelineEffect } from "./timeline-live";
 
 export type DigestArchiveSyncStatus = "fresh" | "degraded" | "skipped";
@@ -38,37 +40,12 @@ export interface DigestArchivePreSyncOptions {
 	since?: string;
 	until?: string;
 	liveSync: boolean;
+	nonInteractiveBird?: boolean;
+	birdCredentials?: BirdCredentials | null;
 }
 
-const SENSITIVE_PARAMETER_PATTERN =
-	/^(?:access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|api[_-]?key|authorization)$/iu;
-
-function redactSensitiveUrl(value: string) {
-	try {
-		const url = new URL(value);
-		if (url.username) url.username = "[REDACTED]";
-		if (url.password) url.password = "[REDACTED]";
-		for (const key of url.searchParams.keys()) {
-			if (SENSITIVE_PARAMETER_PATTERN.test(key)) {
-				url.searchParams.set(key, "[REDACTED]");
-			}
-		}
-		return url.toString();
-	} catch {
-		return value;
-	}
-}
-
-function durableErrorMessage(error: unknown) {
-	const message = error instanceof Error ? error.message : String(error);
-	return message
-		.replace(/https?:\/\/[^\s<>"']+/giu, redactSensitiveUrl)
-		.replace(/\b(Bearer\s+)[^\s,;]+/giu, "$1[REDACTED]")
-		.replace(
-			/(["']?)\b(access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|api[_-]?key|authorization)\b\1(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
-			"$1$2$1$3[REDACTED]",
-		);
-}
+const MISSING_BIRD_CREDENTIALS_ERROR =
+	"X credentials are not configured for non-interactive Bird sync";
 
 function configuredTransport(): DigestArchiveSyncTransport {
 	const source = resolveMentionsDataSource();
@@ -109,7 +86,7 @@ function recordStep<A>({
 				operation,
 				status: "degraded",
 				transport,
-				error: durableErrorMessage(error),
+				error: sensitiveErrorMessage(error),
 			} satisfies DigestArchiveSyncStep),
 		),
 	);
@@ -119,6 +96,18 @@ function skippedStep(
 	operation: DigestArchiveSyncOperation,
 ): DigestArchiveSyncStep {
 	return { operation, status: "skipped", transport: "local" };
+}
+
+function missingBirdCredentialsStep(
+	operation: DigestArchiveSyncOperation,
+	transport: DigestArchiveSyncTransport = "bird",
+): DigestArchiveSyncStep {
+	return {
+		operation,
+		status: "degraded",
+		transport,
+		error: MISSING_BIRD_CREDENTIALS_ERROR,
+	};
 }
 
 function aggregateStatus(
@@ -145,6 +134,21 @@ export function runDigestArchivePreSyncEffect(
 		const needsForYou = requested.has("all") || requested.has("for_you");
 		const needsMentions = requested.has("all");
 		const transport = configuredTransport();
+		const birdCredentials =
+			options.birdCredentials === undefined
+				? readBirdCredentials()
+				: options.birdCredentials;
+		const hasBirdCredentials =
+			!options.nonInteractiveBird || birdCredentials !== null;
+		const birdEnvironment = birdCredentials
+			? {
+					...process.env,
+					AUTH_TOKEN: birdCredentials.authToken,
+					CT0: birdCredentials.ct0,
+				}
+			: undefined;
+		const blocksBirdCapableTransport =
+			!hasBirdCredentials && (transport === "bird" || transport === "auto");
 		const window = resolvePeriodDigestWindow({
 			period: options.period,
 			since: options.since,
@@ -155,6 +159,8 @@ export function runDigestArchivePreSyncEffect(
 		if (needsFollowing) {
 			if (transport === "local") {
 				steps.push(skippedStep("following"));
+			} else if (blocksBirdCapableTransport) {
+				steps.push(missingBirdCredentialsStep("following", transport));
 			} else {
 				steps.push(
 					yield* recordStep({
@@ -169,6 +175,7 @@ export function runDigestArchivePreSyncEffect(
 							refresh: true,
 							cacheTtlMs: 2 * 60_000,
 							timeoutMs: 30_000,
+							birdEnvironment,
 						}),
 						count: (value) => value.count,
 					}),
@@ -180,23 +187,28 @@ export function runDigestArchivePreSyncEffect(
 			// mentions.dataSource only controls transports that have local/xurl
 			// equivalents. For You is Bird-only, so a failed refresh must remain
 			// visible as degraded instead of being silently reported as skipped.
-			steps.push(
-				yield* recordStep({
-					operation: "for_you",
-					transport: "bird",
-					effect: syncHomeTimelineEffect({
-						account: options.account,
-						mode: "bird",
-						maxPages: 3,
-						startTime,
-						following: false,
-						refresh: true,
-						cacheTtlMs: 2 * 60_000,
-						timeoutMs: 30_000,
+			if (!hasBirdCredentials) {
+				steps.push(missingBirdCredentialsStep("for_you"));
+			} else {
+				steps.push(
+					yield* recordStep({
+						operation: "for_you",
+						transport: "bird",
+						effect: syncHomeTimelineEffect({
+							account: options.account,
+							mode: "bird",
+							maxPages: 3,
+							startTime,
+							following: false,
+							refresh: true,
+							cacheTtlMs: 2 * 60_000,
+							timeoutMs: 30_000,
+							birdEnvironment,
+						}),
+						count: (value) => value.count,
 					}),
-					count: (value) => value.count,
-				}),
-			);
+				);
+			}
 		}
 
 		if (needsMentions) {
@@ -206,6 +218,8 @@ export function runDigestArchivePreSyncEffect(
 				transport === "bird" || transport === "xurl" ? transport : undefined;
 			if (transport === "local") {
 				steps.push(skippedStep("mentions"));
+			} else if (blocksBirdCapableTransport) {
+				steps.push(missingBirdCredentialsStep("mentions", transport));
 			} else {
 				const mentionResult = yield* syncMentionsEffect({
 					account: options.account,
@@ -215,6 +229,7 @@ export function runDigestArchivePreSyncEffect(
 					...(transport === "bird" ? {} : { startTime }),
 					refresh: true,
 					cacheTtlMs: 2 * 60_000,
+					birdEnvironment,
 				}).pipe(
 					Effect.map((value) => ({ ok: true as const, value })),
 					Effect.catchAll((error) =>
@@ -239,13 +254,15 @@ export function runDigestArchivePreSyncEffect(
 						operation: "mentions",
 						status: "degraded",
 						transport,
-						error: durableErrorMessage(mentionResult.error),
+						error: sensitiveErrorMessage(mentionResult.error),
 					});
 				}
 			}
 
 			if (transport === "local") {
 				steps.push(skippedStep("mention_threads"));
+			} else if (blocksBirdCapableTransport) {
+				steps.push(missingBirdCredentialsStep("mention_threads", transport));
 			} else if (!mentionThreadTransport) {
 				steps.push({
 					operation: "mention_threads",
@@ -254,6 +271,8 @@ export function runDigestArchivePreSyncEffect(
 					error:
 						"Mention thread refresh skipped because auto mentions did not resolve a live transport",
 				});
+			} else if (!hasBirdCredentials && mentionThreadTransport === "bird") {
+				steps.push(missingBirdCredentialsStep("mention_threads"));
 			} else {
 				const mentionIds = yield* Effect.try({
 					try: () =>
@@ -273,7 +292,7 @@ export function runDigestArchivePreSyncEffect(
 							operation: "mention_threads",
 							status: "degraded",
 							transport: mentionThreadTransport,
-							error: durableErrorMessage(error),
+							error: sensitiveErrorMessage(error),
 						});
 						return Effect.succeed(undefined);
 					}),
@@ -288,6 +307,7 @@ export function runDigestArchivePreSyncEffect(
 						delayMs: 100,
 						timeoutMs: 15_000,
 						maxPages: 2,
+						birdEnvironment,
 					}).pipe(
 						Effect.map((value) => {
 							const problems = [
@@ -309,7 +329,7 @@ export function runDigestArchivePreSyncEffect(
 								operation: "mention_threads",
 								status: "degraded",
 								transport: threadTransport,
-								error: durableErrorMessage(error),
+								error: sensitiveErrorMessage(error),
 							} satisfies DigestArchiveSyncStep),
 						),
 					);

@@ -42,6 +42,7 @@ export interface SyncHomeTimelineOptions {
 	refresh?: boolean;
 	cacheTtlMs?: number;
 	timeoutMs?: number;
+	birdEnvironment?: NodeJS.ProcessEnv;
 	onProgress?: (progress: HomeTimelineProgress) => void;
 }
 
@@ -149,6 +150,7 @@ export function syncHomeTimelineEffect({
 	refresh = false,
 	cacheTtlMs,
 	timeoutMs,
+	birdEnvironment,
 	onProgress,
 }: SyncHomeTimelineOptions = {}): Effect.Effect<
 	{
@@ -241,10 +243,13 @@ export function syncHomeTimelineEffect({
 		const fetchViaBird = liveTransportGateway.bird.listHomeTimeline({
 			maxResults: finiteFallbackLimit,
 			following,
+			env: birdEnvironment,
 		});
 		const verifiedFetchViaBird = Effect.gen(function* () {
 			const authenticated =
-				yield* liveTransportGateway.bird.getAuthenticatedAccount();
+				yield* liveTransportGateway.bird.getAuthenticatedAccount({
+					env: birdEnvironment,
+				});
 			yield* Effect.try({
 				try: () =>
 					assertLiveAccountMatches({

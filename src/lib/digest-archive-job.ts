@@ -9,7 +9,20 @@ import {
 	type DigestSchedulePeriod,
 	type DigestScheduleTime,
 } from "./config";
+import {
+	readBirdCredentialsFileStrict,
+	type BirdCredentials,
+} from "./bird-credentials";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
+import {
+	createDigestArchiveRunState,
+	digestArchiveRunStatePath,
+	readDigestArchiveRunState,
+	removeDigestArchiveRunState,
+	startDigestArchiveHeartbeat,
+	updateDigestArchiveRunState,
+	writeDigestArchiveRunState,
+} from "./digest-archive-run-state";
 import {
 	runDigestArchivePreSyncEffect,
 	type DigestArchiveSyncResult,
@@ -23,7 +36,7 @@ import {
 	type LaunchAgentInstallResult,
 } from "./launchd";
 import {
-	acquireScheduledJobLockEffect,
+	acquireScheduledJobLock,
 	appendScheduledJobAuditEffect,
 	peekScheduledJobLockMetadata,
 	peekScheduledJobLockMetadataEffect,
@@ -37,6 +50,7 @@ import {
 	type PeriodDigestPreset,
 	type PeriodDigestRunResult,
 } from "./period-digest";
+import { sensitiveErrorMessage } from "./sensitive-values";
 
 const DEFAULT_CONTENT_SOURCES: PeriodDigestContentSource[] = [
 	"all",
@@ -45,9 +59,8 @@ const DEFAULT_CONTENT_SOURCES: PeriodDigestContentSource[] = [
 ];
 const DEFAULT_DIGEST_ARCHIVE_RETRIES = 2;
 const DEFAULT_DIGEST_ARCHIVE_RETRY_DELAY_MS = 2 * 60_000;
-// Generous: 3 sources x up to (1 + retries) attempts each, plus the retry
-// delay between attempts, plus actual generation time per attempt.
-export const DEFAULT_LOCK_STALE_MS = 45 * 60 * 1000;
+const DEFAULT_MODEL_TIMEOUT_MS = 10 * 60_000;
+export const DEFAULT_LOCK_STALE_MS = 60_000;
 
 // The reviewed default: 24h was originally 08:20, moved to 08:45 to widen
 // the gap from Today's 08:00 run given the ~30 minute worst-case retry
@@ -71,6 +84,7 @@ export interface DigestArchiveJobOptions {
 	archiveDir?: string;
 	retries?: number;
 	retryDelayMs?: number;
+	modelTimeoutMs?: number;
 	language?: string;
 	logPath?: string;
 	lockPath?: string;
@@ -85,6 +99,8 @@ export interface DigestArchiveJobOptions {
 	// pulling fresh data). Backfilling from already-synced local data only
 	// should pass false.
 	liveSync?: boolean;
+	birdCredentials?: BirdCredentials | null;
+	birdCredentialsPath?: string;
 }
 
 export interface DigestArchiveStepResult {
@@ -138,6 +154,7 @@ export interface DigestArchiveJobDependencies {
 		steps: DigestArchiveStepResult[],
 		status: DigestArchiveBatchStatus,
 	) => Effect.Effect<DigestArchivePersistenceError[], never>;
+	heartbeatIntervalMs?: number;
 }
 
 interface PeriodDigestArchiveFileBase {
@@ -165,9 +182,19 @@ export interface PeriodDigestArchiveFileV2 extends PeriodDigestArchiveFileBase {
 	sync: DigestArchiveSyncResult;
 }
 
+export interface PeriodDigestArchiveFileV3 extends PeriodDigestArchiveFileBase {
+	schemaVersion: 3;
+	archiveOrigin: "scheduled" | "manual";
+	savedAt: string;
+	language?: string;
+	batchStatus?: DigestArchiveBatchStatus;
+	sync?: DigestArchiveSyncResult;
+}
+
 export type PeriodDigestArchiveFile =
 	| PeriodDigestArchiveFileV1
-	| PeriodDigestArchiveFileV2;
+	| PeriodDigestArchiveFileV2
+	| PeriodDigestArchiveFileV3;
 
 function messageFromError(error: unknown) {
 	return error instanceof Error ? error.message : String(error);
@@ -177,7 +204,7 @@ function trySync<T>(try_: () => T) {
 	return Effect.try({ try: try_, catch: (error) => error });
 }
 
-function formatLocalDateFolder(date: Date) {
+export function formatDigestArchiveRunDate(date: Date) {
 	const yyyy = date.getFullYear();
 	const mm = String(date.getMonth() + 1).padStart(2, "0");
 	const dd = String(date.getDate()).padStart(2, "0");
@@ -208,6 +235,52 @@ async function writeJsonAtomically(jsonPath: string, value: unknown) {
 		await fs.rename(temporaryPath, jsonPath);
 	} finally {
 		await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+	}
+}
+
+async function writeDigestArchivePair({
+	markdownPath,
+	jsonPath,
+	markdown,
+	archive,
+	publicationLeaseHeld = false,
+}: {
+	markdownPath: string;
+	jsonPath: string;
+	markdown: string;
+	archive: PeriodDigestArchiveFile;
+	publicationLeaseHeld?: boolean;
+}) {
+	const releasePublication = publicationLeaseHeld
+		? undefined
+		: await acquireScheduledJobLock(
+				digestArchivePublicationLockPathFromJson(jsonPath),
+				DEFAULT_LOCK_STALE_MS,
+			);
+	if (!publicationLeaseHeld && !releasePublication) {
+		throw new Error("Digest archive entry publication is already in progress");
+	}
+	await fs.mkdir(path.dirname(jsonPath), { recursive: true });
+	const owner = `${process.pid}.${randomUUID()}`;
+	const temporaryMarkdownPath = `${markdownPath}.${owner}.tmp`;
+	const temporaryJsonPath = `${jsonPath}.${owner}.tmp`;
+	try {
+		await Promise.all([
+			fs.writeFile(temporaryMarkdownPath, markdown, "utf8"),
+			fs.writeFile(
+				temporaryJsonPath,
+				JSON.stringify(archive, null, "\t"),
+				"utf8",
+			),
+		]);
+		await fs.rename(temporaryMarkdownPath, markdownPath);
+		await fs.rename(temporaryJsonPath, jsonPath);
+	} finally {
+		await Promise.all([
+			fs.rm(temporaryMarkdownPath, { force: true }).catch(() => undefined),
+			fs.rm(temporaryJsonPath, { force: true }).catch(() => undefined),
+		]);
+		await releasePublication?.();
 	}
 }
 
@@ -254,6 +327,94 @@ export function resolveDigestArchivePaths({
 	return { markdownPath: `${base}.md`, jsonPath: `${base}.json` };
 }
 
+function digestArchivePublicationLockPathFromJson(jsonPath: string) {
+	return `${jsonPath}.publish.lock`;
+}
+
+export function digestArchivePublicationLockPath(options: {
+	archiveDir: string;
+	runDate: string;
+	period: PeriodDigestPreset;
+	contentSource: PeriodDigestContentSource;
+}) {
+	return digestArchivePublicationLockPathFromJson(
+		resolveDigestArchivePaths(options).jsonPath,
+	);
+}
+
+export interface DigestArchiveReplacementResult {
+	period: "today" | "24h";
+	contentSource: PeriodDigestContentSource;
+	runDate: string;
+	generatedAt: string;
+	savedAt: string;
+	markdownPath: string;
+	jsonPath: string;
+}
+
+export function replaceDigestArchiveEntryEffect({
+	archiveDir,
+	runDate,
+	period,
+	contentSource,
+	result,
+	language,
+	now = () => new Date(),
+	publicationLeaseHeld = false,
+}: {
+	archiveDir: string;
+	runDate: string;
+	period: "today" | "24h";
+	contentSource: PeriodDigestContentSource;
+	result: PeriodDigestRunResult;
+	language?: string;
+	now?: () => Date;
+	publicationLeaseHeld?: boolean;
+}): Effect.Effect<DigestArchiveReplacementResult, unknown> {
+	return tryPromise(async () => {
+		const { markdownPath, jsonPath } = resolveDigestArchivePaths({
+			archiveDir,
+			runDate,
+			period,
+			contentSource,
+		});
+		const savedAt = now().toISOString();
+		const archive: PeriodDigestArchiveFileV3 = {
+			schemaVersion: 3,
+			archiveOrigin: "manual",
+			savedAt,
+			period,
+			contentSource,
+			runDate,
+			generatedAt: result.updatedAt,
+			context: result.context,
+			digest: result.digest,
+			markdown: result.markdown,
+			model: result.model,
+			reasoningEffort: result.reasoningEffort,
+			serviceTier: result.serviceTier,
+			cached: result.cached,
+			...(language ? { language } : {}),
+		};
+		await writeDigestArchivePair({
+			markdownPath,
+			jsonPath,
+			markdown: result.markdown,
+			archive,
+			publicationLeaseHeld,
+		});
+		return {
+			period,
+			contentSource,
+			runDate,
+			generatedAt: result.updatedAt,
+			savedAt,
+			markdownPath,
+			jsonPath,
+		};
+	});
+}
+
 function retryEffect<A>(
 	attempt: () => Effect.Effect<A, unknown>,
 	retriesLeft: number,
@@ -281,11 +442,13 @@ function runOneContentSourceEffect({
 	runDate,
 	retries,
 	retryDelayMs,
+	modelTimeoutMs,
 	since,
 	until,
 	liveSync,
 	language,
 	sync,
+	onAttempt,
 }: {
 	period: PeriodDigestPreset;
 	contentSource: PeriodDigestContentSource;
@@ -295,40 +458,48 @@ function runOneContentSourceEffect({
 	runDate: string;
 	retries: number;
 	retryDelayMs: number;
+	modelTimeoutMs: number;
 	since?: string;
 	until?: string;
 	liveSync: boolean;
 	language?: string;
 	sync: DigestArchiveSyncResult;
+	onAttempt?: (attempt: number) => Promise<void>;
 }): Effect.Effect<DigestArchiveStepResult, never> {
 	let attempts = 0;
 	const attempt = () =>
 		Effect.gen(function* () {
 			attempts += 1;
-			const result = yield* tryPromise(() =>
-				streamPeriodDigest({
-					period,
-					contentSource,
-					account,
-					includeDms,
-					refresh: true,
-					liveSync,
-					language,
-					since,
-					until,
-				}),
-			);
+			if (onAttempt) {
+				yield* tryPromise(() => onAttempt(attempts));
+			}
+			const timeoutSignal = AbortSignal.timeout(modelTimeoutMs);
+			const result = yield* Effect.tryPromise({
+				try: (interruptSignal) =>
+					streamPeriodDigest({
+						period,
+						contentSource,
+						account,
+						includeDms,
+						refresh: true,
+						liveSync,
+						language,
+						since,
+						until,
+						signal: AbortSignal.any([interruptSignal, timeoutSignal]),
+					}),
+				catch: (error) => error,
+			});
 			const { markdownPath, jsonPath } = resolveDigestArchivePaths({
 				archiveDir,
 				runDate,
 				period,
 				contentSource,
 			});
-			yield* tryPromise(() =>
-				fs.mkdir(path.dirname(markdownPath), { recursive: true }),
-			);
-			const archiveFile: PeriodDigestArchiveFileV2 = {
-				schemaVersion: 2,
+			const archiveFile: PeriodDigestArchiveFileV3 = {
+				schemaVersion: 3,
+				archiveOrigin: "scheduled",
+				savedAt: new Date().toISOString(),
 				period,
 				contentSource,
 				runDate,
@@ -345,9 +516,13 @@ function runOneContentSourceEffect({
 				sync,
 			};
 			yield* tryPromise(() =>
-				fs.writeFile(markdownPath, result.markdown, "utf8"),
+				writeDigestArchivePair({
+					markdownPath,
+					jsonPath,
+					markdown: result.markdown,
+					archive: archiveFile,
+				}),
 			);
-			yield* tryPromise(() => writeJsonAtomically(jsonPath, archiveFile));
 			return {
 				contentSource,
 				ok: true,
@@ -366,7 +541,7 @@ function runOneContentSourceEffect({
 				ok: false,
 				attempts,
 				cached: false,
-				error: messageFromError(error),
+				error: sensitiveErrorMessage(error),
 			} satisfies DigestArchiveStepResult),
 		),
 	);
@@ -383,7 +558,12 @@ function updateArchiveBatchStatusEffect(
 			return tryPromise(async () => {
 				const raw = await fs.readFile(step.jsonPath as string, "utf8");
 				const archive = JSON.parse(raw) as PeriodDigestArchiveFile;
-				if (archive.schemaVersion !== 2) return;
+				if (
+					archive.schemaVersion === 1 ||
+					(archive.schemaVersion === 3 && archive.archiveOrigin !== "scheduled")
+				) {
+					return;
+				}
 				await writeJsonAtomically(step.jsonPath as string, {
 					...archive,
 					batchStatus: status,
@@ -421,6 +601,7 @@ export function runDigestArchiveJobEffect(
 		const retries = options.retries ?? DEFAULT_DIGEST_ARCHIVE_RETRIES;
 		const retryDelayMs =
 			options.retryDelayMs ?? DEFAULT_DIGEST_ARCHIVE_RETRY_DELAY_MS;
+		const modelTimeoutMs = options.modelTimeoutMs ?? DEFAULT_MODEL_TIMEOUT_MS;
 		const includeDms = options.includeDms ?? false;
 		const resolvedLogPath = yield* trySync(() =>
 			resolveUserPath(options.logPath ?? getDefaultDigestArchiveAuditLogPath()),
@@ -430,7 +611,7 @@ export function runDigestArchiveJobEffect(
 		);
 		const run = startScheduledJobRun();
 		const runDate = yield* trySync(() =>
-			formatLocalDateFolder(options.now?.() ?? new Date()),
+			formatDigestArchiveRunDate(options.now?.() ?? new Date()),
 		);
 		const selectedLanguage = yield* trySync(() =>
 			selectDigestArchiveLanguage(options.language),
@@ -470,12 +651,58 @@ export function runDigestArchiveJobEffect(
 			...auditOptionsBase,
 			...(language ? { language } : {}),
 		};
+		let birdCredentials = options.birdCredentials;
+		const birdCredentialsPath = options.birdCredentialsPath;
+		if (birdCredentialsPath) {
+			const credentialResult = yield* Effect.either(
+				trySync(() =>
+					readBirdCredentialsFileStrict(resolveUserPath(birdCredentialsPath)),
+				),
+			);
+			if (credentialResult._tag === "Left") {
+				const entry: DigestArchiveAuditEntry = {
+					job: "digest-archive",
+					period,
+					ok: false,
+					status: "failed",
+					...run.finish(),
+					runDate,
+					options: auditOptions,
+					sync: { status: "skipped", steps: [] },
+					steps: [],
+					error: sensitiveErrorMessage(credentialResult.left),
+				};
+				yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
+				return yield* Effect.fail(credentialResult.left);
+			}
+			birdCredentials = credentialResult.right;
+		}
 
-		const releaseLock = yield* acquireScheduledJobLockEffect(
-			resolvedLockPath,
-			DEFAULT_LOCK_STALE_MS,
-			{ runDate, totalSources: contentSources.length },
+		const lockResult = yield* Effect.either(
+			tryPromise(() =>
+				acquireScheduledJobLock(resolvedLockPath, DEFAULT_LOCK_STALE_MS, {
+					runDate,
+					totalSources: contentSources.length,
+				}),
+			),
 		);
+		if (lockResult._tag === "Left") {
+			const entry: DigestArchiveAuditEntry = {
+				job: "digest-archive",
+				period,
+				ok: false,
+				status: "failed",
+				...run.finish(),
+				runDate,
+				options: auditOptions,
+				sync: { status: "skipped", steps: [] },
+				steps: [],
+				error: sensitiveErrorMessage(lockResult.left),
+			};
+			yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
+			return yield* Effect.fail(lockResult.left);
+		}
+		const releaseLock = lockResult.right;
 		if (!releaseLock) {
 			const entry: DigestArchiveAuditEntry = {
 				job: "digest-archive",
@@ -493,63 +720,180 @@ export function runDigestArchiveJobEffect(
 			return entry;
 		}
 
-		return yield* Effect.gen(function* () {
-			const sync: DigestArchiveSyncResult =
-				yield* runDigestArchivePreSyncEffect({
-					period,
-					contentSources,
-					account: options.account,
-					since: options.since,
-					until: options.until,
-					liveSync: options.liveSync ?? true,
-				});
-			const steps: DigestArchiveStepResult[] = [];
-			for (const contentSource of contentSources) {
-				const step = yield* runOneContentSourceEffect({
-					period,
-					contentSource,
-					account: options.account,
-					includeDms,
-					archiveDir,
-					runDate,
-					retries,
-					retryDelayMs,
-					since: options.since,
-					until: options.until,
-					liveSync: false,
-					language,
-					sync,
-				});
-				steps.push(step);
-			}
-			const generationOk = steps.every((step) => step.ok);
-			const generatedStatus: DigestArchiveBatchStatus = !generationOk
-				? "failed"
-				: sync.status === "degraded"
-					? "degraded"
-					: "ok";
-			const persistenceErrors = yield* (
-				dependencies.updateArchiveBatchStatus ?? updateArchiveBatchStatusEffect
-			)(steps, generatedStatus);
-			const ok = generationOk && persistenceErrors.length === 0;
-			const status: DigestArchiveBatchStatus = persistenceErrors.length
-				? "failed"
-				: generatedStatus;
-			const entry: DigestArchiveAuditEntry = {
-				job: "digest-archive",
+		let observedSync: DigestArchiveSyncResult = {
+			status: "skipped",
+			steps: [],
+		};
+		const observedSteps: DigestArchiveStepResult[] = [];
+		const ownedRun = Effect.gen(function* () {
+			const statePath = digestArchiveRunStatePath(period);
+			const stateOwnerId = randomUUID();
+			const initialState = createDigestArchiveRunState({
 				period,
-				ok,
-				status,
-				...run.finish(),
 				runDate,
-				options: auditOptions,
-				sync,
-				steps,
-				...(persistenceErrors.length ? { persistenceErrors } : {}),
-			};
-			yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
-			return entry;
-		}).pipe(Effect.ensuring(releaseLock()));
+				contentSources,
+				ownerId: stateOwnerId,
+			});
+			yield* tryPromise(() =>
+				writeDigestArchiveRunState(statePath, initialState),
+			);
+			const heartbeat = startDigestArchiveHeartbeat({
+				statePath,
+				ownerId: stateOwnerId,
+				intervalMs: dependencies.heartbeatIntervalMs,
+				onHeartbeat: () => releaseLock.heartbeat(),
+			});
+
+			const workflow = Effect.gen(function* () {
+				const sync: DigestArchiveSyncResult =
+					yield* runDigestArchivePreSyncEffect({
+						period,
+						contentSources,
+						account: options.account,
+						since: options.since,
+						until: options.until,
+						liveSync: options.liveSync ?? true,
+						nonInteractiveBird: true,
+						birdCredentials,
+					});
+				observedSync = sync;
+				yield* tryPromise(() =>
+					updateDigestArchiveRunState(statePath, stateOwnerId, (state) => ({
+						...state,
+						phase: "generating",
+					})),
+				);
+				for (const contentSource of contentSources) {
+					const step = yield* runOneContentSourceEffect({
+						period,
+						contentSource,
+						account: options.account,
+						includeDms,
+						archiveDir,
+						runDate,
+						retries,
+						retryDelayMs,
+						modelTimeoutMs,
+						since: options.since,
+						until: options.until,
+						liveSync: false,
+						language,
+						sync,
+						onAttempt: (attempt) =>
+							updateDigestArchiveRunState(statePath, stateOwnerId, (state) => ({
+								...state,
+								phase: "generating",
+								currentSource: contentSource,
+								sources: {
+									...state.sources,
+									[contentSource]: { state: "running", attempts: attempt },
+								},
+							})).then(() => undefined),
+					});
+					observedSteps.push(step);
+					yield* tryPromise(() =>
+						updateDigestArchiveRunState(statePath, stateOwnerId, (state) => ({
+							...state,
+							currentSource: contentSource,
+							sources: {
+								...state.sources,
+								[contentSource]: step.ok
+									? {
+											state: "completed",
+											attempts: step.attempts,
+											...(step.updatedAt
+												? { generatedAt: step.updatedAt }
+												: {}),
+										}
+									: {
+											state: "failed",
+											attempts: step.attempts,
+											...(step.error ? { error: step.error } : {}),
+										},
+							},
+						})),
+					);
+				}
+				yield* tryPromise(() =>
+					updateDigestArchiveRunState(statePath, stateOwnerId, (state) => ({
+						...state,
+						phase: "finalizing",
+						currentSource: undefined,
+					})),
+				);
+				const generationOk = observedSteps.every((step) => step.ok);
+				const generatedStatus: DigestArchiveBatchStatus = !generationOk
+					? "failed"
+					: sync.status === "degraded"
+						? "degraded"
+						: "ok";
+				const persistenceErrors = yield* (
+					dependencies.updateArchiveBatchStatus ??
+					updateArchiveBatchStatusEffect
+				)(observedSteps, generatedStatus);
+				const ok = generationOk && persistenceErrors.length === 0;
+				const status: DigestArchiveBatchStatus = persistenceErrors.length
+					? "failed"
+					: generatedStatus;
+				const entry: DigestArchiveAuditEntry = {
+					job: "digest-archive",
+					period,
+					ok,
+					status,
+					...run.finish(),
+					runDate,
+					options: auditOptions,
+					sync,
+					steps: observedSteps,
+					...(persistenceErrors.length ? { persistenceErrors } : {}),
+				};
+				yield* appendScheduledJobAuditEffect(resolvedLogPath, entry);
+				return entry;
+			});
+			const lockLost = tryPromise(async () => {
+				await heartbeat.lost;
+				throw new Error("Scheduled digest lock ownership was lost");
+			});
+
+			return yield* Effect.raceFirst(
+				Effect.disconnect(workflow),
+				lockLost,
+			).pipe(
+				Effect.ensuring(
+					tryPromise(async () => {
+						await heartbeat.stop();
+						await removeDigestArchiveRunState(statePath, stateOwnerId);
+					}).pipe(Effect.catchAll(() => Effect.void)),
+				),
+			);
+		});
+
+		return yield* ownedRun.pipe(
+			Effect.catchAll((error) => {
+				const entry: DigestArchiveAuditEntry = {
+					job: "digest-archive",
+					period,
+					ok: false,
+					status: "failed",
+					...run.finish(),
+					runDate,
+					options: auditOptions,
+					sync: observedSync,
+					steps: observedSteps,
+					error: sensitiveErrorMessage(error),
+				};
+				return appendScheduledJobAuditEffect(resolvedLogPath, entry).pipe(
+					Effect.catchAll(() => Effect.void),
+					Effect.andThen(Effect.fail(error)),
+				);
+			}),
+			Effect.ensuring(
+				tryPromise(releaseLock).pipe(
+					Effect.asVoid,
+					Effect.catchAll(() => Effect.void),
+				),
+			),
+		);
 	});
 }
 
@@ -574,6 +918,7 @@ export interface DigestArchiveLaunchAgentOptions {
 	retryDelaySeconds?: number;
 	logPath?: string;
 	envFile?: string;
+	birdCredentialsPath?: string;
 	stdoutPath?: string;
 	stderrPath?: string;
 	launchAgentsDir?: string;
@@ -595,6 +940,7 @@ function buildProgramArguments({
 	retryDelaySeconds,
 	logPath,
 	envFile,
+	birdCredentialsPath,
 }: DigestArchiveLaunchAgentOptions & { logPath: string }) {
 	const args = [
 		"--json",
@@ -614,6 +960,9 @@ function buildProgramArguments({
 	if (retries !== undefined) args.push("--retries", String(retries));
 	if (retryDelaySeconds !== undefined) {
 		args.push("--retry-delay-seconds", String(retryDelaySeconds));
+	}
+	if (birdCredentialsPath) {
+		args.push("--bird-credentials-path", resolveUserPath(birdCredentialsPath));
 	}
 	return buildLaunchProgramArguments({ program, args, envFile });
 }
@@ -864,6 +1213,48 @@ export interface DigestArchiveActiveRun {
 	totalSources: number;
 }
 
+export interface DigestArchiveDetailedActiveRun extends DigestArchiveActiveRun {
+	phase: "pre-sync" | "generating" | "finalizing";
+	currentSource?: PeriodDigestContentSource;
+	startedAt: string;
+	lastHeartbeatAt: string;
+	sources: Partial<
+		Record<
+			PeriodDigestContentSource,
+			{
+				state: "pending" | "running" | "completed" | "failed";
+				attempts: number;
+				generatedAt?: string;
+				error?: string;
+			}
+		>
+	>;
+}
+
+export interface DigestArchiveFinalRun {
+	period: PeriodDigestPreset;
+	runDate: string;
+	status: DigestArchiveBatchStatus;
+	finishedAt: string;
+	error?: string;
+	sources: Partial<
+		Record<
+			PeriodDigestContentSource,
+			{
+				state: "completed" | "failed";
+				attempts: number;
+				generatedAt?: string;
+				error?: string;
+			}
+		>
+	>;
+}
+
+export interface DigestArchiveStatusSnapshot {
+	activeRuns: DigestArchiveDetailedActiveRun[];
+	lastRuns: DigestArchiveFinalRun[];
+}
+
 export async function peekDigestArchiveRunningRuns(): Promise<
 	DigestArchiveActiveRun[]
 > {
@@ -878,7 +1269,7 @@ export async function peekDigestArchiveRunningRuns(): Promise<
 				period,
 				runDate:
 					metadata.runDate ??
-					formatLocalDateFolder(new Date(metadata.startedAt)),
+					formatDigestArchiveRunDate(new Date(metadata.startedAt)),
 				totalSources: metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 			});
 		}
@@ -911,7 +1302,7 @@ export function peekDigestArchiveRunningRunsEffect(): Effect.Effect<
 								period,
 								runDate:
 									metadata.runDate ??
-									formatLocalDateFolder(new Date(metadata.startedAt)),
+									formatDigestArchiveRunDate(new Date(metadata.startedAt)),
 								totalSources:
 									metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 							}
@@ -924,4 +1315,150 @@ export function peekDigestArchiveRunningRunsEffect(): Effect.Effect<
 			values.filter((v): v is DigestArchiveActiveRun => v !== undefined),
 		),
 	);
+}
+
+let latestDigestArchiveRunsCache:
+	| {
+			path: string;
+			size: number;
+			mtimeMs: number;
+			runs: DigestArchiveFinalRun[];
+	  }
+	| undefined;
+
+async function readLatestDigestArchiveRuns() {
+	const auditPath = getDefaultDigestArchiveAuditLogPath();
+	const stats = await fs.stat(auditPath).catch(() => undefined);
+	if (!stats) {
+		if (latestDigestArchiveRunsCache?.path === auditPath) {
+			latestDigestArchiveRunsCache = undefined;
+		}
+		return [];
+	}
+	if (
+		latestDigestArchiveRunsCache?.path === auditPath &&
+		latestDigestArchiveRunsCache.size === stats.size &&
+		latestDigestArchiveRunsCache.mtimeMs === stats.mtimeMs
+	) {
+		return latestDigestArchiveRunsCache.runs;
+	}
+	const raw = await fs.readFile(auditPath, "utf8").catch(() => undefined);
+	if (raw === undefined) {
+		latestDigestArchiveRunsCache = undefined;
+		return [];
+	}
+	const latest = new Map<PeriodDigestPreset, DigestArchiveFinalRun>();
+	for (const line of raw.split("\n").reverse()) {
+		if (!line.trim()) continue;
+		try {
+			const entry = JSON.parse(line) as Partial<DigestArchiveAuditEntry>;
+			if (
+				entry.job !== "digest-archive" ||
+				!ALL_PERIODS.includes(entry.period as PeriodDigestPreset) ||
+				entry.skipped ||
+				latest.has(entry.period as PeriodDigestPreset) ||
+				typeof entry.runDate !== "string" ||
+				typeof entry.finishedAt !== "string" ||
+				!Array.isArray(entry.steps)
+			) {
+				continue;
+			}
+			const period = entry.period as PeriodDigestPreset;
+			latest.set(period, {
+				period,
+				runDate: entry.runDate,
+				status: entry.status ?? (entry.ok ? "ok" : "failed"),
+				finishedAt: entry.finishedAt,
+				...(entry.error ? { error: sensitiveErrorMessage(entry.error) } : {}),
+				sources: Object.fromEntries(
+					entry.steps.map((step) => [
+						step.contentSource,
+						step.ok
+							? {
+									state: "completed",
+									attempts: step.attempts,
+									...(step.updatedAt ? { generatedAt: step.updatedAt } : {}),
+								}
+							: {
+									state: "failed",
+									attempts: step.attempts,
+									...(step.error
+										? { error: sensitiveErrorMessage(step.error) }
+										: {}),
+								},
+					]),
+				),
+			});
+			if (latest.size === ALL_PERIODS.length) break;
+		} catch {
+			continue;
+		}
+	}
+	const runs = ALL_PERIODS.flatMap((period) => {
+		const entry = latest.get(period);
+		return entry ? [entry] : [];
+	});
+	latestDigestArchiveRunsCache = {
+		path: auditPath,
+		size: stats.size,
+		mtimeMs: stats.mtimeMs,
+		runs,
+	};
+	return runs;
+}
+
+export async function getDigestArchiveStatus(): Promise<DigestArchiveStatusSnapshot> {
+	const activeRuns: DigestArchiveDetailedActiveRun[] = [];
+	for (const period of ALL_PERIODS) {
+		const metadata = await peekScheduledJobLockMetadata(
+			digestArchiveLockPath(period),
+			DEFAULT_LOCK_STALE_MS,
+		);
+		if (!metadata) continue;
+		const state = await readDigestArchiveRunState(
+			digestArchiveRunStatePath(period),
+		);
+		if (state && state.period === period) {
+			activeRuns.push({
+				period,
+				runDate: state.runDate,
+				totalSources: state.totalSources,
+				phase: state.phase,
+				...(state.currentSource ? { currentSource: state.currentSource } : {}),
+				startedAt: state.startedAt,
+				lastHeartbeatAt: state.lastHeartbeatAt,
+				sources: Object.fromEntries(
+					Object.entries(state.sources).map(([source, sourceState]) => [
+						source,
+						{
+							...sourceState,
+							...(sourceState.error
+								? { error: sensitiveErrorMessage(sourceState.error) }
+								: {}),
+						},
+					]),
+				),
+			});
+			continue;
+		}
+		activeRuns.push({
+			period,
+			runDate:
+				metadata.runDate ??
+				formatDigestArchiveRunDate(new Date(metadata.startedAt)),
+			totalSources: metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
+			phase: "pre-sync",
+			startedAt: metadata.startedAt,
+			lastHeartbeatAt: metadata.startedAt,
+			sources: {},
+		});
+	}
+	return { activeRuns, lastRuns: await readLatestDigestArchiveRuns() };
+}
+
+export function getDigestArchiveStatusEffect(): Effect.Effect<
+	DigestArchiveStatusSnapshot,
+	unknown
+> {
+	return tryPromise(getDigestArchiveStatus);
 }

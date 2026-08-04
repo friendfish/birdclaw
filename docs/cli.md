@@ -421,6 +421,39 @@ tail -n 20 ~/.birdclaw/audit/bookmarks-sync.jsonl | jq .
 birdclaw --json jobs install-bookmarks-launchd --program /opt/homebrew/bin/birdclaw
 ```
 
+### `jobs run-digest-archive`
+
+- generates and archives one of `today`, `24h`, `yesterday`, or `week`
+- runs live X sync non-interactively before generating the three content-source
+  digests
+- `--bird-credentials-path <path>` strictly reads only literal `AUTH_TOKEN` and
+  `CT0` assignments; existing invalid files fail before the job starts, while a
+  missing managed file leaves sync on the normal degraded/local-data path
+
+```bash
+birdclaw --json jobs run-digest-archive \
+  --period today \
+  --bird-credentials-path ~/.birdclaw/credentials/bird.env
+```
+
+### `jobs install-digest-archive-launchd`
+
+- installs one period or all four with `--period all`
+- `--bird-credentials-path <path>` passes a strict credential-file path directly
+  to Birdclaw without a shell wrapper
+- `--env-path <path>` retains its legacy behavior and sources a trusted shell
+  environment file before Birdclaw starts
+- both options may be combined when launchd needs general variables such as
+  `OPENAI_API_KEY` in addition to managed X credentials
+
+```bash
+birdclaw --json jobs install-digest-archive-launchd \
+  --period all \
+  --program /opt/homebrew/bin/birdclaw \
+  --env-path ~/.config/bird/digest.env \
+  --bird-credentials-path ~/.birdclaw/credentials/bird.env
+```
+
 ### `search tweets <query>`
 
 Flags:

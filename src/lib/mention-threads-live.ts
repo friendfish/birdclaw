@@ -43,6 +43,7 @@ export interface SyncMentionThreadsOptions {
 	timeoutMs?: number;
 	all?: boolean;
 	maxPages?: number;
+	birdEnvironment?: NodeJS.ProcessEnv;
 	onProgress?: (progress: MentionThreadsProgress) => void;
 }
 
@@ -622,6 +623,7 @@ export function syncMentionThreadsEffect({
 	timeoutMs = DEFAULT_TIMEOUT_MS,
 	all = false,
 	maxPages,
+	birdEnvironment,
 	onProgress,
 }: SyncMentionThreadsOptions) {
 	return Effect.gen(function* () {
@@ -683,6 +685,7 @@ export function syncMentionThreadsEffect({
 								all,
 								maxPages: parsedMaxPages,
 								timeoutMs: parsedTimeoutMs,
+								env: birdEnvironment,
 							})
 							.pipe(
 								Effect.map((payload) => ({

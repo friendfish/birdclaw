@@ -42,15 +42,18 @@ describe("bird action transport wrapper", () => {
 		const { blockUserViaBird } = await import("./bird-actions");
 		const result = await blockUserViaBird("42");
 
-		expect(execFileAsyncMock).toHaveBeenNthCalledWith(1, "/tmp/bird", [
-			"block",
-			"42",
-		]);
-		expect(execFileAsyncMock).toHaveBeenNthCalledWith(2, "/tmp/bird", [
-			"status",
-			"42",
-			"--json",
-		]);
+		expect(execFileAsyncMock).toHaveBeenNthCalledWith(
+			1,
+			"/tmp/bird",
+			["block", "42"],
+			expect.objectContaining({ env: expect.any(Object) }),
+		);
+		expect(execFileAsyncMock).toHaveBeenNthCalledWith(
+			2,
+			"/tmp/bird",
+			["status", "42", "--json"],
+			expect.objectContaining({ env: expect.any(Object) }),
+		);
 		expect(result).toEqual({
 			ok: true,
 			output: "✅ Blocked @sam; verified blocking=true",
@@ -284,13 +287,11 @@ describe("bird action transport wrapper", () => {
 		const { lookupProfileViaBird } = await import("./bird-actions");
 		const result = await lookupProfileViaBird("@sam");
 
-		expect(execFileAsyncMock).toHaveBeenCalledWith("/tmp/bird", [
-			"user",
-			"sam",
-			"-n",
-			"1",
-			"--json",
-		]);
+		expect(execFileAsyncMock).toHaveBeenCalledWith(
+			"/tmp/bird",
+			["user", "sam", "-n", "1", "--json"],
+			expect.objectContaining({ env: expect.any(Object) }),
+		);
 		expect(result).toEqual({
 			id: "42",
 			username: "sam",

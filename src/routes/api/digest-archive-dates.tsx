@@ -10,7 +10,12 @@ import {
 import type { PeriodDigestPreset } from "#/lib/period-digest";
 
 function parsePeriod(value: string | null): PeriodDigestPreset {
-	return value === "yesterday" || value === "week" ? value : "yesterday";
+	return value === "today" ||
+		value === "24h" ||
+		value === "yesterday" ||
+		value === "week"
+		? value
+		: "yesterday";
 }
 
 export const Route = createFileRoute("/api/digest-archive-dates")({

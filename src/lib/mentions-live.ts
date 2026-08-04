@@ -48,6 +48,7 @@ export interface SyncMentionsOptions {
 	cacheTtlMs?: number;
 	sinceId?: string;
 	startTime?: string;
+	birdEnvironment?: NodeJS.ProcessEnv;
 	onProgress?: (progress: MentionsProgress) => void;
 }
 interface ExportMentionsViaCachedLiveSourceOptions {
@@ -417,10 +418,15 @@ function writeMentionHighWaterId(
 	writeSyncCache(getMentionHighWaterKey({ mode, accountId }), { sinceId }, db);
 }
 
-function verifyBirdAccountMatchesEffect(account: LiveSyncAccount) {
+function verifyBirdAccountMatchesEffect(
+	account: LiveSyncAccount,
+	birdEnvironment?: NodeJS.ProcessEnv,
+) {
 	return Effect.gen(function* () {
 		const authenticated =
-			yield* liveTransportGateway.bird.getAuthenticatedAccount();
+			yield* liveTransportGateway.bird.getAuthenticatedAccount({
+				env: birdEnvironment,
+			});
 		return yield* Effect.try({
 			try: () =>
 				assertLiveAccountMatches({
@@ -629,8 +635,17 @@ function fetchMentionsViaXurlEffect({
 	});
 }
 
-function fetchMentionsViaBirdEffect({ limit }: { limit: number }) {
-	return liveTransportGateway.bird.listMentions({ maxResults: limit });
+function fetchMentionsViaBirdEffect({
+	limit,
+	birdEnvironment,
+}: {
+	limit: number;
+	birdEnvironment?: NodeJS.ProcessEnv;
+}) {
+	return liveTransportGateway.bird.listMentions({
+		maxResults: limit,
+		env: birdEnvironment,
+	});
 }
 
 function isMaxPagesPartial({
@@ -656,6 +671,7 @@ export function syncMentionsEffect({
 	cacheTtlMs,
 	sinceId,
 	startTime,
+	birdEnvironment,
 	onProgress,
 }: SyncMentionsOptions) {
 	return Effect.gen(function* () {
@@ -823,7 +839,7 @@ export function syncMentionsEffect({
 			!startPaginationToken;
 		const payload =
 			primaryMode === "bird"
-				? yield* fetchMentionsViaBirdEffect({ limit })
+				? yield* fetchMentionsViaBirdEffect({ limit, birdEnvironment })
 				: yield* fetchMentionsViaXurlEffect({
 						resolvedAccount,
 						limit,
@@ -837,8 +853,13 @@ export function syncMentionsEffect({
 						Effect.catchAll((error) => {
 							if (!canFallbackToBird) return Effect.fail(error);
 							source = "bird";
-							return verifyBirdAccountMatchesEffect(resolvedAccount).pipe(
-								Effect.flatMap(() => fetchMentionsViaBirdEffect({ limit })),
+							return verifyBirdAccountMatchesEffect(
+								resolvedAccount,
+								birdEnvironment,
+							).pipe(
+								Effect.flatMap(() =>
+									fetchMentionsViaBirdEffect({ limit, birdEnvironment }),
+								),
 							);
 						}),
 					);
