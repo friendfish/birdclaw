@@ -46,8 +46,8 @@ This change covers:
 - manual replacement of the current day's Today/24h archive after a user-initiated
   refresh;
 - X credential management in Config and non-interactive Bird authentication;
-- LaunchAgent installation and schedule-update preservation of the credential
-  environment path.
+- LaunchAgent installation and schedule-update preservation of the strict Bird
+  credential path without changing the legacy shell environment-file contract.
 
 The change does not add a general-purpose queue, parallelize the three model
 calls, retain versions of manually replaced archives, change schedule times, or
@@ -319,16 +319,18 @@ starting Bird. The scheduled path is explicitly non-interactive:
 Test Credentials uses the same non-interactive path and a lightweight
 authenticated Bird operation. It reports only success or a sanitized failure.
 
-Direct CLI compatibility remains intact: explicit CLI/process credentials may
-still be used outside the managed app path. The app and Config test use the
-managed credential pair consistently so replacing credentials in Config has an
-immediate, predictable effect.
+Direct CLI compatibility remains intact: `--env-path` continues to source a
+trusted general shell environment file, while `--bird-credentials-path` selects
+the strict two-field file. Inherited process values form the base, Config-managed
+credentials override inherited cookies, and explicit strict credentials override
+both. The app and Config test therefore use the managed credential pair
+consistently so replacing credentials in Config has an immediate effect.
 
-All four digest LaunchAgents receive the fixed credential env path. The
-all-period installer must preserve `envFile` for every generated plist, not
-only the single-period branch. The digest schedule API must also preserve this
-path when it reinstalls jobs after a Config schedule update. Saving schedule
-settings therefore cannot silently remove scheduled authentication.
+All four digest LaunchAgents receive the fixed strict credential path through
+`birdCredentialsPath`. The digest schedule API preserves this path when it
+reinstalls jobs after a Config schedule update. Saving schedule settings
+therefore cannot silently remove scheduled authentication or reinterpret a
+legacy `--env-path` file.
 
 Clearing credentials does not remove archives or cached summaries. Future live
 syncs report that X credentials are not configured and continue from local data
@@ -372,7 +374,8 @@ Focused tests will cover:
 - credential GET/POST/DELETE never return tokens and enforce `0700`/`0600`;
 - credential testing and missing-credential scheduled sync never invoke browser
   cookie or Keychain lookup;
-- all-period CLI installation and Config schedule updates retain the env path;
+- all-period CLI installation and Config schedule updates retain the strict Bird
+  credential path without changing legacy env-file behavior;
   and
 - token-shaped values are redacted from errors, audit entries, and logs.
 

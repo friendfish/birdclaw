@@ -21,20 +21,20 @@
 - Modify: `src/lib/digest-archive-job.ts`
 - Modify: `src/routes/api/digest-schedule.tsx`
 
-- [ ] **Step 1: Write failing LaunchAgent and schedule tests**
+- [x] **Step 1: Write failing LaunchAgent and schedule tests**
 
 Assert that `envFile` still creates the existing `/bin/bash -lc` launch wrapper,
 that `birdCredentialsPath` adds `--bird-credentials-path` without a shell when
 used alone, and that Config supplies `birdCredentialsPath` to all four periods.
 
-- [ ] **Step 2: Run tests and verify the old implementation fails**
+- [x] **Step 2: Run tests and verify the old implementation fails**
 
 Run: `pnpm test -- src/lib/digest-archive-job.test.ts src/routes/api/digest-schedule.test.ts`
 
 Expected: FAIL because `envFile` is currently passed to the strict digest parser
 and `birdCredentialsPath` does not exist.
 
-- [ ] **Step 3: Split the launch options**
+- [x] **Step 3: Split the launch options**
 
 Implement the equivalent of:
 
@@ -48,7 +48,7 @@ return buildLaunchProgramArguments({ program, args, envFile });
 Add `--bird-credentials-path` to the run and install commands. Strictly parse only
 that path. Keep install-time `--env-path` and `--env-file` mapped to `envFile`.
 
-- [ ] **Step 4: Run the focused tests and verify they pass**
+- [x] **Step 4: Run the focused tests and verify they pass**
 
 Run: `pnpm test -- src/lib/digest-archive-job.test.ts src/routes/api/digest-schedule.test.ts`
 
@@ -62,19 +62,19 @@ Expected: PASS.
 - Modify: `src/routes/api/bird-credentials-test.test.ts`
 - Modify: `src/lib/bird-credentials.ts`
 
-- [ ] **Step 1: Change expectations to the required precedence**
+- [x] **Step 1: Change expectations to the required precedence**
 
 Assert that managed values override inherited `AUTH_TOKEN`/`CT0`, explicit values
 override managed values, and unrelated inherited variables remain present. Set
 conflicting inherited values in the Config test endpoint test.
 
-- [ ] **Step 2: Run tests and verify they fail on inherited values**
+- [x] **Step 2: Run tests and verify they fail on inherited values**
 
 Run: `pnpm test -- src/lib/bird-credentials.test.ts src/routes/api/bird-credentials-test.test.ts`
 
 Expected: FAIL with the inherited credential pair winning.
 
-- [ ] **Step 3: Reorder the merge**
+- [x] **Step 3: Reorder the merge**
 
 Implement:
 
@@ -88,7 +88,7 @@ return {
 };
 ```
 
-- [ ] **Step 4: Run the focused tests and verify they pass**
+- [x] **Step 4: Run the focused tests and verify they pass**
 
 Run: `pnpm test -- src/lib/bird-credentials.test.ts src/routes/api/bird-credentials-test.test.ts`
 
@@ -104,21 +104,21 @@ Expected: PASS.
 - Modify: `src/lib/digest-archive-run-state.ts`
 - Modify: `src/lib/digest-archive-job.ts`
 
-- [ ] **Step 1: Write failing lock lease tests**
+- [x] **Step 1: Write failing lock lease tests**
 
 Replace the same-host live-PID permanence expectation with tests showing that an
 expired heartbeat is stale, `release.heartbeat()` renews only its own lock, and a
 lock older than six hours is stale even with a fresh mtime. Add a heartbeat-loop
 test proving the optional lock callback runs.
 
-- [ ] **Step 2: Run tests and verify the lease behavior is missing**
+- [x] **Step 2: Run tests and verify the lease behavior is missing**
 
 Run: `pnpm test -- src/lib/scheduled-job.test.ts src/lib/digest-archive-run-state.test.ts`
 
 Expected: FAIL because releases have no heartbeat and PID reuse preserves stale
 locks.
 
-- [ ] **Step 3: Implement owner-checked renewal and bounded liveness**
+- [x] **Step 3: Implement owner-checked renewal and bounded liveness**
 
 Extend the callable release with:
 
@@ -130,7 +130,7 @@ Refresh mtime through an opened file handle after verifying `ownerId`. Treat sta
 mtime, dead same-host PID, or maximum age as inactive. Invoke the lock heartbeat
 from `startDigestArchiveHeartbeat` and wire the acquired digest lock into it.
 
-- [ ] **Step 4: Run the focused tests and verify they pass**
+- [x] **Step 4: Run the focused tests and verify they pass**
 
 Run: `pnpm test -- src/lib/scheduled-job.test.ts src/lib/digest-archive-run-state.test.ts src/lib/digest-archive-job.test.ts`
 
@@ -143,24 +143,24 @@ Expected: PASS.
 - Modify: `src/lib/digest-archive-job.test.ts`
 - Modify: `src/lib/digest-archive-job.ts`
 
-- [ ] **Step 1: Write a failing cache/invalidation test**
+- [x] **Step 1: Write a failing cache/invalidation test**
 
 Spy on audit-log reads. Call status twice without changing the file and expect one
 audit read, then append a record and expect a second read with the new snapshot.
 
-- [ ] **Step 2: Run the test and verify repeated reads fail the expectation**
+- [x] **Step 2: Run the test and verify repeated reads fail the expectation**
 
 Run: `pnpm test -- src/lib/digest-archive-job.test.ts`
 
 Expected: FAIL because every call reads and parses the complete audit log.
 
-- [ ] **Step 3: Cache by path, size, and mtime and stop reverse scanning early**
+- [x] **Step 3: Cache by path, size, and mtime and stop reverse scanning early**
 
 Store the parsed result with `{ path, size, mtimeMs }`. Reuse only on an exact
 metadata match, clear the cache on missing/read failure, and break after four
 periods are found.
 
-- [ ] **Step 4: Run the focused test and verify it passes**
+- [x] **Step 4: Run the focused test and verify it passes**
 
 Run: `pnpm test -- src/lib/digest-archive-job.test.ts`
 
@@ -175,20 +175,20 @@ Expected: PASS.
 - Modify: `docs/cli.md`
 - Modify: `docs/configuration.md`
 
-- [ ] **Step 1: Document both credential paths and precedence**
+- [x] **Step 1: Document both credential paths and precedence**
 
 Keep `--env-path` examples for general launch environments. Add the Config-managed
 `~/.birdclaw/credentials/bird.env` path, strict file contract, shell-free
 `--bird-credentials-path`, precedence, and migration guidance.
 
-- [ ] **Step 2: Scan for contradictory option descriptions**
+- [x] **Step 2: Scan for contradictory option descriptions**
 
 Run: `rg -n -- '--env-path|--bird-credentials-path|bird.env' README.md docs src/cli/register-jobs.ts`
 
 Expected: every `--env-path` description retains general shell env semantics and
 strict parsing is described only for `--bird-credentials-path`.
 
-- [ ] **Step 3: Run formatting, lint, types, and the complete suite**
+- [x] **Step 3: Run formatting, lint, types, and the complete suite**
 
 Run: `pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm test`
 

@@ -617,14 +617,14 @@ Call `mergeBirdCredentialEnvironment(options?.env)` before `runSubprocessEffect`
 
 Assert:
 
-- `install-digest-archive-launchd --period all --env-path /tmp/bird.env` passes that path to all four overrides;
-- digest LaunchAgent arguments include `--env-path /tmp/bird.env` on the BirdClaw job command and do not contain `/bin/bash -lc` or token values;
+- `install-digest-archive-launchd --period all --bird-credentials-path /tmp/bird.env` passes that path to all four overrides;
+- digest LaunchAgent arguments include `--bird-credentials-path /tmp/bird.env` on the BirdClaw job command and do not contain `/bin/bash -lc` or token values;
 - the run command strictly parses that file before invoking the job;
 - Config schedule POST supplies `getBirdCredentialsPath()` for all four reinstall calls.
 
 - [ ] **Step 5: Preserve the path and parse it inside BirdClaw**
 
-Add `envFile` to `perPeriodOverrides`. For digest LaunchAgents, append `--env-path <resolved path>` to `run-digest-archive` arguments instead of passing it to `buildLaunchProgramArguments` for shell sourcing. Add the same option to the run command and load only the two allowed keys with `bird-credentials.ts`. Make schedule POST use the fixed managed path.
+Add `birdCredentialsPath` to `perPeriodOverrides`. For digest LaunchAgents, append `--bird-credentials-path <resolved path>` to `run-digest-archive` arguments instead of passing it to `buildLaunchProgramArguments` for shell sourcing. Keep `--env-path` as the legacy general shell environment option. Add the strict option to the run command and load only the two allowed keys with `bird-credentials.ts`. Make schedule POST use the fixed managed path.
 
 - [ ] **Step 6: Run focused tests and commit**
 

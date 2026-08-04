@@ -111,6 +111,45 @@ birdclaw --json jobs install-bookmarks-launchd \
 
 The plist sources that file inside the scheduled process. The cookies stay on your machine, in your home directory, with mode `0600`. They are never written into the plist itself.
 
+## Scheduled digest archives
+
+`jobs run-digest-archive` generates and archives one period. The launchd
+installer creates independent Today, 24h, Yesterday, and Week agents:
+
+```bash
+birdclaw --json jobs install-digest-archive-launchd \
+  --period all \
+  --program /opt/homebrew/bin/birdclaw \
+  --bird-credentials-path ~/.birdclaw/credentials/bird.env
+```
+
+The Config page uses the same managed credential path automatically. This file
+is inert data rather than a shell script: it must contain exactly these two
+assignments, without `export` or extra keys:
+
+```text
+AUTH_TOKEN=...
+CT0=...
+```
+
+`--bird-credentials-path <path>` passes the strict credential path to Birdclaw
+without putting cookie values in the plist or invoking a shell. An invalid
+existing file fails the command instead of silently falling back. A missing
+managed file leaves the explicit override unset, allowing the scheduled digest
+to continue from local data and pick up credentials after Config creates it.
+
+`--env-path <path>` remains the backward-compatible launch environment option.
+It sources a trusted shell file and can carry variables such as
+`OPENAI_API_KEY`; it is not parsed as the managed credential file. The install
+command accepts both options when a scheduled digest needs a general environment
+file plus a separate strict Bird credential file.
+
+Credential precedence for Bird subprocesses is inherited process environment,
+then Config-managed credentials, then an explicit strict credential file. Each
+digest lock is renewed by a heartbeat while the job runs and has a six-hour
+absolute lifetime, so a PID reused after reboot cannot preserve an old lock
+indefinitely.
+
 ## Useful checks
 
 After install:

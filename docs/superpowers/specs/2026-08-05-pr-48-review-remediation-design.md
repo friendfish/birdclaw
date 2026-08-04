@@ -61,9 +61,9 @@ four periods has been found.
 
 ## Error Handling
 
-- A missing or invalid strict credential file produces no explicit Bird override;
-  managed credentials remain available unless the caller explicitly selected an
-  invalid path, in which case the CLI reports the invalid credential file.
+- A missing strict credential file produces no explicit Bird override, so the job
+  can continue through the existing degraded/local-data path and use the file on
+  a later run after Config creates it. An existing but invalid file is reported.
 - A failed lock heartbeat is isolated from the run-state heartbeat loop. The lock
   naturally becomes stale within the configured interval and can be reclaimed.
 - Audit stat/read failures return an empty snapshot and do not retain stale cached
@@ -79,4 +79,3 @@ four periods has been found.
   and owner-safe refresh.
 - Status tests prove unchanged audit logs are read once and changed logs invalidate
   the cache.
-

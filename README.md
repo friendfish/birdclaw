@@ -698,6 +698,28 @@ launchctl kickstart -k gui/$(id -u)/com.steipete.birdclaw.bookmarks-sync
 tail -n 1 ~/.birdclaw/audit/bookmarks-sync.jsonl | jq .
 ```
 
+### Scheduled Digest Archives and X Credentials
+
+The Config page stores non-interactive X credentials at
+`~/.birdclaw/credentials/bird.env`. The managed file contains exactly literal
+`AUTH_TOKEN` and `CT0` assignments, uses mode `0600`, and is never sourced as
+shell code. Config-created Today, 24h, Yesterday, and Week LaunchAgents pass only
+its path to Birdclaw:
+
+```bash
+birdclaw --json jobs install-digest-archive-launchd \
+  --period all \
+  --program /opt/homebrew/bin/birdclaw \
+  --bird-credentials-path ~/.birdclaw/credentials/bird.env
+```
+
+`--env-path` keeps its older, separate meaning for digest LaunchAgents: it
+sources a trusted shell environment file before starting Birdclaw. Use it when
+launchd also needs variables such as `OPENAI_API_KEY`. It can be combined with
+`--bird-credentials-path`; inherited environment values are the base, Config
+credentials override inherited `AUTH_TOKEN`/`CT0`, and an explicit strict
+credential path overrides both.
+
 ## Typical Workflow
 
 1. import your archive if you have one

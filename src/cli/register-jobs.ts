@@ -18,6 +18,7 @@ import { resolveUserPath } from "#/lib/launchd";
 import type { PeriodDigestPreset } from "#/lib/period-digest";
 import { resolveLiveSyncMode } from "#/lib/live-transport-policy";
 import type { TimelineCollectionMode } from "#/lib/timeline-collections-live";
+import { existsSync } from "node:fs";
 import type { CliCommandContext } from "./command-context";
 
 function parsePeriod(value: string): PeriodDigestPreset {
@@ -41,6 +42,7 @@ function parseOptionalJobMode(
 function readDigestCredentialContext(credentialsPath: string) {
 	const resolvedPath = resolveUserPath(credentialsPath);
 	const credentials = readBirdCredentialsFile(resolvedPath);
+	if (!credentials && !existsSync(resolvedPath)) return undefined;
 	if (!credentials) {
 		throw new Error(`Invalid Bird credential file: ${resolvedPath}`);
 	}
@@ -109,7 +111,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			"Assert bird cookies match --account for Bird-backed steps",
 		)
 		.option("--log <path>", "Audit JSONL path")
-		.option("--env-path <path>", "Bird credential env file to load")
+		.option("--env-path <path>", "Shell environment file to source")
 		.option("--env-file <path>", "Deprecated alias for --env-path")
 		.option("--stdout <path>", "launchd stdout path")
 		.option("--stderr <path>", "launchd stderr path")
@@ -178,7 +180,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.option("--cache-ttl <seconds>", "Live-cache freshness window", "120")
 		.option("--no-refresh", "Allow live-cache reuse")
 		.option("--log <path>", "Audit JSONL path")
-		.option("--env-path <path>", "Bird credential env file to load")
+		.option("--env-path <path>", "Shell environment file to source")
 		.option("--env-file <path>", "Deprecated alias for --env-path")
 		.option("--stdout <path>", "launchd stdout path")
 		.option("--stderr <path>", "launchd stderr path")
@@ -256,7 +258,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				since: options.since,
 				until: options.until,
 				liveSync: Boolean(options.liveSync),
-				...(credentialPath ? { birdCredentials } : {}),
+				...(birdCredentials ? { birdCredentials } : {}),
 				...(runDate ? { now: () => runDate } : {}),
 			});
 			print(result, true);

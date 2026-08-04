@@ -19,6 +19,7 @@ The default root is `~/.birdclaw`. It holds:
 ~/.birdclaw/
   birdclaw.sqlite              # canonical local truth
   config.json                  # user config
+  credentials/bird.env         # Config-managed X credentials (mode 0600)
   prompts/                     # optional editable AI prompt templates
   media/                       # original media cache
   media/thumbs/avatars/        # avatar cache
@@ -95,6 +96,34 @@ aliases. They should be used only for existing installations; they no longer
 describe a mentions-only global setting.
 
 `mentions.birdCommand` overrides the `bird` binary path when you want to point at a non-`PATH` build.
+
+## Managed X credentials
+
+The Config page's X Credentials section saves `AUTH_TOKEN` and `CT0` for
+non-interactive Bird calls. It reports only configured/complete status and the
+last update time; credential values are never returned to the browser after a
+save.
+
+Credentials are stored at `~/.birdclaw/credentials/bird.env`. The credentials
+directory uses mode `0700`, the file uses mode `0600`, and replacement is
+published with a same-directory atomic rename. The parser accepts exactly two
+literal assignments:
+
+```text
+AUTH_TOKEN=...
+CT0=...
+```
+
+It rejects `export`, extra variables, duplicates, missing values, and line breaks
+and never executes the file. Scheduled digest LaunchAgents pass its path with
+`--bird-credentials-path`; they do not ask Bird to discover Chrome cookies, so
+they do not trigger Chrome Safe Storage or interactive Keychain prompts.
+
+For Bird subprocesses, inherited environment variables are loaded first,
+Config-managed credentials override inherited `AUTH_TOKEN`/`CT0`, and explicit
+per-command credentials override the managed pair. The separate `--env-path`
+launchd option still sources a trusted general shell environment file and is the
+compatibility path for variables such as `OPENAI_API_KEY`.
 
 ## Prompt templates
 
