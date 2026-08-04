@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +19,7 @@ export interface ScheduledJobRun {
 }
 
 export interface ScheduledJobLockMetadata {
+	ownerId?: string;
 	startedAt: string;
 	host: string;
 	pid: number;
@@ -68,11 +70,13 @@ export async function acquireScheduledJobLock(
 	metadata: Pick<ScheduledJobLockMetadata, "runDate" | "totalSources"> = {},
 ): Promise<ScheduledJobLockRelease | undefined> {
 	await fs.mkdir(path.dirname(lockPath), { recursive: true });
+	const ownerId = randomUUID();
 	try {
 		const handle = await fs.open(lockPath, "wx");
 		try {
 			await handle.writeFile(
 				`${JSON.stringify({
+					ownerId,
 					pid: process.pid,
 					host: os.hostname(),
 					startedAt: new Date().toISOString(),
@@ -87,11 +91,24 @@ export async function acquireScheduledJobLock(
 		} finally {
 			await handle.close();
 		}
-		return () => fs.rm(lockPath, { force: true });
+		return async () => {
+			const raw = await fs.readFile(lockPath, "utf8").catch(() => undefined);
+			if (raw === undefined) return;
+			try {
+				const metadata = JSON.parse(raw) as Partial<ScheduledJobLockMetadata>;
+				if (metadata.ownerId !== ownerId) return;
+			} catch {
+				return;
+			}
+			await fs.rm(lockPath, { force: true });
+		};
 	} catch (error) {
 		if (!isFileExistsError(error)) throw error;
-		const stats = await fs.stat(lockPath).catch(() => undefined);
-		if (stats && Date.now() - stats.mtimeMs > staleMs) {
+		const existingMetadata = await peekScheduledJobLockMetadata(
+			lockPath,
+			staleMs,
+		);
+		if (!existingMetadata) {
 			await fs.rm(lockPath, { force: true });
 			return acquireScheduledJobLock(lockPath, staleMs, metadata);
 		}
@@ -135,7 +152,7 @@ export async function peekScheduledJobLockMetadata(
 	staleMs: number,
 ): Promise<ScheduledJobLockMetadata | undefined> {
 	const stats = await fs.stat(lockPath).catch(() => undefined);
-	if (!stats || Date.now() - stats.mtimeMs > staleMs) return undefined;
+	if (!stats) return undefined;
 	const raw = await fs.readFile(lockPath, "utf8").catch(() => undefined);
 	if (raw === undefined) return undefined;
 	try {
@@ -149,7 +166,10 @@ export async function peekScheduledJobLockMetadata(
 		) {
 			throw new Error("invalid scheduled job lock metadata");
 		}
-		return {
+		const metadata: ScheduledJobLockMetadata = {
+			...(typeof parsed.ownerId === "string" && parsed.ownerId
+				? { ownerId: parsed.ownerId }
+				: {}),
 			startedAt: startedAt.toISOString(),
 			host: parsed.host,
 			pid: parsed.pid,
@@ -163,14 +183,37 @@ export async function peekScheduledJobLockMetadata(
 				? { totalSources: parsed.totalSources }
 				: {}),
 		};
+		if (
+			Date.now() - stats.mtimeMs > staleMs &&
+			!(metadata.host === os.hostname() && processIsAlive(metadata.pid))
+		) {
+			return undefined;
+		}
+		return metadata;
 	} catch {
 		// Older or partially-written locks still represent active work. Their
 		// mtime gives status readers a stable date without mutating the lock.
+		if (Date.now() - stats.mtimeMs > staleMs) return undefined;
 		return {
 			startedAt: stats.mtime.toISOString(),
 			host: "unknown",
 			pid: 0,
 		};
+	}
+}
+
+function processIsAlive(pid: number) {
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return Boolean(
+			error &&
+			typeof error === "object" &&
+			"code" in error &&
+			error.code === "EPERM",
+		);
 	}
 }
 

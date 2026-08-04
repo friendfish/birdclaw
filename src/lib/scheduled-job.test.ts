@@ -2,6 +2,7 @@
 import {
 	existsSync,
 	mkdtempSync,
+	mkdirSync,
 	readFileSync,
 	rmSync,
 	utimesSync,
@@ -83,5 +84,54 @@ describe("scheduled job runtime", () => {
 		expect(staleRelease).toBeTypeOf("function");
 		expect(readFileSync(lockPath, "utf8")).toContain(`"pid":${process.pid}`);
 		await staleRelease?.();
+	});
+
+	it("keeps an old same-host lock while its pid is alive", async () => {
+		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
+		mkdirSync(path.dirname(lockPath), { recursive: true });
+		writeFileSync(
+			lockPath,
+			`${JSON.stringify({
+				ownerId: "live-owner",
+				startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+				host: os.hostname(),
+				pid: process.pid,
+			})}\n`,
+			"utf8",
+		);
+		const old = new Date(Date.now() - 3_600_000);
+		utimesSync(lockPath, old, old);
+
+		await expect(
+			peekScheduledJobLockMetadata(lockPath, 60_000),
+		).resolves.toMatchObject({
+			ownerId: "live-owner",
+			pid: process.pid,
+		});
+		await expect(
+			acquireScheduledJobLock(lockPath, 60_000),
+		).resolves.toBeUndefined();
+	});
+
+	it("does not let an old release remove a successor lock", async () => {
+		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
+		const firstRelease = await acquireScheduledJobLock(lockPath, 60_000);
+		expect(firstRelease).toBeTypeOf("function");
+		rmSync(lockPath, { force: true });
+
+		const secondRelease = await acquireScheduledJobLock(lockPath, 60_000);
+		expect(secondRelease).toBeTypeOf("function");
+		const secondOwner = JSON.parse(readFileSync(lockPath, "utf8")) as {
+			ownerId?: string;
+		};
+		expect(secondOwner.ownerId).toEqual(expect.any(String));
+
+		await firstRelease?.();
+		expect(existsSync(lockPath)).toBe(true);
+		expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject(
+			secondOwner,
+		);
+		await secondRelease?.();
+		expect(existsSync(lockPath)).toBe(false);
 	});
 });
