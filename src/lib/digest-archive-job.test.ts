@@ -148,6 +148,11 @@ describe("digest-archive-job", () => {
 		expect(entry.ok).toBe(true);
 		expect(entry.steps).toHaveLength(3);
 		expect(entry.runDate).toBe("2026-07-27");
+		for (const [options] of streamPeriodDigestMock.mock.calls) {
+			expect(options).toEqual(
+				expect.objectContaining({ maxTweets: 5000, maxLinks: 20 }),
+			);
+		}
 
 		for (const contentSource of ["all", "following", "for_you"]) {
 			const { markdownPath, jsonPath } = resolveDigestArchivePaths({

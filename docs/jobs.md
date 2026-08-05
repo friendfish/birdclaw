@@ -164,6 +164,11 @@ Batch failures that occur before any content source starts, including credential
 file and lock-ownership failures, are surfaced on the Today page from the latest
 scheduled run instead of appearing as a missing archive.
 
+Scheduled Today and 24h generation uses the same tweet and link input limits as
+the corresponding page. This keeps the latest-cache identity aligned so opening
+the page adopts the scheduled result instead of displaying an older live result
+or starting a duplicate generation.
+
 ## Useful checks
 
 After install:

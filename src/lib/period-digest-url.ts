@@ -1,5 +1,11 @@
 import type { PeriodDigestContentSource } from "./period-digest";
 
+export const PERIOD_DIGEST_PAGE_IDENTITY = {
+	maxTweets: 5000,
+	maxLinks: 20,
+	liveSync: false,
+} as const;
+
 /**
  * Shared by today.tsx's digestUrl() and usePeriodDigestMetadata.ts's
  * metadataUrl() — both must send the exact same period/includeDms/
@@ -17,8 +23,17 @@ export function applyPeriodDigestIdentityParams(
 	url.searchParams.set("period", period);
 	url.searchParams.set("includeDms", String(includeDms));
 	url.searchParams.set("contentSource", contentSource);
-	url.searchParams.set("maxTweets", "5000");
-	url.searchParams.set("maxLinks", "20");
+	url.searchParams.set(
+		"maxTweets",
+		String(PERIOD_DIGEST_PAGE_IDENTITY.maxTweets),
+	);
+	url.searchParams.set(
+		"maxLinks",
+		String(PERIOD_DIGEST_PAGE_IDENTITY.maxLinks),
+	);
 	// Cloudflare caps proxied requests; live timeline sync remains a separate job/UI action.
-	url.searchParams.set("liveSync", "false");
+	url.searchParams.set(
+		"liveSync",
+		String(PERIOD_DIGEST_PAGE_IDENTITY.liveSync),
+	);
 }

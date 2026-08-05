@@ -50,6 +50,7 @@ import {
 	type PeriodDigestPreset,
 	type PeriodDigestRunResult,
 } from "./period-digest";
+import { PERIOD_DIGEST_PAGE_IDENTITY } from "./period-digest-url";
 import { sensitiveErrorMessage } from "./sensitive-values";
 
 const DEFAULT_CONTENT_SOURCES: PeriodDigestContentSource[] = [
@@ -483,6 +484,8 @@ function runOneContentSourceEffect({
 						includeDms,
 						refresh: true,
 						liveSync,
+						maxTweets: PERIOD_DIGEST_PAGE_IDENTITY.maxTweets,
+						maxLinks: PERIOD_DIGEST_PAGE_IDENTITY.maxLinks,
 						language,
 						since,
 						until,
