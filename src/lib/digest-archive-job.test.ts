@@ -1281,7 +1281,7 @@ describe("digest-archive-job", () => {
 
 	it("passes managed Bird credentials without a shell wrapper or token arguments", () => {
 		const agent = buildDigestArchiveLaunchAgentPlist({
-			period: "today",
+			period: "yesterday",
 			birdCredentialsPath: "/tmp/bird.env",
 		});
 
@@ -1300,5 +1300,32 @@ describe("digest-archive-job", () => {
 		);
 		expect(agent.plist).not.toContain("/bin/bash");
 		expect(agent.envFile).toBeUndefined();
+	});
+
+	it("installs current-digest commands for Today/24h and keeps archive commands for historical periods", () => {
+		const today = buildDigestArchiveLaunchAgentPlist({ period: "today" });
+		const day = buildDigestArchiveLaunchAgentPlist({ period: "24h" });
+		const yesterday = buildDigestArchiveLaunchAgentPlist({
+			period: "yesterday",
+		});
+		const week = buildDigestArchiveLaunchAgentPlist({ period: "week" });
+
+		for (const current of [today, day]) {
+			expect(current.programArguments).toEqual(
+				expect.arrayContaining([
+					"jobs",
+					"run-period-digest",
+					"--trigger",
+					"scheduled",
+					"--origin",
+					"launchd",
+				]),
+			);
+			expect(current.programArguments).not.toContain("run-digest-archive");
+		}
+		for (const archived of [yesterday, week]) {
+			expect(archived.programArguments).toContain("run-digest-archive");
+			expect(archived.programArguments).not.toContain("run-period-digest");
+		}
 	});
 });

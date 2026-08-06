@@ -6,74 +6,126 @@ import {
 	sensitiveRequestErrorResponse,
 } from "#/lib/http-effect";
 import {
-	activePeriodDigestsRegistry,
-	periodDigestRegistryKey,
-} from "#/lib/period-digest-active-registry";
-import {
 	isFreshDigestCache,
-	latestDigestCacheKey,
-	type CachedPeriodDigestValue,
+	normalizePeriod,
+	type PeriodDigestContentSource,
 	type PeriodDigestRunResult,
 } from "#/lib/period-digest";
+import {
+	migrateLegacyPeriodDigests,
+	readCurrentPeriodDigest,
+	type CurrentPeriodDigestV1,
+} from "#/lib/period-digest-current-store";
+import {
+	PERIOD_DIGEST_LOCK_STALE_MS,
+	periodDigestRunLockPath,
+	readPeriodDigestRunState,
+	type PeriodDigestRunStateV1,
+} from "#/lib/period-digest-orchestrator";
 import { parsePeriodDigestRequestOptions } from "#/lib/period-digest-request";
-import { resolveEffectivePrompt } from "#/lib/prompt-templates";
-import { readSyncCache } from "#/lib/sync-cache";
+import { peekScheduledJobLockEffect } from "#/lib/scheduled-job";
+
+function resultFromCurrent(
+	current: CurrentPeriodDigestV1 | null,
+): PeriodDigestRunResult | null {
+	if (!current) return null;
+	return {
+		context: current.context,
+		digest: current.digest,
+		markdown: current.markdown,
+		model: current.model,
+		reasoningEffort: current.reasoningEffort,
+		serviceTier: current.serviceTier,
+		parseStatus: current.parseStatus,
+		cached: true,
+		updatedAt: current.generatedAt,
+	};
+}
+
+function sourceLabel(source: PeriodDigestContentSource | undefined) {
+	if (source === "for_you") return "For You";
+	if (source === "following") return "Following";
+	if (source === "all") return "All";
+	return undefined;
+}
+
+function activeStatus(state: PeriodDigestRunStateV1 | undefined) {
+	if (!state) return null;
+	const completed = Object.values(state.sources).filter(
+		(source) => source.state === "completed",
+	).length;
+	if (state.phase === "syncing") {
+		return {
+			label: "Refreshing information sources",
+			detail: "Preparing batch",
+		};
+	}
+	if (state.phase === "preparing") {
+		return { label: "Preparing current digest", detail: "Freezing sources" };
+	}
+	if (state.phase === "generating") {
+		const current = sourceLabel(state.currentSource);
+		return {
+			label: "Generating current digest",
+			detail: `${String(completed)}/3 complete${current ? ` · ${current}` : ""}`,
+		};
+	}
+	return null;
+}
 
 export const Route = createFileRoute("/api/period-digest-metadata")({
 	server: {
 		handlers: {
 			GET: ({ request }) =>
 				runRouteEffect(
-					Effect.sync(() => {
+					Effect.gen(function* () {
 						const denied = sensitiveRequestErrorResponse(request);
 						if (denied) return denied;
 
-						const url = new URL(request.url);
-						const options = parsePeriodDigestRequestOptions(url);
-						const effectivePrompt = resolveEffectivePrompt("period-digest");
-						const registryKey = periodDigestRegistryKey(options);
-
-						const registry = activePeriodDigestsRegistry();
-						const isGenerating = registry.has(registryKey);
-						const activeStatus = registry.get(registryKey) ?? null;
-
-						// A different key from the registry's on purpose — this one
-						// embeds the *current* model/language/reasoningEffort/
-						// serviceTier config, matching how streamPeriodDigestEffect
-						// itself keys the "latest" sync_cache row it writes.
-						const resultCacheKey = latestDigestCacheKey(
-							options,
-							effectivePrompt.promptHash,
+						const options = parsePeriodDigestRequestOptions(
+							new URL(request.url),
 						);
-						const cached =
-							readSyncCache<CachedPeriodDigestValue>(resultCacheKey);
-						const cachedUpdatedAt =
-							cached?.value.updatedAt ?? cached?.updatedAt;
-						const isFresh = Boolean(
-							cached &&
-							cachedUpdatedAt &&
-							isFreshDigestCache(cachedUpdatedAt, options.period),
+						const period = normalizePeriod(options.period);
+						if (period !== "today" && period !== "24h") {
+							return jsonResponse(
+								{
+									ok: false,
+									error: "Current digest state supports Today and 24h",
+								},
+								{ status: 400 },
+							);
+						}
+						const contentSource = options.contentSource ?? "all";
+						let current = readCurrentPeriodDigest(period, contentSource);
+						let migration = null;
+						if (!current) {
+							migration = migrateLegacyPeriodDigests();
+							current = readCurrentPeriodDigest(period, contentSource);
+						}
+						const result = resultFromCurrent(current);
+						const isStale = current
+							? !isFreshDigestCache(current.generatedAt, period)
+							: true;
+						const runState = yield* Effect.promise(() =>
+							readPeriodDigestRunState(period),
 						);
-						const result: PeriodDigestRunResult | null =
-							cached && isFresh && cached.value.context
-								? {
-										context: cached.value.context,
-										digest: cached.value.digest,
-										markdown: cached.value.markdown,
-										model: cached.value.model,
-										reasoningEffort: cached.value.reasoningEffort,
-										serviceTier: cached.value.serviceTier,
-										parseStatus: cached.value.parseStatus,
-										cached: true,
-										updatedAt: cachedUpdatedAt ?? cached.updatedAt,
-									}
-								: null;
-
+						const lockActive = yield* peekScheduledJobLockEffect(
+							periodDigestRunLockPath(period),
+							PERIOD_DIGEST_LOCK_STALE_MS,
+						);
+						const isGenerating = Boolean(
+							lockActive &&
+							runState &&
+							!["completed", "degraded", "failed"].includes(runState.phase),
+						);
 						return jsonResponse({
 							ok: true,
 							isGenerating,
-							activeStatus,
+							isStale,
+							activeStatus: isGenerating ? activeStatus(runState) : null,
 							result,
+							runState: runState ?? null,
+							migration,
 						});
 					}),
 				),

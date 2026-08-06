@@ -31,6 +31,22 @@ export interface DigestScheduleTime {
 	weekday?: number;
 }
 
+export const DEFAULT_DIGEST_FRESHNESS_SECONDS = 12 * 60 * 60;
+
+export function resolveDigestFreshnessSeconds() {
+	const environment = process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS;
+	if (environment) {
+		const parsed = Number.parseInt(environment, 10);
+		if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+	}
+	const configured = getBirdclawConfig().digest?.freshnessSeconds;
+	return typeof configured === "number" &&
+		configured >= 60 * 60 &&
+		configured <= 24 * 60 * 60
+		? configured
+		: DEFAULT_DIGEST_FRESHNESS_SECONDS;
+}
+
 export interface BirdclawConfig {
 	accounts?: {
 		default?: string;

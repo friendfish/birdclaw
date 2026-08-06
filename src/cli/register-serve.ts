@@ -1,4 +1,5 @@
 import { runProductionServer } from "#/lib/production-server";
+import { reconcileAllPeriodDigestFreshness } from "#/lib/period-digest-freshness";
 import { printError, type CliCommandContext } from "./command-context";
 
 export function registerServeCommand(
@@ -33,6 +34,7 @@ export function registerServeCommand(
 			const port = parseNonNegativeIntegerOption(options.port, "--port");
 			if (port === undefined) return;
 			await autoUpdateBeforeRead();
+			await reconcileAllPeriodDigestFreshness().catch(() => undefined);
 			await runProductionServer({
 				packageRoot,
 				host,

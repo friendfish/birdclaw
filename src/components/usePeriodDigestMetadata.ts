@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { z } from "zod";
 import { fetchJson } from "#/lib/api-client";
 import { queryKeys } from "#/lib/query-client";
@@ -13,6 +14,7 @@ const POLL_INTERVAL_MS = 3000;
 const periodDigestMetadataResponseSchema = z.object({
 	ok: z.boolean(),
 	isGenerating: z.boolean(),
+	isStale: z.boolean(),
 	activeStatus: z
 		.object({ label: z.string(), detail: z.string().optional() })
 		.nullable(),
@@ -29,15 +31,13 @@ const periodDigestMetadataResponseSchema = z.object({
 			updatedAt: z.string(),
 		})
 		.nullable(),
+	runState: z.looseObject({}).nullable(),
+	migration: z.unknown().nullable(),
 });
 
-function metadataUrl(
-	period: string,
-	includeDms: boolean,
-	contentSource: PeriodDigestContentSource,
-) {
+function metadataUrl(period: string, contentSource: PeriodDigestContentSource) {
 	const url = new URL("/api/period-digest-metadata", window.location.origin);
-	applyPeriodDigestIdentityParams(url, period, includeDms, contentSource);
+	applyPeriodDigestIdentityParams(url, period, false, contentSource);
 	return url.toString();
 }
 
@@ -50,25 +50,18 @@ function metadataUrl(
  */
 export function usePeriodDigestMetadata({
 	period,
-	includeDms,
 	contentSource,
 	enabled,
 }: {
 	period: string;
-	includeDms: boolean;
 	contentSource: PeriodDigestContentSource;
 	enabled: boolean;
 }) {
 	const query = useQuery({
-		queryKey: [
-			...queryKeys.periodDigestMetadata,
-			period,
-			includeDms,
-			contentSource,
-		],
+		queryKey: [...queryKeys.periodDigestMetadata, period, contentSource],
 		queryFn: () =>
 			fetchJson(
-				metadataUrl(period, includeDms, contentSource),
+				metadataUrl(period, contentSource),
 				undefined,
 				periodDigestMetadataResponseSchema,
 				"Failed to check digest status",
@@ -77,13 +70,56 @@ export function usePeriodDigestMetadata({
 		refetchInterval: (currentQuery) =>
 			currentQuery.state.data?.isGenerating ? POLL_INTERVAL_MS : false,
 	});
+	const attemptedFreshnessKey = useRef<string | null>(null);
+	const freshnessMutation = useMutation({
+		mutationFn: async () => {
+			const url = new URL(
+				"/api/period-digest-freshness",
+				window.location.origin,
+			);
+			url.searchParams.set("period", period);
+			const response = await fetch(url, { method: "POST", cache: "no-store" });
+			if (!response.ok) {
+				throw new Error(
+					`Freshness request failed (${String(response.status)})`,
+				);
+			}
+		},
+		onSuccess: () => {
+			void query.refetch();
+		},
+	});
+	const freshnessKey = `${period}:${contentSource}:${query.data?.result?.updatedAt ?? "empty"}`;
+	useEffect(() => {
+		if (
+			!enabled ||
+			query.isLoading ||
+			!query.data?.isStale ||
+			query.data.isGenerating ||
+			freshnessMutation.isPending ||
+			attemptedFreshnessKey.current === freshnessKey
+		) {
+			return;
+		}
+		attemptedFreshnessKey.current = freshnessKey;
+		freshnessMutation.mutate();
+	}, [
+		enabled,
+		freshnessKey,
+		freshnessMutation,
+		query.data?.isGenerating,
+		query.data?.isStale,
+		query.isLoading,
+	]);
 
 	return {
 		isLoading: query.isLoading,
 		isGenerating: query.data?.isGenerating ?? false,
+		isStale: query.data?.isStale ?? false,
 		activeStatus: query.data?.activeStatus ?? null,
+		runState: query.data?.runState ?? null,
 		result: (query.data?.result ?? null) as PeriodDigestRunResult | null,
-		error: query.error,
+		error: query.error ?? freshnessMutation.error,
 		refetch: query.refetch,
 	};
 }

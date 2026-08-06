@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getRouteHandler } from "#/test/route-handlers";
 
 const installAllDigestArchiveLaunchAgentsEffectMock = vi.fn();
+const reconcileAllPeriodDigestFreshnessMock = vi.fn();
 
 vi.mock("#/lib/digest-archive-job", async () => {
 	const actual = await vi.importActual<
@@ -18,6 +19,17 @@ vi.mock("#/lib/digest-archive-job", async () => {
 			Effect.promise(() =>
 				installAllDigestArchiveLaunchAgentsEffectMock(...args),
 			),
+	};
+});
+
+vi.mock("#/lib/period-digest-freshness", async () => {
+	const actual = await vi.importActual<
+		typeof import("#/lib/period-digest-freshness")
+	>("#/lib/period-digest-freshness");
+	return {
+		...actual,
+		reconcileAllPeriodDigestFreshness: (...args: unknown[]) =>
+			reconcileAllPeriodDigestFreshnessMock(...args),
 	};
 });
 
@@ -49,6 +61,17 @@ describe("api digest-schedule route", () => {
 			yesterday: { ok: true, result: {} },
 			week: { ok: true, result: {} },
 		});
+		reconcileAllPeriodDigestFreshnessMock.mockReset();
+		reconcileAllPeriodDigestFreshnessMock.mockResolvedValue({
+			today: {
+				state: { status: "scheduled", dueAt: "2026-08-06T20:00:00.000Z" },
+				installResult: { ok: true },
+			},
+			"24h": {
+				state: { status: "disabled", dueAt: "" },
+				installResult: null,
+			},
+		});
 	});
 
 	afterEach(() => {
@@ -66,6 +89,7 @@ describe("api digest-schedule route", () => {
 
 		expect(await response.json()).toMatchObject({
 			ok: true,
+			freshnessHours: 12,
 			schedule: {
 				today: { hour: 8, minute: 0 },
 				"24h": { hour: 8, minute: 45 },
@@ -81,6 +105,7 @@ describe("api digest-schedule route", () => {
 				method: "POST",
 				body: JSON.stringify({
 					archiveDir: "/tmp/my-archive",
+					freshnessHours: 6,
 					schedule: {
 						today: { hour: 9, minute: 30 },
 						"24h": { hour: 10, minute: 0 },
@@ -114,9 +139,11 @@ describe("api digest-schedule route", () => {
 				birdCredentialsPath: getBirdCredentialsPath(),
 			},
 		});
+		expect(reconcileAllPeriodDigestFreshnessMock).toHaveBeenCalledTimes(1);
 		const body = await response.json();
 		expect(body).toMatchObject({
 			ok: true,
+			freshnessHours: 6,
 			archiveDir: "/tmp/my-archive",
 			schedule: {
 				today: { hour: 9, minute: 30 },
@@ -133,6 +160,7 @@ describe("api digest-schedule route", () => {
 		});
 		expect(await getResponse.json()).toMatchObject({
 			ok: true,
+			freshnessHours: 6,
 			archiveDir: "/tmp/my-archive",
 			schedule: { today: { hour: 9, minute: 30 } },
 		});
@@ -143,6 +171,7 @@ describe("api digest-schedule route", () => {
 			request: new Request("http://localhost/api/digest-schedule", {
 				method: "POST",
 				body: JSON.stringify({
+					freshnessHours: 12,
 					schedule: {
 						today: { hour: 8, minute: 0 },
 						"24h": { hour: 8, minute: 45 },
@@ -160,6 +189,56 @@ describe("api digest-schedule route", () => {
 			hour: 2,
 			minute: 0,
 			weekday: 1,
+		});
+	});
+
+	it("rejects freshness outside 1-24 hours", async () => {
+		await expect(
+			POST({
+				request: new Request("http://localhost/api/digest-schedule", {
+					method: "POST",
+					body: JSON.stringify({
+						freshnessHours: 25,
+						schedule: {
+							today: { hour: 8, minute: 0 },
+							"24h": { hour: 8, minute: 45 },
+							yesterday: { hour: 1, minute: 0 },
+							week: { hour: 2, minute: 0 },
+						},
+					}),
+				}),
+			}),
+		).rejects.toThrow(/freshnessHours/u);
+		expect(
+			installAllDigestArchiveLaunchAgentsEffectMock,
+		).not.toHaveBeenCalled();
+	});
+
+	it("surfaces fixed launchd installation failures in the top-level result", async () => {
+		installAllDigestArchiveLaunchAgentsEffectMock.mockResolvedValue({
+			today: { ok: false, error: "launchctl denied" },
+			"24h": { ok: true, result: {} },
+			yesterday: { ok: true, result: {} },
+			week: { ok: true, result: {} },
+		});
+		const response = await POST({
+			request: new Request("http://localhost/api/digest-schedule", {
+				method: "POST",
+				body: JSON.stringify({
+					freshnessHours: 12,
+					schedule: {
+						today: { hour: 8, minute: 0 },
+						"24h": { hour: 8, minute: 45 },
+						yesterday: { hour: 1, minute: 0 },
+						week: { hour: 2, minute: 0 },
+					},
+				}),
+			}),
+		});
+
+		expect(await response.json()).toMatchObject({
+			ok: false,
+			installResults: { today: { ok: false, error: "launchctl denied" } },
 		});
 	});
 });

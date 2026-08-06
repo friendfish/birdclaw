@@ -9,10 +9,9 @@ vi.mock("#/lib/live-transport-policy", () => ({
 
 const maybeAutoUpdateBackupMock = vi.fn();
 const streamPeriodDigestMock = vi.fn();
-const peekScheduledJobLockMock = vi.fn();
+const requestPeriodDigestRunMock = vi.fn();
 
 vi.mock("#/lib/backup", () => ({
-	maybeAutoUpdateBackup: () => maybeAutoUpdateBackupMock(),
 	maybeAutoUpdateBackupEffect: () =>
 		Effect.promise(() => Promise.resolve(maybeAutoUpdateBackupMock())),
 }));
@@ -25,31 +24,21 @@ vi.mock("#/lib/period-digest", () => ({
 		);
 	},
 	normalizePeriod: (value: string | undefined) => {
-		const normalized = value?.trim().toLowerCase();
-		if (normalized === "yesterday") return "yesterday";
-		if (normalized === "24h" || normalized === "day") return "24h";
-		if (normalized === "week" || normalized === "7d") return "week";
+		if (value === "24h") return "24h";
+		if (value === "yesterday") return "yesterday";
+		if (value === "week") return "week";
 		return "today";
 	},
-	latestDigestCacheKey: (options: Record<string, unknown>) =>
-		`period-digest-latest:test:${JSON.stringify(options)}`,
 	periodDigestGenerationKey: (options: Record<string, unknown>) =>
 		`period-digest-generation:test:${JSON.stringify(options)}`,
-	streamPeriodDigest: (...args: unknown[]) => streamPeriodDigestMock(...args),
 	streamPeriodDigestEffect: (...args: unknown[]) =>
 		Effect.promise(() => streamPeriodDigestMock(...args)),
 }));
-vi.mock("#/lib/digest-archive-job", () => ({
-	digestArchiveLockPath: (period: string) =>
-		`/tmp/digest-archive-${period}.lock`,
-	DEFAULT_LOCK_STALE_MS: 45 * 60 * 1000,
-}));
-vi.mock("#/lib/scheduled-job", () => ({
-	peekScheduledJobLockEffect: (...args: unknown[]) =>
-		Effect.promise(() => peekScheduledJobLockMock(...args)),
+vi.mock("#/lib/period-digest-orchestrator", () => ({
+	requestPeriodDigestRun: (...args: unknown[]) =>
+		requestPeriodDigestRunMock(...args),
 }));
 
-import { activePeriodDigestsRegistry } from "#/lib/period-digest-active-registry";
 import { Route } from "./period-digest";
 
 const GET = getRouteHandler(Route, "GET");
@@ -58,15 +47,17 @@ describe("api period digest route", () => {
 	beforeEach(() => {
 		maybeAutoUpdateBackupMock.mockReset();
 		streamPeriodDigestMock.mockReset();
-		peekScheduledJobLockMock.mockReset();
+		requestPeriodDigestRunMock.mockReset();
 		maybeAutoUpdateBackupMock.mockResolvedValue({ skipped: true });
-		peekScheduledJobLockMock.mockResolvedValue(false);
+		requestPeriodDigestRunMock.mockResolvedValue({
+			runId: "run-current",
+			joined: false,
+			completion: new Promise(() => undefined),
+		});
 		streamPeriodDigestMock.mockImplementation(
 			async (
 				_options: unknown,
-				handlers?: {
-					onEvent?: (event: unknown) => void;
-				},
+				handlers?: { onEvent?: (event: unknown) => void },
 			) => {
 				handlers?.onEvent?.({ type: "delta", delta: "# Week\n" });
 				handlers?.onEvent?.({
@@ -78,10 +69,13 @@ describe("api period digest route", () => {
 						serviceTier: "priority",
 						parseStatus: "structured",
 						context: {
-							window: { label: "Week" },
-							counts: { home: 1, mentions: 0, links: 0, dms: 0 },
-							includeDms: true,
+							window: { label: "Week", since: "s", until: "u" },
+							includeDms: false,
+							counts: { home: 0, mentions: 0, links: 0, dms: 0 },
 							tweets: [],
+							dms: [],
+							links: [],
+							hash: "week",
 						},
 						digest: { actionItems: [] },
 					},
@@ -90,158 +84,74 @@ describe("api period digest route", () => {
 		);
 	});
 
-	it("streams NDJSON and passes query options to the digest runner", async () => {
+	it("starts a server-owned manual Today batch and returns without awaiting it", async () => {
 		const response = await GET({
 			request: new Request(
-				"http://localhost/api/period-digest?period=week&since=2026-05-01&until=2026-05-16&account=acct_primary&includeDms=yes&refresh=1&model=gpt-5.5&language=ZH-cn&maxTweets=42&maxLinks=7",
+				"http://localhost/api/period-digest?period=today&contentSource=for_you&includeDms=true&origin=launchd",
+			),
+		});
+		const body = await response.text();
+
+		expect(body).toContain('"type":"status"');
+		expect(body).toContain("run-current");
+		expect(requestPeriodDigestRunMock).toHaveBeenCalledWith({
+			period: "today",
+			trigger: "manual",
+			origin: "page",
+			requestedSource: "for_you",
+			liveSync: true,
+		});
+		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
+	});
+
+	it("reports a join as normal progress instead of a lock error", async () => {
+		requestPeriodDigestRunMock.mockResolvedValue({
+			runId: "run-scheduled",
+			joined: true,
+			completion: new Promise(() => undefined),
+		});
+
+		const body = await (
+			await GET({
+				request: new Request(
+					"http://localhost/api/period-digest?period=24h&contentSource=all",
+				),
+			})
+		).text();
+
+		expect(body).toContain("Joined existing digest run");
+		expect(body).not.toContain('"type":"error"');
+	});
+
+	it("preserves the direct streaming endpoint for archived periods", async () => {
+		const response = await GET({
+			request: new Request(
+				"http://localhost/api/period-digest?period=week&refresh=1&language=ZH-cn",
 			),
 		});
 
-		expect(response.headers.get("content-type")).toContain(
-			"application/x-ndjson",
-		);
-		expect(response.headers.get("cache-control")).toBe(
-			"no-store, no-transform",
-		);
 		expect(await response.text()).toContain('"type":"done"');
-		expect(maybeAutoUpdateBackupMock).toHaveBeenCalledWith();
 		expect(streamPeriodDigestMock).toHaveBeenCalledWith(
-			{
+			expect.objectContaining({
 				period: "week",
-				since: "2026-05-01",
-				until: "2026-05-16",
-				account: "acct_primary",
-				includeDms: true,
-				contentSource: "all",
 				refresh: true,
-				model: "gpt-5.5",
 				language: "zh-CN",
-				maxTweets: 42,
-				maxLinks: 7,
-				liveSync: true,
-				liveSyncMode: "bird",
-				liveTimelineLimit: undefined,
-				liveTimelineMaxPages: undefined,
-				// Deliberately not the request's AbortSignal — see the "Option A"
-				// comment in period-digest.tsx: the summarization keeps running
-				// server-side even if the client navigates away mid-stream.
 				signal: undefined,
-			},
-			expect.objectContaining({ onEvent: expect.any(Function) }),
+			}),
+			expect.any(Object),
 		);
+		expect(requestPeriodDigestRunMock).not.toHaveBeenCalled();
 	});
 
-	it("rejects invalid language tags before starting a digest", async () => {
+	it("rejects invalid language tags before starting any run", async () => {
 		const response = await GET({
 			request: new Request(
-				"http://localhost/api/period-digest?language=not_a_locale",
+				"http://localhost/api/period-digest?period=today&language=not_a_locale",
 			),
 		});
 
 		expect(response.status).toBe(400);
-		expect(await response.json()).toEqual({
-			ok: false,
-			error: "Digest language must be a valid Unicode locale identifier",
-		});
-		expect(maybeAutoUpdateBackupMock).not.toHaveBeenCalled();
+		expect(requestPeriodDigestRunMock).not.toHaveBeenCalled();
 		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
-	});
-
-	it("opens the stream before backup auto-update completes", async () => {
-		let resolveBackup: ((value: unknown) => void) | undefined;
-		maybeAutoUpdateBackupMock.mockReturnValue(
-			new Promise((resolve) => {
-				resolveBackup = resolve;
-			}),
-		);
-
-		const response = await GET({
-			request: new Request("http://localhost/api/period-digest?period=today"),
-		});
-		const reader = response.body?.getReader();
-		expect(reader).toBeDefined();
-
-		const first = await reader!.read();
-		const text = new TextDecoder().decode(first.value);
-		expect(text).toContain('"type":"status"');
-		expect(text).toContain("Preparing local archive");
-		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
-
-		resolveBackup?.({ skipped: true });
-		await reader!.cancel();
-	});
-
-	it("emits an error event and skips generation when a scheduled archive job holds the period's lock", async () => {
-		peekScheduledJobLockMock.mockResolvedValue(true);
-
-		const response = await GET({
-			request: new Request("http://localhost/api/period-digest?period=today"),
-		});
-
-		expect(await response.text()).toContain('"type":"error"');
-		expect(peekScheduledJobLockMock).toHaveBeenCalledWith(
-			"/tmp/digest-archive-today.lock",
-			45 * 60 * 1000,
-		);
-		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
-	});
-
-	it("registers the run in the active-digest registry while streaming and clears it once done", async () => {
-		let registeredMidRun: unknown;
-		let registryKeyMidRun: string | undefined;
-		streamPeriodDigestMock.mockImplementation(
-			async (
-				options: Record<string, unknown>,
-				handlers?: { onEvent?: (event: unknown) => void },
-			) => {
-				const registry = activePeriodDigestsRegistry();
-				registryKeyMidRun = `period-digest-generation:test:${JSON.stringify(options)}`;
-				registeredMidRun = registry.get(registryKeyMidRun);
-				handlers?.onEvent?.({
-					type: "done",
-					result: {
-						markdown: "# Today",
-						model: "gpt-5.5",
-						cached: false,
-						serviceTier: "priority",
-						parseStatus: "structured",
-						context: {
-							window: { label: "Today" },
-							counts: { home: 0, mentions: 0, links: 0, dms: 0 },
-							includeDms: false,
-							tweets: [],
-						},
-						digest: { actionItems: [] },
-					},
-				});
-			},
-		);
-
-		const response = await GET({
-			request: new Request("http://localhost/api/period-digest?period=today"),
-		});
-		await response.text();
-
-		expect(registeredMidRun).toEqual({ label: "Preparing local archive" });
-		expect(registryKeyMidRun).toBeDefined();
-		expect(activePeriodDigestsRegistry().has(registryKeyMidRun!)).toBe(false);
-	});
-
-	it("emits an error event when the digest runner rejects", async () => {
-		streamPeriodDigestMock.mockRejectedValueOnce(new Error("no api key"));
-
-		const response = await GET({
-			request: new Request("http://localhost/api/period-digest?maxTweets=nope"),
-		});
-
-		expect(await response.text()).toContain('"error":"no api key"');
-		expect(streamPeriodDigestMock).toHaveBeenCalledWith(
-			expect.objectContaining({
-				includeDms: false,
-				refresh: false,
-				maxTweets: undefined,
-			}),
-			expect.any(Object),
-		);
 	});
 });

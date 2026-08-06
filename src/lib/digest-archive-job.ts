@@ -941,6 +941,27 @@ function buildProgramArguments({
 	envFile,
 	birdCredentialsPath,
 }: DigestArchiveLaunchAgentOptions & { logPath: string }) {
+	if (period === "today" || period === "24h") {
+		const args = [
+			"--json",
+			"jobs",
+			"run-period-digest",
+			"--period",
+			period,
+			"--trigger",
+			"scheduled",
+			"--origin",
+			"launchd",
+		];
+		if (account) args.push("--account", account);
+		if (birdCredentialsPath) {
+			args.push(
+				"--bird-credentials-path",
+				resolveUserPath(birdCredentialsPath),
+			);
+		}
+		return buildLaunchProgramArguments({ program, args, envFile });
+	}
 	const args = [
 		"--json",
 		"jobs",

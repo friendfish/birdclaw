@@ -5,32 +5,22 @@ import {
 	FileDown,
 	Loader2,
 	RefreshCw,
-	Save as SaveIcon,
 	Sparkles,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { z } from "zod";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { DigestArchiveCalendarPicker } from "#/components/DigestArchiveCalendarPicker";
 import { DigestArchiveWeekPicker } from "#/components/DigestArchiveWeekPicker";
 import { MarkdownViewer } from "#/components/MarkdownViewer";
 import { useBirdAvailable } from "#/components/useBirdAvailable";
 import { useDigestArchiveStatus } from "#/components/useDigestArchiveStatus";
-import { useNdjsonRun } from "#/components/useNdjsonRun";
 import { usePeriodDigestMetadata } from "#/components/usePeriodDigestMetadata";
 import { useReadOnlyDigest } from "#/components/useReadOnlyDigest";
-import {
-	isTerminalStreamEvent,
-	periodDigestStreamEventSchema,
-} from "#/lib/client-stream-contracts";
-import { fetchJson } from "#/lib/api-client";
 import type {
 	PeriodDigestContentSource,
 	PeriodDigestContext,
 	PeriodDigestRunResult,
-	PeriodDigestStreamEvent,
 } from "#/lib/period-digest";
 import { applyPeriodDigestIdentityParams } from "#/lib/period-digest-url";
-import { queryKeys } from "#/lib/query-client";
 import type { ProfileRecord } from "#/lib/types";
 import {
 	hydrateProfileHandles,
@@ -68,17 +58,6 @@ export const Route = createFileRoute("/today")({
 type PeriodOption = PeriodRouteSearch;
 const PROFILE_HYDRATION_LIMIT = 12;
 const PROFILE_HYDRATION_DELAY_MS = 300;
-const DIGEST_STATUS_MESSAGES = {
-	524: "Digest startup timed out at Cloudflare (524). Retry to open a new stream.",
-} as const;
-
-const digestArchiveSaveResponseSchema = z.object({
-	ok: z.literal(true),
-	period: z.enum(["today", "24h"]),
-	contentSource: z.enum(["all", "for_you", "following"]),
-	generatedAt: z.string(),
-	savedAt: z.string(),
-});
 
 const periods: Array<{ value: PeriodOption; label: string }> = [
 	{ value: "today", label: "Today" },
@@ -118,30 +97,12 @@ function exportCurrentDigestPdf(title: string) {
 
 function digestUrl(
 	period: PeriodOption,
-	includeDms: boolean,
 	contentSource: PeriodDigestContentSource,
-	refresh: boolean,
 ) {
 	const url = new URL("/api/period-digest", window.location.origin);
-	applyPeriodDigestIdentityParams(url, period, includeDms, contentSource);
-	if (refresh) {
-		url.searchParams.set("refresh", "true");
-	}
+	applyPeriodDigestIdentityParams(url, period, false, contentSource);
+	url.searchParams.set("refresh", "true");
 	return url;
-}
-
-function digestStreamError(cause: unknown, phase: string) {
-	const message = cause instanceof Error ? cause.message : String(cause);
-	if (
-		cause instanceof TypeError &&
-		/network error|failed to fetch|load failed/i.test(message)
-	) {
-		return `Digest connection was interrupted while ${phase.toLowerCase()}. Retry to continue.`;
-	}
-	if (cause instanceof SyntaxError) {
-		return `Digest stream returned invalid data while ${phase.toLowerCase()}. Retry to continue.`;
-	}
-	return message || "Digest failed";
 }
 
 function formatCounts(context: PeriodDigestContext | null) {
@@ -225,182 +186,50 @@ function applyHydratedProfilesToResult(
 	return context === result.context ? result : { ...result, context };
 }
 
-function useDigestStream(
+function useCurrentDigest(
 	period: PeriodOption,
-	includeDms: boolean,
 	contentSource: PeriodDigestContentSource,
 	enabled: boolean,
-	manualIdentity: string,
-	onManualStart: (identity: string) => void,
-	onManualResult: (identity: string, updatedAt: string) => void,
 ) {
 	const queryClient = useQueryClient();
-	const [markdown, setMarkdown] = useState("");
-	const [context, setContext] = useState<PeriodDigestContext | null>(null);
-	const [result, setResult] = useState<PeriodDigestRunResult | null>(null);
-	const [status, setStatus] = useState("Starting digest");
-	const [isWatching, setIsWatching] = useState(false);
-	const latestStatusRef = useRef("Starting digest");
-	const startedRef = useRef(false);
-	const pendingManualIdentityRef = useRef<string | null>(null);
+	const [hydratedResult, setHydratedResult] =
+		useState<PeriodDigestRunResult | null>(null);
 	const metadata = usePeriodDigestMetadata({
 		period,
-		includeDms,
 		contentSource,
 		enabled,
 	});
-
-	const onStart = useCallback(() => {
-		setMarkdown("");
-		setContext(null);
-		setResult(null);
-		setStatus("Starting digest");
-		latestStatusRef.current = "Starting digest";
-	}, []);
-	const request = useCallback(
-		(signal: AbortSignal, refresh: boolean) =>
-			fetch(digestUrl(period, includeDms, contentSource, refresh), {
+	const refreshMutation = useMutation({
+		mutationFn: async () => {
+			const response = await fetch(digestUrl(period, contentSource), {
 				cache: "no-store",
-				signal,
-			}),
-		[contentSource, includeDms, period],
-	);
-	const onEvent = useCallback(
-		(event: PeriodDigestStreamEvent) => {
-			if (event.type === "status") {
-				latestStatusRef.current = event.detail
-					? `${event.label} · ${event.detail}`
-					: event.label;
-				setStatus(latestStatusRef.current);
-			} else if (event.type === "start") setContext(event.context);
-			else if (event.type === "delta") {
-				latestStatusRef.current = "Streaming AI summary";
-				setStatus(latestStatusRef.current);
-				setMarkdown((current) => current + event.delta);
-			} else if (event.type === "done") {
-				setResult(event.result);
-				setContext(event.result.context);
-				setMarkdown(event.result.markdown);
-				setStatus(event.result.cached ? "Loaded cached report" : "Ready");
-				const completedManualIdentity = pendingManualIdentityRef.current;
-				pendingManualIdentityRef.current = null;
-				if (completedManualIdentity) {
-					onManualResult(completedManualIdentity, event.result.updatedAt);
+			});
+			if (!response.ok) {
+				throw new Error(`Digest request failed (${String(response.status)})`);
+			}
+			const body = await response.text();
+			for (const line of body.split("\n")) {
+				if (!line.trim()) continue;
+				try {
+					const event = JSON.parse(line) as { type?: string; error?: string };
+					if (event.type === "error") {
+						throw new Error(event.error || "Digest request failed");
+					}
+				} catch (error) {
+					if (error instanceof SyntaxError) continue;
+					throw error;
 				}
-			} else if (event.type === "error") {
-				throw new Error(event.error);
 			}
 		},
-		[onManualResult],
-	);
-	const onError = useCallback(() => {
-		pendingManualIdentityRef.current = null;
-		setStatus("Digest failed");
-	}, []);
-	const prematureEofError = useCallback(
-		() =>
-			new Error(
-				`Digest connection closed while ${latestStatusRef.current.toLowerCase()}. Retry to continue.`,
-			),
-		[],
-	);
-	const formatError = useCallback(
-		(cause: unknown) => digestStreamError(cause, latestStatusRef.current),
-		[],
-	);
-	const {
-		error,
-		loading,
-		run: runStream,
-	} = useNdjsonRun({
-		schema: periodDigestStreamEventSchema,
-		request,
-		onStart,
-		onEvent,
-		onError,
-		isTerminal: isTerminalStreamEvent,
-		errorLabel: "Digest request failed",
-		emptyBodyMessage: "Digest request failed: empty response body",
-		prematureEofError,
-		formatError,
-		statusMessages: DIGEST_STATUS_MESSAGES,
+		onSuccess: () => {
+			void metadata.refetch();
+		},
 	});
-	const run = useCallback(
-		(refresh: boolean) => {
-			pendingManualIdentityRef.current = refresh ? manualIdentity : null;
-			if (refresh) onManualStart(manualIdentity);
-			runStream(refresh);
-		},
-		[manualIdentity, onManualStart, runStream],
-	);
-
-	useEffect(() => {
-		startedRef.current = false;
-		setIsWatching(false);
-	}, [period, includeDms, contentSource, enabled]);
-
-	useEffect(() => {
-		// Yesterday/Week are scheduled-only (see the archived viewMode branch
-		// in TodayRouteView) — this hook must not fetch/generate anything
-		// while they're the active period.
-		if (!enabled) return;
-		// Wait for the first metadata check before deciding anything — this is
-		// what lets a generation started before the user navigated away keep
-		// being watched instead of restarted from scratch (the server keeps it
-		// running regardless; see /api/period-digest's decoupled signal).
-		if (metadata.isLoading) return;
-
-		const adoptCachedResult = (cachedResult: PeriodDigestRunResult) => {
-			setResult(cachedResult);
-			setContext(cachedResult.context);
-			setMarkdown(cachedResult.markdown);
-			setStatus(cachedResult.cached ? "Loaded cached report" : "Ready");
-		};
-		const showActiveStatus = () => {
-			const label = metadata.activeStatus?.detail
-				? `${metadata.activeStatus.label} · ${metadata.activeStatus.detail}`
-				: (metadata.activeStatus?.label ?? "Generating in background");
-			latestStatusRef.current = label;
-			setStatus(label);
-		};
-
-		if (!startedRef.current) {
-			startedRef.current = true;
-			if (metadata.isGenerating) {
-				setIsWatching(true);
-				showActiveStatus();
-				return;
-			}
-			if (metadata.result) {
-				adoptCachedResult(metadata.result);
-				return;
-			}
-			run(false);
-			return;
-		}
-
-		if (!isWatching) return;
-		if (metadata.isGenerating) {
-			showActiveStatus();
-			return;
-		}
-		setIsWatching(false);
-		if (metadata.result) {
-			adoptCachedResult(metadata.result);
-		} else {
-			// The background run we were watching finished without leaving a
-			// usable result (e.g. it failed) — fall back to a normal run.
-			run(false);
-		}
-	}, [
-		enabled,
-		isWatching,
-		metadata.isLoading,
-		metadata.isGenerating,
-		metadata.result,
-		metadata.activeStatus,
-		run,
-	]);
+	const sourceResult = metadata.result;
+	const result =
+		hydratedResult && hydratedResult.updatedAt === sourceResult?.updatedAt
+			? hydratedResult
+			: sourceResult;
 
 	useEffect(() => {
 		if (!result) return;
@@ -417,22 +246,7 @@ function useDigestStream(
 					if (!active) return;
 					const { profiles } = response;
 					if (profiles.length === 0) return;
-					setResult((current) =>
-						current
-							? applyHydratedProfilesToResult(current, profiles)
-							: current,
-					);
-					const profilesByHandle = new Map(
-						profiles.map((profile) => [
-							normalizeHandle(profile.handle),
-							profile,
-						]),
-					);
-					setContext((current) =>
-						current
-							? applyHydratedProfilesToContext(current, profilesByHandle)
-							: current,
-					);
+					setHydratedResult(applyHydratedProfilesToResult(result, profiles));
 				})
 				.catch((error: unknown) => {
 					if (!active) return;
@@ -454,15 +268,34 @@ function useDigestStream(
 				window.cancelIdleCallback(idleId);
 			}
 		};
-	}, [queryClient, result]);
+	}, [queryClient, result?.updatedAt]);
+
+	const runError = metadata.runState as {
+		phase?: string;
+		error?: string;
+	} | null;
+	const error =
+		refreshMutation.error ??
+		metadata.error ??
+		(runError?.phase === "failed" && runError.error
+			? new Error(runError.error)
+			: null);
+	const status = metadata.isGenerating
+		? metadata.activeStatus?.detail
+			? `${metadata.activeStatus.label} · ${metadata.activeStatus.detail}`
+			: (metadata.activeStatus?.label ?? "Updating in background")
+		: metadata.isStale
+			? "Outdated · waiting for background refresh"
+			: "Ready";
 
 	return {
-		context,
 		error,
-		loading: loading || isWatching,
-		markdown,
+		isGenerating: metadata.isGenerating,
+		loading: metadata.isLoading && !result,
+		markdown: result?.markdown ?? "",
+		refresh: () => refreshMutation.mutate(),
+		refreshing: refreshMutation.isPending,
 		result,
-		run,
 		status,
 	};
 }
@@ -491,84 +324,12 @@ export function TodayRouteView({
 	const searchState = controlledSearch ?? localSearch;
 	const updateSearch: RouteSearchChange<TodayRouteSearch> = (next, options) =>
 		onSearchChange ? onSearchChange(next, options) : setLocalSearch(next);
-	const { period, includeDms, contentSource, archiveDate } = searchState;
+	const { period, contentSource, archiveDate } = searchState;
 	const birdAvailable = useBirdAvailable();
 	// For You requires bird; fall back to the safe "all" default when it
 	// isn't available, regardless of what the URL/local state currently says.
 	const effectiveContentSource =
 		contentSource === "for_you" && !birdAvailable ? "all" : contentSource;
-	const queryClient = useQueryClient();
-	const [eligibleManualResults, setEligibleManualResults] = useState<
-		Map<string, string>
-	>(() => new Map());
-	const [savedManualResults, setSavedManualResults] = useState<
-		Map<string, string>
-	>(() => new Map());
-	const digestIdentity = `${period}:${effectiveContentSource}:${includeDms ? "dms" : "no-dms"}`;
-	const saveMutation = useMutation({
-		mutationFn: (variables: {
-			identity: string;
-			period: "today" | "24h";
-			contentSource: PeriodDigestContentSource;
-			includeDms: boolean;
-			expectedUpdatedAt: string;
-		}) =>
-			fetchJson(
-				"/api/digest-archive-save",
-				{
-					method: "POST",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({
-						period: variables.period,
-						contentSource: variables.contentSource,
-						includeDms: variables.includeDms,
-						expectedUpdatedAt: variables.expectedUpdatedAt,
-					}),
-				},
-				digestArchiveSaveResponseSchema,
-				"Failed to save digest archive",
-			),
-		onSuccess: (saved, variables) => {
-			setEligibleManualResults((current) => {
-				const next = new Map(current);
-				next.delete(variables.identity);
-				return next;
-			});
-			setSavedManualResults((current) =>
-				new Map(current).set(variables.identity, saved.generatedAt),
-			);
-			void queryClient.invalidateQueries({
-				queryKey: queryKeys.digestArchiveDates,
-			});
-			void queryClient.invalidateQueries({
-				queryKey: queryKeys.digestArchiveEntry,
-			});
-		},
-	});
-	const handleManualStart = useCallback(
-		(identity: string) => {
-			saveMutation.reset();
-			setEligibleManualResults((current) => {
-				const next = new Map(current);
-				next.delete(identity);
-				return next;
-			});
-			setSavedManualResults((current) => {
-				const next = new Map(current);
-				next.delete(identity);
-				return next;
-			});
-		},
-		[saveMutation.reset],
-	);
-	const handleManualResult = useCallback(
-		(identity: string, updatedAt: string) => {
-			setEligibleManualResults((current) =>
-				new Map(current).set(identity, updatedAt),
-			);
-		},
-		[],
-	);
 	// Yesterday/Week are scheduled-only (no manual refresh, see the design
 	// discussion in issue #30/PR #31): their "current" view is just "the
 	// latest archived date," and picking an explicit historical date reads
@@ -577,43 +338,34 @@ export function TodayRouteView({
 	const archiveStatus = useDigestArchiveStatus();
 	const archiveRunning = archiveStatus.runningPeriods.has(period);
 	const activeArchiveRun = archiveStatus.activeRuns.get(period);
-	const live = useDigestStream(
+	const current = useCurrentDigest(
 		period,
-		includeDms,
 		effectiveContentSource,
-		!isArchivedPeriod && !archiveStatus.loading && !archiveRunning,
-		digestIdentity,
-		handleManualStart,
-		handleManualResult,
+		!isArchivedPeriod,
 	);
 	const archived = useReadOnlyDigest({
 		period,
 		contentSource: effectiveContentSource,
 		archiveDate,
-		enabled: isArchivedPeriod || archiveRunning,
+		enabled: isArchivedPeriod,
 		running: archiveRunning,
 		activeRunDate: activeArchiveRun?.runDate,
 	});
-	const liveResultIsCurrent = Boolean(
-		live.result &&
-		(!archived.result ||
-			live.result.updatedAt === archived.result.updatedAt ||
-			Date.parse(live.result.updatedAt) >=
-				Date.parse(archived.result.updatedAt)),
-	);
-	const useArchivedResult =
-		isArchivedPeriod ||
-		archiveRunning ||
-		archived.finalizing ||
-		(Boolean(archived.result) && !liveResultIsCurrent);
+	const useArchivedResult = isArchivedPeriod;
 	const archiveBusy = archived.activeRunInProgress;
-	const context = useArchivedResult ? archived.context : live.context;
-	const markdown = useArchivedResult ? archived.markdown : live.markdown;
-	const result = useArchivedResult ? archived.result : live.result;
-	const loading = useArchivedResult
-		? archived.loading
-		: archiveStatus.loading || live.loading;
-	const digestError = useArchivedResult ? archived.error : live.error;
+	const context = useArchivedResult
+		? archived.context
+		: (current.result?.context ?? null);
+	const markdown = useArchivedResult ? archived.markdown : current.markdown;
+	const result = useArchivedResult ? archived.result : current.result;
+	const loading = useArchivedResult ? archived.loading : current.loading;
+	const digestError = useArchivedResult
+		? archived.error
+		: current.error instanceof Error
+			? current.error.message
+			: current.error
+				? String(current.error)
+				: null;
 	const activeSourceStates = activeArchiveRun
 		? Object.values(activeArchiveRun.sources)
 		: [];
@@ -624,7 +376,7 @@ export function TodayRouteView({
 		? archiveBusy
 			? `Generating scheduled digest ${String(completedScheduledSources)}/${String(activeArchiveRun?.totalSources ?? 3)}`
 			: "Loading archive"
-		: live.status;
+		: current.status;
 	const latestArchiveRun = archiveStatus.lastRuns.get(period);
 	const latestSourceRun = latestArchiveRun?.sources[effectiveContentSource];
 	const showingLatestArchiveRun = archiveDate
@@ -650,7 +402,7 @@ export function TodayRouteView({
 		result?.context.window.label ??
 		context?.window.label ??
 		periodLabel(period);
-	const canExportPdf = Boolean(result?.markdown.trim()) && !loading;
+	const canExportPdf = Boolean(result?.markdown.trim());
 	const exportTitle = `BirdClaw ${digestLabel} digest`;
 	const exportUpdatedAt = result
 		? new Date(result.updatedAt).toLocaleString(undefined, {
@@ -658,56 +410,8 @@ export function TodayRouteView({
 				timeStyle: "short",
 			})
 		: null;
-	const eligibleUpdatedAt = eligibleManualResults.get(digestIdentity);
-	const savedUpdatedAt = savedManualResults.get(digestIdentity);
-	const saveIsCurrent = saveMutation.variables?.identity === digestIdentity;
-	const saveError =
-		saveMutation.isError && saveIsCurrent
-			? saveMutation.error instanceof Error
-				? saveMutation.error.message
-				: String(saveMutation.error)
-			: null;
-	const displayError = saveError ?? digestError;
-	const canSave = Boolean(
-		!isArchivedPeriod &&
-		result &&
-		result.updatedAt === eligibleUpdatedAt &&
-		!loading &&
-		!archiveRunning &&
-		!saveMutation.isPending,
-	);
-	const savedCurrentResult = Boolean(
-		result && result.updatedAt === savedUpdatedAt && !eligibleUpdatedAt,
-	);
-	const handleSave = useCallback(() => {
-		if (
-			!result ||
-			isArchivedPeriod ||
-			(period !== "today" && period !== "24h")
-		) {
-			return;
-		}
-		saveMutation.mutate({
-			identity: digestIdentity,
-			period,
-			contentSource: effectiveContentSource,
-			includeDms,
-			expectedUpdatedAt: result.updatedAt,
-		});
-	}, [
-		digestIdentity,
-		effectiveContentSource,
-		includeDms,
-		isArchivedPeriod,
-		period,
-		result,
-		saveMutation.mutate,
-	]);
-	const retry = saveError
-		? handleSave
-		: isArchivedPeriod
-			? archived.retry
-			: () => live.run(true);
+	const displayError = digestError;
+	const retry = isArchivedPeriod ? archived.retry : current.refresh;
 	const handleExportPdf = useCallback(() => {
 		if (!canExportPdf) return;
 		exportCurrentDigestPdf(exportTitle);
@@ -733,36 +437,22 @@ export function TodayRouteView({
 							</button>
 						) : null}
 						{isArchivedPeriod ? null : (
-							<>
-								<button
-									type="button"
-									className={secondaryButtonClass}
-									onClick={handleSave}
-									disabled={!canSave}
-								>
-									{saveMutation.isPending && saveIsCurrent ? (
-										<Loader2
-											className="size-4 animate-spin"
-											aria-hidden="true"
-										/>
-									) : (
-										<SaveIcon className="size-4" aria-hidden="true" />
+							<button
+								type="button"
+								className={secondaryButtonClass}
+								onClick={current.refresh}
+								disabled={current.isGenerating || current.refreshing}
+							>
+								<RefreshCw
+									className={cx(
+										"size-4",
+										(current.isGenerating || current.refreshing) &&
+											"animate-spin",
 									)}
-									{savedCurrentResult ? "Saved" : "Save"}
-								</button>
-								<button
-									type="button"
-									className={secondaryButtonClass}
-									onClick={() => live.run(true)}
-									disabled={loading || archiveStatus.runningPeriods.has(period)}
-								>
-									<RefreshCw
-										className={cx("size-4", loading && "animate-spin")}
-										aria-hidden="true"
-									/>
-									Refresh
-								</button>
-							</>
+									aria-hidden="true"
+								/>
+								Refresh
+							</button>
 						)}
 					</div>
 				</div>
@@ -845,21 +535,6 @@ export function TodayRouteView({
 							}
 						/>
 					) : null}
-					{isArchivedPeriod ? null : (
-						<label className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] px-3 py-1 text-[13px] font-medium text-[var(--ink-soft)]">
-							<input
-								type="checkbox"
-								checked={includeDms}
-								onChange={(event) =>
-									updateSearch({
-										...searchState,
-										includeDms: event.currentTarget.checked,
-									})
-								}
-							/>
-							DMs
-						</label>
-					)}
 				</div>
 			</header>
 
@@ -884,7 +559,7 @@ export function TodayRouteView({
 
 			<div className="today-screen-only flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--line)] px-4 py-2 text-[13px] text-[var(--ink-soft)]">
 				<span className="inline-flex items-center gap-1">
-					{loading || archiveBusy ? (
+					{loading || archiveBusy || current.isGenerating ? (
 						<Loader2 className="size-4 animate-spin" aria-hidden="true" />
 					) : markdown ? (
 						<CheckCircle2 className="size-4" aria-hidden="true" />
@@ -893,13 +568,15 @@ export function TodayRouteView({
 					)}
 					{archiveBusy
 						? status
-						: loading
-							? status
-							: result
-								? `${result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
-								: digestError
-									? "Digest failed"
-									: "Ready"}
+						: current.isGenerating
+							? current.status
+							: loading
+								? status
+								: result
+									? `${result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
+									: digestError
+										? "Digest failed"
+										: "Ready"}
 				</span>
 				{result && exportUpdatedAt ? (
 					<time aria-label="Generated at" dateTime={result.updatedAt}>
@@ -917,19 +594,21 @@ export function TodayRouteView({
 				<div className="px-4 py-5 text-[14px] text-[var(--ink-soft)]">
 					{archiveBusy && archived.sourcePending
 						? "This source is still being generated."
-						: loading
-							? status
-							: digestError
-								? isArchivedPeriod
-									? "No digest was generated. Retry to load the archive again."
-									: "No digest was generated. Retry to start a new run."
-								: scheduledRunError
-									? `Scheduled digest failed: ${scheduledRunError}`
-									: useArchivedResult
-										? archived.neverArchived
-											? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
-											: `No archived ${effectiveContentSource === "all" ? "" : `${effectiveContentSource} `}digest for this date. Try a different content-source tab.`
-										: "Waiting for the first tokens..."}
+						: current.isGenerating
+							? "Generating the first current digest in the background."
+							: loading
+								? status
+								: digestError
+									? isArchivedPeriod
+										? "No digest was generated. Retry to load the archive again."
+										: "No digest was generated. Retry to start a new run."
+									: scheduledRunError
+										? `Scheduled digest failed: ${scheduledRunError}`
+										: useArchivedResult
+											? archived.neverArchived
+												? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
+												: `No archived ${effectiveContentSource === "all" ? "" : `${effectiveContentSource} `}digest for this date. Try a different content-source tab.`
+											: "Waiting for the first tokens..."}
 				</div>
 			)}
 		</div>

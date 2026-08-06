@@ -1,11 +1,10 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetBirdclawPathsForTests } from "./config";
-import * as configModule from "./config";
+import { getBirdclawPaths, resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
 import {
 	__test__,
@@ -1104,8 +1103,8 @@ describe("period digest", () => {
 	});
 
 	describe("digest freshness configuration", () => {
-		it("defaults to 5 minutes", () => {
-			expect(__test__.getDigestFreshnessMs()).toBe(5 * 60 * 1000);
+		it("defaults to 12 hours", () => {
+			expect(__test__.getDigestFreshnessMs()).toBe(12 * 60 * 60 * 1000);
 		});
 
 		it("respects BIRDCLAW_DIGEST_FRESHNESS_SECONDS environment variable", () => {
@@ -1115,21 +1114,15 @@ describe("period digest", () => {
 		});
 
 		it("respects config freshnessSeconds", () => {
-			const spy = vi.spyOn(configModule, "getBirdclawConfig").mockReturnValue({
-				digest: {
-					freshnessSeconds: 1800,
-				},
-			});
-
-			try {
-				expect(__test__.getDigestFreshnessMs()).toBe(1800 * 1000);
-			} finally {
-				spy.mockRestore();
-			}
+			writeFileSync(
+				getBirdclawPaths().configPath,
+				JSON.stringify({ digest: { freshnessSeconds: 7200 } }),
+			);
+			expect(__test__.getDigestFreshnessMs()).toBe(7200 * 1000);
 		});
 
 		it("validates cache freshness correctly", () => {
-			// 5 minutes default
+			process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS = "300";
 			const now = Date.now();
 			const freshTime = new Date(now - 4 * 60 * 1000).toISOString();
 			const staleTime = new Date(now - 6 * 60 * 1000).toISOString();
@@ -1137,7 +1130,6 @@ describe("period digest", () => {
 			expect(__test__.isFreshDigestCache(freshTime)).toBe(true);
 			expect(__test__.isFreshDigestCache(staleTime)).toBe(false);
 
-			// Long freshness (24h)
 			process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS = String(24 * 3600);
 			expect(__test__.isFreshDigestCache(staleTime)).toBe(true);
 			delete process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS;

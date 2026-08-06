@@ -96,6 +96,31 @@ describe("launchd runtime", () => {
 		expect(agent.plist).not.toContain("<key>StartInterval</key>");
 	});
 
+	it("renders an exact-date calendar schedule without RunAtLoad", () => {
+		const agent = buildLaunchAgent({
+			label: "com.example.once",
+			schedule: {
+				kind: "calendar",
+				year: 2026,
+				month: 8,
+				day: 6,
+				hour: 10,
+				minute: 31,
+			},
+			runAtLoad: false,
+			logPath: "~/birdclaw/audit.jsonl",
+			stdoutPath: "~/birdclaw/out.log",
+			stderrPath: "~/birdclaw/err.log",
+			programArguments: ["/usr/bin/env", "birdclaw"],
+		});
+
+		expect(agent.plist).toContain("<key>Year</key>");
+		expect(agent.plist).toContain("<integer>2026</integer>");
+		expect(agent.plist).toContain("<key>Month</key>");
+		expect(agent.plist).toContain("<key>Day</key>");
+		expect(agent.plist).toContain("<key>RunAtLoad</key>\n  <false/>");
+	});
+
 	it("writes and reloads launch agents through launchctl", async () => {
 		const launchAgentsDir = mkdtempSync(
 			path.join(os.tmpdir(), "birdclaw-launchd-runtime-"),

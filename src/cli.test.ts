@@ -81,6 +81,9 @@ const installBookmarkSyncLaunchAgentMock = vi.hoisted(() => vi.fn());
 const runDigestArchiveJobMock = vi.hoisted(() => vi.fn());
 const installDigestArchiveLaunchAgentMock = vi.hoisted(() => vi.fn());
 const installAllDigestArchiveLaunchAgentsMock = vi.hoisted(() => vi.fn());
+const requestPeriodDigestRunMock = vi.hoisted(() => vi.fn());
+const consumePeriodDigestFreshnessAttemptMock = vi.hoisted(() => vi.fn());
+const reconcileAllPeriodDigestFreshnessMock = vi.hoisted(() => vi.fn());
 const syncHomeTimelineMock = vi.hoisted(() => vi.fn());
 const syncXListsMock = vi.hoisted(() => vi.fn());
 const exportBackupMock = vi.fn();
@@ -151,6 +154,18 @@ vi.mock("#/lib/digest-archive-job", async (importOriginal) => {
 			installAllDigestArchiveLaunchAgentsMock(...args),
 	};
 });
+
+vi.mock("#/lib/period-digest-orchestrator", () => ({
+	requestPeriodDigestRun: (...args: unknown[]) =>
+		requestPeriodDigestRunMock(...args),
+}));
+
+vi.mock("#/lib/period-digest-freshness", () => ({
+	consumePeriodDigestFreshnessAttempt: (...args: unknown[]) =>
+		consumePeriodDigestFreshnessAttemptMock(...args),
+	reconcileAllPeriodDigestFreshness: (...args: unknown[]) =>
+		reconcileAllPeriodDigestFreshnessMock(...args),
+}));
 
 vi.mock("#/lib/db", () => ({
 	closeDatabase: vi.fn(),
@@ -463,6 +478,11 @@ describe("cli", () => {
 		runDigestArchiveJobMock.mockReset();
 		installDigestArchiveLaunchAgentMock.mockReset();
 		installAllDigestArchiveLaunchAgentsMock.mockReset();
+		requestPeriodDigestRunMock.mockReset();
+		consumePeriodDigestFreshnessAttemptMock.mockReset();
+		consumePeriodDigestFreshnessAttemptMock.mockResolvedValue({ valid: true });
+		reconcileAllPeriodDigestFreshnessMock.mockReset();
+		reconcileAllPeriodDigestFreshnessMock.mockResolvedValue({});
 		syncHomeTimelineMock.mockReset();
 		syncXListsMock.mockReset();
 		exportBackupMock.mockReset();
@@ -734,9 +754,24 @@ describe("cli", () => {
 		parseAccountSyncStepsMock.mockReturnValue(undefined);
 		runBookmarkSyncJobMock.mockResolvedValue({ ok: true });
 		installBookmarkSyncLaunchAgentMock.mockResolvedValue({ ok: true });
-		runDigestArchiveJobMock.mockResolvedValue({ ok: true });
+		requestPeriodDigestRunMock.mockResolvedValue({
+			runId: "credential-run",
+			joined: false,
+			completion: Promise.resolve({
+				runId: "credential-run",
+				phase: "completed",
+			}),
+		});
 		installDigestArchiveLaunchAgentMock.mockResolvedValue({ ok: true });
 		installAllDigestArchiveLaunchAgentsMock.mockResolvedValue({});
+		requestPeriodDigestRunMock.mockResolvedValue({
+			runId: "run-current",
+			joined: false,
+			completion: Promise.resolve({
+				runId: "run-current",
+				phase: "completed",
+			}),
+		});
 		syncHomeTimelineMock.mockResolvedValue({
 			ok: true,
 			source: "bird",
@@ -931,8 +966,9 @@ describe("cli", () => {
 				"--bird-credentials-path",
 				validPath,
 			]);
-			expect(runDigestArchiveJobMock).toHaveBeenCalledWith(
+			expect(requestPeriodDigestRunMock).toHaveBeenCalledWith(
 				expect.objectContaining({
+					period: "today",
 					birdCredentialsPath: validPath,
 				}),
 			);
@@ -942,7 +978,7 @@ describe("cli", () => {
 			});
 			expect(process.env.AUTH_TOKEN).toBe("existing-auth");
 			expect(process.env.CT0).toBe("existing-ct0");
-			expect(runDigestArchiveJobMock).toHaveBeenCalledTimes(1);
+			expect(requestPeriodDigestRunMock).toHaveBeenCalledTimes(1);
 		} finally {
 			if (originalAuthToken === undefined) delete process.env.AUTH_TOKEN;
 			else process.env.AUTH_TOKEN = originalAuthToken;
@@ -950,6 +986,99 @@ describe("cli", () => {
 			else process.env.CT0 = originalCt0;
 			rmSync(tempRoot, { recursive: true, force: true });
 		}
+	});
+
+	it("runs current Today/24h batches and waits for owner completion", async () => {
+		const completion = Promise.resolve({
+			runId: "run-today",
+			phase: "degraded",
+		});
+		requestPeriodDigestRunMock.mockResolvedValue({
+			runId: "run-today",
+			joined: false,
+			completion,
+		});
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"run-period-digest",
+			"--period",
+			"today",
+			"--trigger",
+			"scheduled",
+			"--origin",
+			"launchd",
+			"--bird-credentials-path",
+			"/tmp/managed-bird.env",
+		]);
+
+		expect(requestPeriodDigestRunMock).toHaveBeenCalledWith({
+			period: "today",
+			trigger: "scheduled",
+			origin: "launchd",
+			birdCredentialsPath: "/tmp/managed-bird.env",
+			liveSync: true,
+		});
+		expect(consoleLogMock).toHaveBeenCalledWith(
+			expect.stringContaining('"phase": "degraded"'),
+		);
+	});
+
+	it("consumes freshness attempt tokens and skips obsolete launchd wakeups", async () => {
+		consumePeriodDigestFreshnessAttemptMock.mockResolvedValue({
+			valid: false,
+			reason: "token-mismatch",
+		});
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"run-period-digest",
+			"--period",
+			"24h",
+			"--trigger",
+			"freshness",
+			"--origin",
+			"launchd",
+			"--attempt-token",
+			"obsolete-token",
+		]);
+
+		expect(consumePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
+			period: "24h",
+			attemptToken: "obsolete-token",
+		});
+		expect(requestPeriodDigestRunMock).not.toHaveBeenCalled();
+		expect(consoleLogMock).toHaveBeenCalledWith(
+			expect.stringContaining('"skipped": "token-mismatch"'),
+		);
+	});
+
+	it("delegates legacy Today/24h archive commands without writing archives", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"run-digest-archive",
+			"--period",
+			"24h",
+		]);
+
+		expect(requestPeriodDigestRunMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				period: "24h",
+				trigger: "scheduled",
+				origin: "cli",
+			}),
+		);
+		expect(runDigestArchiveJobMock).not.toHaveBeenCalled();
 	});
 
 	it("rejects invalid account and bookmark job modes before dispatch", async () => {

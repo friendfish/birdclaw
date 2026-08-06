@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getRouteHandler } from "#/test/route-handlers";
 
@@ -6,184 +7,171 @@ vi.mock("#/lib/live-transport-policy", () => ({
 	resolveLiveReadMode: () => "bird",
 }));
 
-const resolveEffectivePromptMock = vi.hoisted(() => vi.fn());
-vi.mock("#/lib/prompt-templates", () => ({
-	resolveEffectivePrompt: () => resolveEffectivePromptMock(),
+const readCurrentPeriodDigestMock = vi.fn();
+const migrateLegacyPeriodDigestsMock = vi.fn();
+vi.mock("#/lib/period-digest-current-store", () => ({
+	readCurrentPeriodDigest: (...args: unknown[]) =>
+		readCurrentPeriodDigestMock(...args),
+	migrateLegacyPeriodDigests: (...args: unknown[]) =>
+		migrateLegacyPeriodDigestsMock(...args),
 }));
 
-const readSyncCacheMock = vi.fn();
-vi.mock("#/lib/sync-cache", () => ({
-	readSyncCache: (...args: unknown[]) => readSyncCacheMock(...args),
+const readPeriodDigestRunStateMock = vi.fn();
+vi.mock("#/lib/period-digest-orchestrator", () => ({
+	PERIOD_DIGEST_LOCK_STALE_MS: 60_000,
+	periodDigestRunLockPath: (period: string) =>
+		`/tmp/period-digest-${period}.lock`,
+	readPeriodDigestRunState: (...args: unknown[]) =>
+		readPeriodDigestRunStateMock(...args),
+}));
+
+const peekScheduledJobLockMock = vi.fn();
+vi.mock("#/lib/scheduled-job", () => ({
+	peekScheduledJobLockEffect: (...args: unknown[]) =>
+		Effect.promise(() => peekScheduledJobLockMock(...args)),
 }));
 
 const isFreshDigestCacheMock = vi.fn();
 vi.mock("#/lib/period-digest", () => ({
 	normalizeDigestLanguage: (value: string | undefined) => value,
-	latestDigestCacheKey: (
-		options: Record<string, unknown>,
-		promptHash: string,
-	) => `period-digest-latest:test:${promptHash}:${JSON.stringify(options)}`,
-	periodDigestGenerationKey: (options: Record<string, unknown>) =>
-		`period-digest-generation:test:${JSON.stringify(options)}`,
+	normalizePeriod: (value: string | undefined) =>
+		value === "24h" ? "24h" : "today",
 	isFreshDigestCache: (...args: unknown[]) => isFreshDigestCacheMock(...args),
 }));
 
-import { activePeriodDigestsRegistry } from "#/lib/period-digest-active-registry";
 import { Route } from "./period-digest-metadata";
 
 const GET = getRouteHandler(Route, "GET");
 
-function requestFor(params: Record<string, string>) {
-	const url = new URL("http://localhost/api/period-digest-metadata");
-	for (const [key, value] of Object.entries(params)) {
-		url.searchParams.set(key, value);
-	}
-	return new Request(url);
+function requestFor(period = "today", contentSource = "all") {
+	return new Request(
+		`http://localhost/api/period-digest-metadata?period=${period}&contentSource=${contentSource}`,
+	);
 }
 
-const baseParams = {
-	period: "today",
-	includeDms: "false",
-	contentSource: "all",
-	maxTweets: "5000",
-	maxLinks: "20",
-	liveSync: "false",
-};
+function currentDigest(generatedAt = "2026-08-06T08:00:00.000Z") {
+	return {
+		schemaVersion: 1,
+		period: "today",
+		contentSource: "all",
+		runId: "run-old",
+		versionId: "version-old",
+		generatedAt,
+		context: {
+			window: { label: "Today", since: "s", until: "u" },
+			includeDms: false,
+			contentSource: "all",
+			counts: {},
+			tweets: [],
+			dms: [],
+			links: [],
+			hash: "hash",
+		},
+		digest: { actionItems: [] },
+		markdown: "# Existing Today",
+		model: "gpt-5.5",
+		reasoningEffort: "medium",
+		serviceTier: "priority",
+		parseStatus: "structured",
+		input: { maxTweets: 5_000, maxLinks: 20 },
+		sync: { status: "fresh", steps: [] },
+	};
+}
 
 describe("api period-digest-metadata route", () => {
 	beforeEach(() => {
-		resolveEffectivePromptMock.mockReset();
-		resolveEffectivePromptMock.mockReturnValue({ promptHash: "prompt_hash" });
+		readCurrentPeriodDigestMock.mockReset();
+		migrateLegacyPeriodDigestsMock.mockReset();
+		readPeriodDigestRunStateMock.mockReset();
+		peekScheduledJobLockMock.mockReset();
+		isFreshDigestCacheMock.mockReset();
+		readCurrentPeriodDigestMock.mockReturnValue(currentDigest());
+		readPeriodDigestRunStateMock.mockResolvedValue(undefined);
+		peekScheduledJobLockMock.mockResolvedValue(false);
+		isFreshDigestCacheMock.mockReturnValue(true);
 	});
 
 	afterEach(() => {
-		activePeriodDigestsRegistry().clear();
-		readSyncCacheMock.mockReset();
-		isFreshDigestCacheMock.mockReset();
+		vi.clearAllMocks();
 	});
 
-	it("reports isGenerating and the active status label while a matching run is in progress", async () => {
-		const registry = activePeriodDigestsRegistry();
-		const key = `period-digest-generation:test:${JSON.stringify({
+	it("returns stale existing content while a replacement batch is running", async () => {
+		isFreshDigestCacheMock.mockReturnValue(false);
+		peekScheduledJobLockMock.mockResolvedValue(true);
+		readPeriodDigestRunStateMock.mockResolvedValue({
+			runId: "run-new",
 			period: "today",
-			since: undefined,
-			until: undefined,
-			account: undefined,
-			includeDms: false,
-			contentSource: "all",
-			refresh: false,
-			model: undefined,
-			language: undefined,
-			maxTweets: 5000,
-			maxLinks: 20,
-			liveSync: false,
-			liveSyncMode: "bird",
-			liveTimelineLimit: undefined,
-			liveTimelineMaxPages: undefined,
-		})}`;
-		registry.set(key, { label: "Streaming AI summary", detail: "42%" });
-		readSyncCacheMock.mockReturnValue(null);
+			phase: "generating",
+			currentSource: "following",
+			sourceOrder: ["all", "following", "for_you"],
+			sources: {
+				all: { state: "completed", attempts: 1 },
+				following: { state: "running", attempts: 1 },
+				for_you: { state: "pending", attempts: 0 },
+			},
+		});
 
-		const response = await GET({ request: requestFor(baseParams) });
+		const response = await GET({ request: requestFor() });
+		const body = await response.json();
 
-		expect(await response.json()).toEqual({
+		expect(body).toMatchObject({
 			ok: true,
 			isGenerating: true,
-			activeStatus: { label: "Streaming AI summary", detail: "42%" },
-			result: null,
-		});
-	});
-
-	it("returns the fresh cached result and isGenerating:false once nothing is running", async () => {
-		readSyncCacheMock.mockReturnValue({
-			value: {
-				context: { window: { label: "Today" }, tweets: [] },
-				digest: { actionItems: [] },
-				markdown: "# Today",
-				model: "gpt-5.5",
-				reasoningEffort: "medium",
-				serviceTier: "priority",
-				parseStatus: "structured",
-				updatedAt: "2026-07-27T08:00:00.000Z",
+			isStale: true,
+			activeStatus: {
+				label: "Generating current digest",
+				detail: "1/3 complete · Following",
 			},
-			updatedAt: "2026-07-27T08:00:00.000Z",
-		});
-		isFreshDigestCacheMock.mockReturnValue(true);
-
-		const response = await GET({ request: requestFor(baseParams) });
-
-		expect(await response.json()).toEqual({
-			ok: true,
-			isGenerating: false,
-			activeStatus: null,
 			result: {
-				context: { window: { label: "Today" }, tweets: [] },
-				digest: { actionItems: [] },
-				markdown: "# Today",
-				model: "gpt-5.5",
-				reasoningEffort: "medium",
-				serviceTier: "priority",
-				parseStatus: "structured",
+				markdown: "# Existing Today",
 				cached: true,
-				updatedAt: "2026-07-27T08:00:00.000Z",
+				updatedAt: "2026-08-06T08:00:00.000Z",
 			},
+			runState: { runId: "run-new", phase: "generating" },
 		});
 	});
 
-	it("omits a stale cached result rather than passing it off as current", async () => {
-		readSyncCacheMock.mockReturnValue({
-			value: {
-				context: { window: { label: "Today" }, tweets: [] },
-				digest: { actionItems: [] },
-				markdown: "# Stale",
-				model: "gpt-5.5",
-				reasoningEffort: "medium",
-				serviceTier: "priority",
-				parseStatus: "structured",
-				updatedAt: "2020-01-01T00:00:00.000Z",
-			},
-			updatedAt: "2020-01-01T00:00:00.000Z",
-		});
+	it("keeps the latest successful content after a failed batch", async () => {
 		isFreshDigestCacheMock.mockReturnValue(false);
+		readPeriodDigestRunStateMock.mockResolvedValue({
+			runId: "run-failed",
+			period: "today",
+			phase: "failed",
+			error: "model timeout",
+			sourceOrder: ["all", "following", "for_you"],
+			sources: {
+				all: { state: "failed", attempts: 1, error: "model timeout" },
+				following: { state: "failed", attempts: 1 },
+				for_you: { state: "failed", attempts: 1 },
+			},
+		});
 
-		const response = await GET({ request: requestFor(baseParams) });
+		const body = await (await GET({ request: requestFor() })).json();
 
-		expect(await response.json()).toEqual({
-			ok: true,
+		expect(body).toMatchObject({
 			isGenerating: false,
-			activeStatus: null,
-			result: null,
+			isStale: true,
+			result: { markdown: "# Existing Today" },
+			runState: { phase: "failed", error: "model timeout" },
 		});
 	});
 
-	it("returns no result when nothing has ever been cached", async () => {
-		readSyncCacheMock.mockReturnValue(null);
-
-		const response = await GET({ request: requestFor(baseParams) });
-
-		expect(await response.json()).toEqual({
-			ok: true,
-			isGenerating: false,
-			activeStatus: null,
-			result: null,
+	it("runs the one-time legacy migration before returning an empty first-use state", async () => {
+		readCurrentPeriodDigestMock
+			.mockReturnValueOnce(null)
+			.mockReturnValueOnce(currentDigest("2026-08-06T07:00:00.000Z"));
+		migrateLegacyPeriodDigestsMock.mockReturnValue({
+			migrated: [{ period: "today", contentSource: "all" }],
+			diagnostics: [],
 		});
-	});
 
-	it("does not return a cache row stored under an older prompt hash", async () => {
-		resolveEffectivePromptMock.mockReturnValue({
-			promptHash: "new_prompt_hash",
+		const body = await (await GET({ request: requestFor() })).json();
+
+		expect(migrateLegacyPeriodDigestsMock).toHaveBeenCalledTimes(1);
+		expect(readCurrentPeriodDigestMock).toHaveBeenCalledTimes(2);
+		expect(body.result).toMatchObject({
+			markdown: "# Existing Today",
+			updatedAt: "2026-08-06T07:00:00.000Z",
 		});
-		readSyncCacheMock.mockImplementation((key: string) =>
-			key.includes("old_prompt_hash")
-				? { value: { markdown: "# Old" }, updatedAt: "2026-07-27" }
-				: null,
-		);
-
-		const response = await GET({ request: requestFor(baseParams) });
-
-		expect(readSyncCacheMock).toHaveBeenCalledWith(
-			expect.stringContaining("new_prompt_hash"),
-		);
-		expect(await response.json()).toMatchObject({ result: null });
 	});
 });

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { Effect } from "effect";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getRouteHandler } from "#/test/route-handlers";
 
 const resolveDigestArchiveDirMock = vi.fn();
@@ -20,6 +20,10 @@ import { Route } from "./digest-archive-entry";
 const GET = getRouteHandler(Route, "GET");
 
 describe("api digest-archive-entry route", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
 	it("adapts a found archive entry into the run-result shape, using generatedAt as updatedAt", async () => {
 		resolveDigestArchiveDirMock.mockReturnValue("/tmp/archive");
 		readDigestArchiveEntryEffectMock.mockResolvedValue({
@@ -78,39 +82,21 @@ describe("api digest-archive-entry route", () => {
 		expect(await response.json()).toEqual({ ok: true, result: null });
 	});
 
-	it("accepts Today and defaults an unrecognized contentSource to all", async () => {
-		resolveDigestArchiveDirMock.mockReturnValue("/tmp/archive");
-		readDigestArchiveEntryEffectMock.mockResolvedValue(null);
+	it.each(["today", "24h"] as const)(
+		"rejects current-view period %s without reading legacy archives",
+		async (period) => {
+			const response = await GET({
+				request: new Request(
+					`http://localhost/api/digest-archive-entry?period=${period}&contentSource=following&date=2026-07-20`,
+				),
+			});
 
-		await GET({
-			request: new Request(
-				"http://localhost/api/digest-archive-entry?period=today&contentSource=bogus&date=2026-07-20",
-			),
-		});
-
-		expect(readDigestArchiveEntryEffectMock).toHaveBeenCalledWith({
-			archiveDir: "/tmp/archive",
-			period: "today",
-			contentSource: "all",
-			date: "2026-07-20",
-		});
-	});
-
-	it("accepts the 24h period", async () => {
-		resolveDigestArchiveDirMock.mockReturnValue("/tmp/archive");
-		readDigestArchiveEntryEffectMock.mockResolvedValue(null);
-
-		await GET({
-			request: new Request(
-				"http://localhost/api/digest-archive-entry?period=24h&contentSource=following&date=2026-07-20",
-			),
-		});
-
-		expect(readDigestArchiveEntryEffectMock).toHaveBeenCalledWith({
-			archiveDir: "/tmp/archive",
-			period: "24h",
-			contentSource: "following",
-			date: "2026-07-20",
-		});
-	});
+			expect(response.status).toBe(400);
+			expect(await response.json()).toEqual({
+				ok: false,
+				error: "Today and 24h are current views and do not have archives.",
+			});
+			expect(readDigestArchiveEntryEffectMock).not.toHaveBeenCalled();
+		},
+	);
 });

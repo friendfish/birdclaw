@@ -13,7 +13,7 @@ import {
 	type PeriodDigest,
 } from "./analysis-result-contracts";
 import { maybeAutoSyncBackupEffect } from "./backup";
-import { getBirdclawConfig } from "./config";
+import { getBirdclawConfig, resolveDigestFreshnessSeconds } from "./config";
 import { runEffectPromise } from "./effect-runtime";
 import { getLinkInsights } from "./link-insights";
 import { resolveLiveReadMode } from "./live-transport-policy";
@@ -235,7 +235,6 @@ const DEFAULT_LIVE_MENTIONS_LIMIT = 100;
 const DEFAULT_LIVE_MENTIONS_MAX_PAGES = undefined;
 const DEFAULT_LIVE_THREAD_LIMIT = 12;
 const DEFAULT_LIVE_THREAD_TIMEOUT_MS = 5_000;
-const DEFAULT_DIGEST_FRESHNESS_MS = 5 * 60_000;
 const MAX_PROMPT_DATA_CHARS = 1_200_000;
 const DELIMITER_PATTERN = /\n---\s*\n/;
 
@@ -1067,20 +1066,7 @@ export function readLatestPeriodDigestEffect(
 }
 
 function getDigestFreshnessMs(): number {
-	const envFreshness = process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS;
-	if (envFreshness) {
-		const parsed = Number.parseInt(envFreshness, 10);
-		if (Number.isFinite(parsed) && parsed >= 0) {
-			return parsed * 1000;
-		}
-	}
-
-	const configFreshness = getBirdclawConfig().digest?.freshnessSeconds;
-	if (typeof configFreshness === "number" && configFreshness >= 0) {
-		return configFreshness * 1000;
-	}
-
-	return DEFAULT_DIGEST_FRESHNESS_MS;
+	return resolveDigestFreshnessSeconds() * 1000;
 }
 
 export function isFreshDigestCache(updatedAt: string, period?: string) {
@@ -1412,6 +1398,60 @@ function readOpenAIStreamEffect(
 	});
 }
 
+function generatePeriodDigestFromResolvedContextEffect(
+	context: PeriodDigestContext,
+	options: PeriodDigestOptions,
+	effectivePrompt: EffectivePrompt,
+	handlers: PeriodDigestStreamHandlers,
+): Effect.Effect<PeriodDigestRunResult, Error> {
+	return Effect.gen(function* () {
+		handlers.onEvent?.({ type: "start", context, cached: false });
+		emitDigestStatus(handlers, "Streaming AI summary");
+		const stream = yield* streamHybridAnalysisEffect({
+			body: createOpenAIRequestBody(context, options, effectivePrompt),
+			signal: options.signal,
+			parse: (value) => PeriodDigestSchema.parse(value),
+			fallback: (markdown) =>
+				fallbackDigest(context, markdown, languageFromOptions(options)),
+			delimiterPattern: DELIMITER_PATTERN,
+			onDelta: (delta) => {
+				handlers.onDelta?.(delta);
+				handlers.onEvent?.({ type: "delta", delta });
+			},
+		});
+		return yield* completeOpenAIStreamEffect(
+			stream,
+			context,
+			options,
+			effectivePrompt,
+			handlers,
+		);
+	});
+}
+
+export function generatePeriodDigestFromContextEffect(
+	context: PeriodDigestContext,
+	options: PeriodDigestOptions = {},
+	handlers: PeriodDigestStreamHandlers = {},
+): Effect.Effect<PeriodDigestRunResult, Error> {
+	return Effect.gen(function* () {
+		const resolvedOptions = {
+			...options,
+			liveSync: false,
+			language: yield* tryDigestSync(() => languageFromOptions(options)),
+		};
+		const effectivePrompt = yield* tryDigestSync(() =>
+			resolveEffectivePrompt("period-digest"),
+		);
+		return yield* generatePeriodDigestFromResolvedContextEffect(
+			context,
+			resolvedOptions,
+			effectivePrompt,
+			handlers,
+		);
+	});
+}
+
 export function streamPeriodDigestEffect(
 	options: PeriodDigestOptions = {},
 	handlers: PeriodDigestStreamHandlers = {},
@@ -1513,22 +1553,7 @@ export function streamPeriodDigestEffect(
 			effectivePrompt.promptHash,
 		);
 
-		handlers.onEvent?.({ type: "start", context, cached: false });
-		emitDigestStatus(handlers, "Streaming AI summary");
-		const stream = yield* streamHybridAnalysisEffect({
-			body: createOpenAIRequestBody(context, resolvedOptions, effectivePrompt),
-			signal: resolvedOptions.signal,
-			parse: (value) => PeriodDigestSchema.parse(value),
-			fallback: (markdown) =>
-				fallbackDigest(context, markdown, languageFromOptions(resolvedOptions)),
-			delimiterPattern: DELIMITER_PATTERN,
-			onDelta: (delta) => {
-				handlers.onDelta?.(delta);
-				handlers.onEvent?.({ type: "delta", delta });
-			},
-		});
-		return yield* completeOpenAIStreamEffect(
-			stream,
+		return yield* generatePeriodDigestFromResolvedContextEffect(
 			context,
 			resolvedOptions,
 			effectivePrompt,

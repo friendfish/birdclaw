@@ -14,6 +14,12 @@ import {
 	runDigestArchiveJob,
 } from "#/lib/digest-archive-job";
 import type { PeriodDigestPreset } from "#/lib/period-digest";
+import { consumePeriodDigestFreshnessAttempt } from "#/lib/period-digest-freshness";
+import {
+	requestPeriodDigestRun,
+	type PeriodDigestTrigger,
+	type PeriodDigestTriggerOrigin,
+} from "#/lib/period-digest-orchestrator";
 import { resolveLiveSyncMode } from "#/lib/live-transport-policy";
 import type { TimelineCollectionMode } from "#/lib/timeline-collections-live";
 import type { CliCommandContext } from "./command-context";
@@ -28,6 +34,24 @@ function parsePeriod(value: string): PeriodDigestPreset {
 		return value;
 	}
 	throw new Error("--period must be today, yesterday, 24h, or week");
+}
+
+function parseCurrentPeriod(value: string): "today" | "24h" {
+	const period = parsePeriod(value);
+	if (period === "today" || period === "24h") return period;
+	throw new Error("--period must be today or 24h");
+}
+
+function parseDigestTrigger(value: string): PeriodDigestTrigger {
+	if (value === "scheduled" || value === "freshness" || value === "manual") {
+		return value;
+	}
+	throw new Error("--trigger must be scheduled, freshness, or manual");
+}
+
+function parseDigestTriggerOrigin(value: string): PeriodDigestTriggerOrigin {
+	if (value === "launchd" || value === "page" || value === "cli") return value;
+	throw new Error("--origin must be launchd, page, or cli");
 }
 
 function parseOptionalJobMode(
@@ -47,6 +71,10 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			"Refresh live account timelines and append a JSONL audit entry",
 		)
 		.option("--account <username>", "Account username or id")
+		.option(
+			"--bird-credentials-path <path>",
+			"Strict AUTH_TOKEN/CT0 credential file",
+		)
 		.option(
 			"--steps <steps>",
 			"Comma list: timeline,mentions,mention-threads,likes,bookmarks,dms",
@@ -84,6 +112,10 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.option("--interval-seconds <seconds>", "Launch interval", "1800")
 		.option("--program <path>", "birdclaw executable or command", "birdclaw")
 		.option("--account <username>", "Account username or id")
+		.option(
+			"--bird-credentials-path <path>",
+			"Strict AUTH_TOKEN/CT0 credential file",
+		)
 		.option(
 			"--steps <steps>",
 			"Comma list: timeline,mentions,mention-threads,likes,bookmarks,dms",
@@ -196,6 +228,74 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		});
 
 	jobsCommand
+		.command("run-period-digest")
+		.description("Generate and publish the current Today or 24h digest batch")
+		.requiredOption("--period <period>", "today or 24h")
+		.option(
+			"--trigger <trigger>",
+			"scheduled, freshness, or manual",
+			"scheduled",
+		)
+		.option("--origin <origin>", "launchd, page, or cli", "cli")
+		.option(
+			"--attempt-token <token>",
+			"One-shot token for a freshness launchd wakeup",
+		)
+		.option(
+			"--requested-source <source>",
+			"Manual owner priority: all, following, or for_you",
+		)
+		.option("--account <username>", "Account username or id")
+		.option(
+			"--bird-credentials-path <path>",
+			"Strict AUTH_TOKEN/CT0 credential file",
+		)
+		.option(
+			"--no-live-sync",
+			"Skip the batch pre-sync and use locally stored information",
+		)
+		.action(async (options) => {
+			const period = parseCurrentPeriod(options.period);
+			const trigger = parseDigestTrigger(options.trigger);
+			const origin = parseDigestTriggerOrigin(options.origin);
+			if (trigger === "freshness" && origin === "launchd") {
+				if (!options.attemptToken) {
+					throw new Error(
+						"--attempt-token is required for freshness launchd wakeups",
+					);
+				}
+				const attempt = await consumePeriodDigestFreshnessAttempt({
+					period,
+					attemptToken: options.attemptToken,
+				});
+				if (!attempt.valid) {
+					print({ ok: true, skipped: attempt.reason, period }, true);
+					return;
+				}
+			}
+			const requestedSource = options.requestedSource
+				? parseDigestContentSources(options.requestedSource)?.[0]
+				: undefined;
+			const run = await requestPeriodDigestRun({
+				period,
+				trigger,
+				origin,
+				...(requestedSource ? { requestedSource } : {}),
+				...(options.account ? { account: options.account } : {}),
+				...(options.birdCredentialsPath
+					? { birdCredentialsPath: options.birdCredentialsPath }
+					: {}),
+				liveSync: Boolean(options.liveSync),
+			});
+			const state = await run.completion;
+			print(
+				{ ok: state.phase !== "failed", joined: run.joined, ...state },
+				true,
+			);
+			if (state.phase === "failed") process.exitCode = 1;
+		});
+
+	jobsCommand
 		.command("run-digest-archive")
 		.description(
 			"Generate and archive period digests (md+json) for all content sources",
@@ -226,11 +326,36 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			"Strict AUTH_TOKEN/CT0 credential file",
 		)
 		.action(async (options) => {
+			const period = parsePeriod(options.period);
+			if (period === "today" || period === "24h") {
+				const run = await requestPeriodDigestRun({
+					period,
+					trigger: "scheduled",
+					origin: "cli",
+					...(options.account ? { account: options.account } : {}),
+					...(options.birdCredentialsPath
+						? { birdCredentialsPath: options.birdCredentialsPath }
+						: {}),
+					liveSync: Boolean(options.liveSync),
+				});
+				const state = await run.completion;
+				print(
+					{
+						ok: state.phase !== "failed",
+						archived: false,
+						joined: run.joined,
+						...state,
+					},
+					true,
+				);
+				if (state.phase === "failed") process.exitCode = 1;
+				return;
+			}
 			const runDate = options.runDate
 				? new Date(`${options.runDate}T00:00:00`)
 				: undefined;
 			const result = await runDigestArchiveJob({
-				period: parsePeriod(options.period),
+				period,
 				account: options.account,
 				includeDms: Boolean(options.includeDms),
 				contentSources: parseDigestContentSources(options.contentSources),
