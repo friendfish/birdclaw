@@ -20,7 +20,6 @@ import type {
 	PeriodDigestContext,
 	PeriodDigestRunResult,
 } from "#/lib/period-digest";
-import { applyPeriodDigestIdentityParams } from "#/lib/period-digest-url";
 import type { ProfileRecord } from "#/lib/types";
 import {
 	hydrateProfileHandles,
@@ -93,16 +92,6 @@ function exportCurrentDigestPdf(title: string) {
 	window.addEventListener("afterprint", cleanup, { once: true });
 	window.setTimeout(cleanup, 3000);
 	window.print();
-}
-
-function digestUrl(
-	period: PeriodOption,
-	contentSource: PeriodDigestContentSource,
-) {
-	const url = new URL("/api/period-digest", window.location.origin);
-	applyPeriodDigestIdentityParams(url, period, false, contentSource);
-	url.searchParams.set("refresh", "true");
-	return url;
 }
 
 function formatCounts(context: PeriodDigestContext | null) {
@@ -201,24 +190,18 @@ function useCurrentDigest(
 	});
 	const refreshMutation = useMutation({
 		mutationFn: async () => {
-			const response = await fetch(digestUrl(period, contentSource), {
+			const response = await fetch("/api/period-digest-runs", {
+				method: "POST",
 				cache: "no-store",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					period,
+					requestedSource: contentSource,
+					liveSync: true,
+				}),
 			});
 			if (!response.ok) {
 				throw new Error(`Digest request failed (${String(response.status)})`);
-			}
-			const body = await response.text();
-			for (const line of body.split("\n")) {
-				if (!line.trim()) continue;
-				try {
-					const event = JSON.parse(line) as { type?: string; error?: string };
-					if (event.type === "error") {
-						throw new Error(event.error || "Digest request failed");
-					}
-				} catch (error) {
-					if (error instanceof SyntaxError) continue;
-					throw error;
-				}
 			}
 		},
 		onSuccess: () => {

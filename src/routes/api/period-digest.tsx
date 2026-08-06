@@ -16,7 +16,6 @@ import {
 	activePeriodDigestsRegistry,
 	periodDigestRegistryKey,
 } from "#/lib/period-digest-active-registry";
-import { requestPeriodDigestRun } from "#/lib/period-digest-orchestrator";
 import { parsePeriodDigestRequestOptions } from "#/lib/period-digest-request";
 import {
 	normalizePeriod,
@@ -48,6 +47,17 @@ export const Route = createFileRoute("/api/period-digest")({
 								{ status: 400 },
 							);
 						}
+						const period = normalizePeriod(options.period);
+						if (period === "today" || period === "24h") {
+							return jsonResponse(
+								{
+									ok: false,
+									error:
+										"Today/24h generation requires POST /api/period-digest-runs",
+								},
+								{ status: 405, headers: { allow: "POST" } },
+							);
+						}
 						return createEffectNdjsonResponse<PeriodDigestStreamEvent>({
 							request,
 							schema: periodDigestStreamEventSchema,
@@ -60,33 +70,6 @@ export const Route = createFileRoute("/api/period-digest")({
 							],
 							run: ({ emit }) =>
 								Effect.gen(function* () {
-									// A scheduled digest-archive job holds this lock for the
-									// whole run — defer to it rather than racing a second
-									// generation for the same period (background job wins;
-									// see the design discussion in PR #31 / issue #30).
-									const period = normalizePeriod(options.period);
-									if (period === "today" || period === "24h") {
-										const run = yield* Effect.promise(() =>
-											requestPeriodDigestRun({
-												period,
-												trigger: "manual",
-												origin: "page",
-												requestedSource: options.contentSource ?? "all",
-												...(options.account
-													? { account: options.account }
-													: {}),
-												liveSync: options.liveSync ?? true,
-											}),
-										);
-										emit({
-											type: "status",
-											label: run.joined
-												? "Joined existing digest run"
-												: "Started digest in background",
-											detail: run.runId,
-										});
-										return;
-									}
 									const isArchiving = yield* peekScheduledJobLockEffect(
 										digestArchiveLockPath(period),
 										DEFAULT_LOCK_STALE_MS,

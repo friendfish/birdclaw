@@ -1,10 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getBirdCredentialsPath } from "./bird-credentials";
 import {
 	getBirdclawPaths,
 	resolveDigestFreshnessSeconds,
+	resolveDigestLaunchdExecution,
 	type DigestScheduleTime,
 } from "./config";
 import { resolveDigestScheduleTime } from "./digest-archive-job";
@@ -21,6 +22,7 @@ import {
 	type CurrentPeriodDigestPeriod,
 } from "./period-digest-current-store";
 import type { PeriodDigestContentSource } from "./period-digest";
+import { acquireScheduledJobLock } from "./scheduled-job";
 
 export interface PeriodDigestFreshnessStateV1 {
 	schemaVersion: 1;
@@ -32,6 +34,11 @@ export interface PeriodDigestFreshnessStateV1 {
 	updatedAt: string;
 	consumedAt?: string;
 	installError?: string;
+	freshnessSeconds?: number;
+	sourceIdentities?: Partial<Record<PeriodDigestContentSource, string>>;
+	suppressedSourceIdentities?: Partial<
+		Record<PeriodDigestContentSource, string>
+	>;
 }
 
 export interface CalculateFreshnessDeadlineInput {
@@ -39,6 +46,7 @@ export interface CalculateFreshnessDeadlineInput {
 	freshnessSeconds: number;
 	schedule: Required<Pick<DigestScheduleTime, "hour" | "minute">>;
 	generatedAt: Partial<Record<PeriodDigestContentSource, string>>;
+	suppressedSources?: PeriodDigestContentSource[];
 }
 
 const CONTENT_SOURCES: PeriodDigestContentSource[] = [
@@ -48,6 +56,9 @@ const CONTENT_SOURCES: PeriodDigestContentSource[] = [
 ];
 const stateQueues = new Map<string, Promise<void>>();
 const reconcileQueues = new Map<CurrentPeriodDigestPeriod, Promise<void>>();
+const FRESHNESS_SCHEDULER_LOCK_STALE_MS = 60_000;
+const FRESHNESS_SCHEDULER_LOCK_MAX_AGE_MS = 10 * 60_000;
+const FRESHNESS_SCHEDULER_LOCK_WAIT_MS = 30_000;
 
 function sameLocalDay(left: Date, right: Date) {
 	return (
@@ -71,10 +82,14 @@ export function calculatePeriodDigestFreshnessDeadline({
 	freshnessSeconds,
 	schedule,
 	generatedAt,
+	suppressedSources = [],
 }: CalculateFreshnessDeadlineInput) {
 	const scheduledBase = new Date(now);
 	scheduledBase.setHours(schedule.hour, schedule.minute, 0, 0);
-	const candidates = CONTENT_SOURCES.map((contentSource) => {
+	const suppressed = new Set(suppressedSources);
+	const candidates = CONTENT_SOURCES.filter(
+		(contentSource) => !suppressed.has(contentSource),
+	).map((contentSource) => {
 		const generated = new Date(generatedAt[contentSource] ?? "");
 		const base =
 			Number.isFinite(generated.getTime()) && sameLocalDay(generated, now)
@@ -82,10 +97,48 @@ export function calculatePeriodDigestFreshnessDeadline({
 				: scheduledBase;
 		return new Date(base.getTime() + freshnessSeconds * 1_000);
 	});
+	if (candidates.length === 0) return null;
 	const deadline = new Date(
 		Math.min(...candidates.map((candidate) => candidate.getTime())),
 	);
 	return sameLocalDay(deadline, now) ? deadline : null;
+}
+
+function periodDigestFreshnessSchedulerLockPath(
+	period: CurrentPeriodDigestPeriod,
+) {
+	return path.join(
+		getBirdclawPaths().rootDir,
+		"locks",
+		`period-digest-freshness-${period}.lock`,
+	);
+}
+
+async function withFreshnessSchedulerLease<T>(
+	period: CurrentPeriodDigestPeriod,
+	operation: () => Promise<T>,
+) {
+	const lockPath = periodDigestFreshnessSchedulerLockPath(period);
+	const deadline = Date.now() + FRESHNESS_SCHEDULER_LOCK_WAIT_MS;
+	for (;;) {
+		const release = await acquireScheduledJobLock(
+			lockPath,
+			FRESHNESS_SCHEDULER_LOCK_STALE_MS,
+			{},
+			FRESHNESS_SCHEDULER_LOCK_MAX_AGE_MS,
+		);
+		if (release) {
+			try {
+				return await operation();
+			} finally {
+				await release();
+			}
+		}
+		if (Date.now() >= deadline) {
+			throw new Error(`Timed out reconciling ${period} freshness schedule`);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
 }
 
 export function periodDigestFreshnessStatePath(
@@ -177,16 +230,17 @@ export async function readPeriodDigestFreshnessState(
 
 export function buildPeriodDigestFreshnessLaunchAgent({
 	period,
-	dueAt,
+	fireAt,
 	attemptToken,
 	program = "birdclaw",
+	envFile,
 }: {
 	period: CurrentPeriodDigestPeriod;
-	dueAt: Date;
+	fireAt: Date;
 	attemptToken: string;
 	program?: string;
+	envFile?: string;
 }): LaunchAgent {
-	const fireAt = roundUpToMinute(dueAt);
 	const root = getBirdclawPaths().rootDir;
 	return buildLaunchAgent({
 		label: `com.steipete.birdclaw.period-digest-freshness-${period}`,
@@ -212,6 +266,7 @@ export function buildPeriodDigestFreshnessLaunchAgent({
 		),
 		programArguments: buildLaunchProgramArguments({
 			program,
+			envFile,
 			args: [
 				"--json",
 				"jobs",
@@ -228,6 +283,7 @@ export function buildPeriodDigestFreshnessLaunchAgent({
 				getBirdCredentialsPath(),
 			],
 		}),
+		envFile,
 	});
 }
 
@@ -252,30 +308,32 @@ export async function consumePeriodDigestFreshnessAttempt({
 	  }
 > {
 	const statePath = periodDigestFreshnessStatePath(period);
-	return serializeState(statePath, async () => {
-		const state = await readPeriodDigestFreshnessState(period);
-		if (!state) return { valid: false, reason: "missing-state" } as const;
-		if (state.attemptToken !== attemptToken) {
-			return { valid: false, reason: "token-mismatch" } as const;
-		}
-		if (state.status === "consumed") {
-			return { valid: false, reason: "already-consumed" } as const;
-		}
-		const dueAt = new Date(state.dueAt);
-		if (!sameLocalDay(dueAt, now)) {
-			return { valid: false, reason: "cross-day" } as const;
-		}
-		if (now.getTime() < dueAt.getTime()) {
-			return { valid: false, reason: "not-due" } as const;
-		}
-		await writeStateFile(statePath, {
-			...state,
-			status: "consumed",
-			consumedAt: now.toISOString(),
-			updatedAt: now.toISOString(),
-		});
-		return { valid: true } as const;
-	});
+	return withFreshnessSchedulerLease(period, () =>
+		serializeState(statePath, async () => {
+			const state = await readPeriodDigestFreshnessState(period);
+			if (!state) return { valid: false, reason: "missing-state" } as const;
+			if (state.attemptToken !== attemptToken) {
+				return { valid: false, reason: "token-mismatch" } as const;
+			}
+			if (state.status === "consumed") {
+				return { valid: false, reason: "already-consumed" } as const;
+			}
+			const dueAt = new Date(state.dueAt);
+			if (!sameLocalDay(dueAt, now)) {
+				return { valid: false, reason: "cross-day" } as const;
+			}
+			if (now.getTime() < dueAt.getTime()) {
+				return { valid: false, reason: "not-due" } as const;
+			}
+			await writeStateFile(statePath, {
+				...state,
+				status: "consumed",
+				consumedAt: now.toISOString(),
+				updatedAt: now.toISOString(),
+			});
+			return { valid: true } as const;
+		}),
+	);
 }
 
 export async function triggerDuePeriodDigestFreshness({
@@ -328,6 +386,9 @@ async function reconcilePeriodDigestFreshnessInternal({
 	schedule = resolveDigestScheduleTime(period),
 	installOptions,
 	install = installLaunchAgent,
+	suppressSources = [],
+	program,
+	envFile,
 }: {
 	period: CurrentPeriodDigestPeriod;
 	now?: Date;
@@ -338,20 +399,70 @@ async function reconcilePeriodDigestFreshnessInternal({
 		agent: LaunchAgent,
 		options?: LaunchAgentInstallOptions,
 	) => Promise<LaunchAgentInstallResult>;
+	suppressSources?: PeriodDigestContentSource[];
+	program?: string;
+	envFile?: string;
 }) {
+	const scheduledBase = new Date(now);
+	scheduledBase.setHours(schedule.hour, schedule.minute, 0, 0);
+	const currentBySource = Object.fromEntries(
+		CONTENT_SOURCES.map((contentSource) => [
+			contentSource,
+			readCurrentPeriodDigest(period, contentSource),
+		]),
+	);
 	const generatedAt = Object.fromEntries(
 		CONTENT_SOURCES.flatMap((contentSource) => {
-			const current = readCurrentPeriodDigest(period, contentSource);
+			const current = currentBySource[contentSource];
 			return current ? [[contentSource, current.generatedAt]] : [];
 		}),
 	) as Partial<Record<PeriodDigestContentSource, string>>;
+	const sourceIdentities = Object.fromEntries(
+		CONTENT_SOURCES.map((contentSource) => [
+			contentSource,
+			currentBySource[contentSource]?.versionId ??
+				`scheduled:${scheduledBase.toISOString()}`,
+		]),
+	) as Record<PeriodDigestContentSource, string>;
+	const previous = await readPeriodDigestFreshnessState(period);
+	const suppressedSourceIdentities = Object.fromEntries(
+		CONTENT_SOURCES.flatMap((contentSource) => {
+			const currentIdentity = sourceIdentities[contentSource];
+			if (suppressSources.includes(contentSource)) {
+				return [[contentSource, currentIdentity]];
+			}
+			const previousIdentity =
+				previous?.freshnessSeconds === freshnessSeconds
+					? previous.suppressedSourceIdentities?.[contentSource]
+					: undefined;
+			return previousIdentity === currentIdentity
+				? [[contentSource, currentIdentity]]
+				: [];
+		}),
+	) as Partial<Record<PeriodDigestContentSource, string>>;
+	const activeSuppressions = CONTENT_SOURCES.filter(
+		(contentSource) =>
+			suppressedSourceIdentities[contentSource] ===
+			sourceIdentities[contentSource],
+	);
 	const dueAt = calculatePeriodDigestFreshnessDeadline({
 		now,
 		freshnessSeconds,
 		schedule,
 		generatedAt,
+		suppressedSources: activeSuppressions,
 	});
-	const attemptToken = randomUUID();
+	const attemptToken = createHash("sha256")
+		.update(
+			JSON.stringify({
+				period,
+				freshnessSeconds,
+				schedule,
+				sourceIdentities,
+				suppressedSourceIdentities,
+			}),
+		)
+		.digest("hex");
 	if (!dueAt) {
 		const state: PeriodDigestFreshnessStateV1 = {
 			schemaVersion: 1,
@@ -361,9 +472,18 @@ async function reconcilePeriodDigestFreshnessInternal({
 			fireAt: "",
 			status: "disabled",
 			updatedAt: now.toISOString(),
+			freshnessSeconds,
+			sourceIdentities,
+			suppressedSourceIdentities,
 		};
 		await writePeriodDigestFreshnessState(state);
 		return { state, installResult: null };
+	}
+	if (
+		previous?.attemptToken === attemptToken &&
+		previous.status === "consumed"
+	) {
+		return { state: previous, installResult: null };
 	}
 	const fireAt = roundUpToMinute(
 		dueAt.getTime() <= now.getTime() ? new Date(now.getTime() + 1) : dueAt,
@@ -376,12 +496,17 @@ async function reconcilePeriodDigestFreshnessInternal({
 		fireAt: fireAt.toISOString(),
 		status: "scheduled",
 		updatedAt: now.toISOString(),
+		freshnessSeconds,
+		sourceIdentities,
+		suppressedSourceIdentities,
 	};
 	await writePeriodDigestFreshnessState(state);
 	const agent = buildPeriodDigestFreshnessLaunchAgent({
 		period,
-		dueAt: fireAt,
+		fireAt,
 		attemptToken,
+		program: program ?? resolveDigestLaunchdExecution().program,
+		envFile: envFile ?? resolveDigestLaunchdExecution().envFile,
 	});
 	try {
 		const installResult = await install(agent, installOptions);
@@ -402,7 +527,9 @@ export function reconcilePeriodDigestFreshness(
 	input: Parameters<typeof reconcilePeriodDigestFreshnessInternal>[0],
 ) {
 	return serializeReconcile(input.period, () =>
-		reconcilePeriodDigestFreshnessInternal(input),
+		withFreshnessSchedulerLease(input.period, () =>
+			reconcilePeriodDigestFreshnessInternal(input),
+		),
 	);
 }
 

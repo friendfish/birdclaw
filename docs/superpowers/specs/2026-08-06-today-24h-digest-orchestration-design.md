@@ -324,7 +324,7 @@ expiresAt = baseAt + freshnessSeconds
 - 精确 `expiresAt` 向上取整到下一分钟形成 `wakeAt`，agent 的 `StartCalendarInterval` 指向 `wakeAt`；CLI 仍用未取整的 `expiresAt` 校验，因此不会提前消费 token。
 - 同 period 的 plist 更新使用 scheduler lease 串行化，先写临时文件并原子替换，再执行 launchctl 更新，避免 Config 保存和批次结束并发覆盖。
 - 更新失败时保留最后一个已成功安装的 agent（如果存在），并在 scheduler state、run audit 和 Config 状态中记录 `degraded`；失败不能被顶层 `ok:true` 隐藏。
-- agent 到点后调用 `run-period-digest --trigger freshness --freshness-token <token>`。
+- agent 到点后调用 `run-period-digest --trigger freshness --attempt-token <token>`。
 - CLI 在取得编排 lease 前重新读取 stable latest 和 Config，校验 token、自然日和当前 `expiresAt`；过时 agent 只记录 no-op，不能错误生成。
 - 同日到期时 Mac 正在休眠，launchd 在唤醒后按系统语义补启动；CLI 随后执行有效性校验。
 - 如果唤醒时已经跨日，该 token 作废并退出，由新一天固定定时负责。
@@ -336,7 +336,7 @@ expiresAt = baseAt + freshnessSeconds
 token = page identity + versionId/scheduled-base + freshnessSeconds
 ```
 
-任何批次在该 token 已过期后开始时，都视为已经消费该次过期机会。即使该来源本轮失败，相同 token 也不会再次自动触发；固定定时或用户 Refresh 仍可重试。新版本或 Config 时长变化会产生新 token。
+任何批次在该 token 已过期后开始时，都视为已经消费该次过期机会。即使该来源本轮失败，相同 token 也不会再次自动触发；固定定时或用户 Refresh 仍可重试。部分成功批次在 finalization 时按成功来源的新版本计算下一次截止点，并暂时抑制失败来源未变化的旧版本；失败来源在后续发布新版本或 Config 时长变化后重新参与计算。这样既不会因 degraded 批次永久停止 freshness，也不会对同一个失败版本立即循环重试。
 
 freshness agent 和固定定时 agent 都独立于 Web 后端运行；两者在撞车时仍通过同一个 period lease 加入同一批次。
 

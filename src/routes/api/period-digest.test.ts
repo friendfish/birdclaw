@@ -9,7 +9,6 @@ vi.mock("#/lib/live-transport-policy", () => ({
 
 const maybeAutoUpdateBackupMock = vi.fn();
 const streamPeriodDigestMock = vi.fn();
-const requestPeriodDigestRunMock = vi.fn();
 
 vi.mock("#/lib/backup", () => ({
 	maybeAutoUpdateBackupEffect: () =>
@@ -34,10 +33,6 @@ vi.mock("#/lib/period-digest", () => ({
 	streamPeriodDigestEffect: (...args: unknown[]) =>
 		Effect.promise(() => streamPeriodDigestMock(...args)),
 }));
-vi.mock("#/lib/period-digest-orchestrator", () => ({
-	requestPeriodDigestRun: (...args: unknown[]) =>
-		requestPeriodDigestRunMock(...args),
-}));
 
 import { Route } from "./period-digest";
 
@@ -47,13 +42,7 @@ describe("api period digest route", () => {
 	beforeEach(() => {
 		maybeAutoUpdateBackupMock.mockReset();
 		streamPeriodDigestMock.mockReset();
-		requestPeriodDigestRunMock.mockReset();
 		maybeAutoUpdateBackupMock.mockResolvedValue({ skipped: true });
-		requestPeriodDigestRunMock.mockResolvedValue({
-			runId: "run-current",
-			joined: false,
-			completion: new Promise(() => undefined),
-		});
 		streamPeriodDigestMock.mockImplementation(
 			async (
 				_options: unknown,
@@ -84,7 +73,7 @@ describe("api period digest route", () => {
 		);
 	});
 
-	it("starts a server-owned manual Today batch and returns without awaiting it", async () => {
+	it("does not create a Today batch from the read endpoint", async () => {
 		const response = await GET({
 			request: new Request(
 				"http://localhost/api/period-digest?period=today&contentSource=for_you&includeDms=true&origin=launchd",
@@ -92,35 +81,10 @@ describe("api period digest route", () => {
 		});
 		const body = await response.text();
 
-		expect(body).toContain('"type":"status"');
-		expect(body).toContain("run-current");
-		expect(requestPeriodDigestRunMock).toHaveBeenCalledWith({
-			period: "today",
-			trigger: "manual",
-			origin: "page",
-			requestedSource: "for_you",
-			liveSync: true,
-		});
+		expect(response.status).toBe(405);
+		expect(body).toContain('"ok":false');
+		expect(body).toContain("POST /api/period-digest-runs");
 		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
-	});
-
-	it("reports a join as normal progress instead of a lock error", async () => {
-		requestPeriodDigestRunMock.mockResolvedValue({
-			runId: "run-scheduled",
-			joined: true,
-			completion: new Promise(() => undefined),
-		});
-
-		const body = await (
-			await GET({
-				request: new Request(
-					"http://localhost/api/period-digest?period=24h&contentSource=all",
-				),
-			})
-		).text();
-
-		expect(body).toContain("Joined existing digest run");
-		expect(body).not.toContain('"type":"error"');
 	});
 
 	it("preserves the direct streaming endpoint for archived periods", async () => {
@@ -140,7 +104,6 @@ describe("api period digest route", () => {
 			}),
 			expect.any(Object),
 		);
-		expect(requestPeriodDigestRunMock).not.toHaveBeenCalled();
 	});
 
 	it("rejects invalid language tags before starting any run", async () => {
@@ -151,7 +114,6 @@ describe("api period digest route", () => {
 		});
 
 		expect(response.status).toBe(400);
-		expect(requestPeriodDigestRunMock).not.toHaveBeenCalled();
 		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
 	});
 });

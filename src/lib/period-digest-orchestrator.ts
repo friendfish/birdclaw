@@ -32,6 +32,7 @@ import { resolveUserPath } from "./launchd";
 import {
 	acquireScheduledJobLock,
 	appendScheduledJobAudit,
+	peekScheduledJobLockMetadata,
 	type ScheduledJobLockRelease,
 } from "./scheduled-job";
 import { sensitiveErrorMessage } from "./sensitive-values";
@@ -127,7 +128,10 @@ export interface PeriodDigestOrchestratorDependencies {
 	generate(input: PeriodDigestGenerateInput): Promise<PeriodDigestRunResult>;
 	readCredentials(path: string): BirdCredentials;
 	publish?(input: PublishCurrentPeriodDigestInput, database?: Database): void;
-	reconcileFreshness?(period: CurrentPeriodDigestPeriod): Promise<unknown>;
+	reconcileFreshness?(
+		period: CurrentPeriodDigestPeriod,
+		options?: { suppressSources: PeriodDigestContentSource[] },
+	): Promise<unknown>;
 	audit?(state: PeriodDigestRunStateV1): Promise<unknown>;
 	sleep?(milliseconds: number): Promise<void>;
 	database?: Database;
@@ -136,6 +140,9 @@ export interface PeriodDigestOrchestratorDependencies {
 	maxGenerateAttempts?: number;
 	retryDelayMs?: number;
 	modelTimeoutMs?: number;
+	completionWaitTimeoutMs?: number;
+	completionPollIntervalMs?: number;
+	stateReadyTimeoutMs?: number;
 }
 
 export interface PeriodDigestRunRequestResult {
@@ -155,6 +162,8 @@ const DEFAULT_RETRY_DELAY_MS = 120_000;
 const DEFAULT_MODEL_TIMEOUT_MS = 10 * 60_000;
 export const PERIOD_DIGEST_LOCK_STALE_MS = 60_000;
 const MAX_RUN_AGE_MS = 6 * 60 * 60_000;
+const DEFAULT_COMPLETION_POLL_INTERVAL_MS = 250;
+const DEFAULT_STATE_READY_TIMEOUT_MS = 5_000;
 const MAX_TWEETS = 5_000;
 const MAX_LINKS = 20;
 const stateMutationQueues = new Map<string, Promise<void>>();
@@ -190,6 +199,19 @@ export function periodDigestRunLockPath(period: CurrentPeriodDigestPeriod) {
 		getBirdclawPaths().rootDir,
 		"locks",
 		`period-digest-${period}.lock`,
+	);
+}
+
+function periodDigestJoinEventsDir(
+	period: CurrentPeriodDigestPeriod,
+	runId: string,
+) {
+	return path.join(
+		getBirdclawPaths().rootDir,
+		"runs",
+		"period-digest-joins",
+		period,
+		runId,
 	);
 }
 
@@ -243,8 +265,64 @@ async function readRunStateFile(statePath: string) {
 	}
 }
 
-export function readPeriodDigestRunState(period: CurrentPeriodDigestPeriod) {
-	return readRunStateFile(periodDigestRunStatePath(period));
+async function readJoinedTriggers(
+	period: CurrentPeriodDigestPeriod,
+	runId: string,
+) {
+	const directory = periodDigestJoinEventsDir(period, runId);
+	const names = await fs.readdir(directory).catch(() => [] as string[]);
+	const events = await Promise.all(
+		names.map(async (name) => {
+			const raw = await fs
+				.readFile(path.join(directory, name), "utf8")
+				.catch(() => undefined);
+			if (raw === undefined) return undefined;
+			try {
+				const event = JSON.parse(
+					raw,
+				) as Partial<PeriodDigestJoinedTriggerEvent>;
+				return isTrigger(event.trigger) &&
+					isOrigin(event.origin) &&
+					typeof event.at === "string"
+					? (event as PeriodDigestJoinedTriggerEvent)
+					: undefined;
+			} catch {
+				return undefined;
+			}
+		}),
+	);
+	return events
+		.filter(
+			(event): event is PeriodDigestJoinedTriggerEvent => event !== undefined,
+		)
+		.sort((left, right) => left.at.localeCompare(right.at));
+}
+
+function joinedTriggerKey(event: PeriodDigestJoinedTriggerEvent) {
+	return `${event.trigger}:${event.origin}:${event.at}`;
+}
+
+async function withJoinedTriggers(state: PeriodDigestRunStateV1) {
+	const joinedBy = await readJoinedTriggers(state.period, state.runId);
+	const unique = new Map(
+		[...state.joinedBy, ...joinedBy].map((event) => [
+			joinedTriggerKey(event),
+			event,
+		]),
+	);
+	return {
+		...state,
+		joinedBy: [...unique.values()].sort((left, right) =>
+			left.at.localeCompare(right.at),
+		),
+	};
+}
+
+export async function readPeriodDigestRunState(
+	period: CurrentPeriodDigestPeriod,
+) {
+	const state = await readRunStateFile(periodDigestRunStatePath(period));
+	return state ? withJoinedTriggers(state) : undefined;
 }
 
 async function writeRunStateFile(
@@ -291,21 +369,18 @@ function updateOwnedRunState(
 }
 
 async function recordJoinedTrigger(
-	statePath: string,
+	period: CurrentPeriodDigestPeriod,
 	runId: string,
 	event: PeriodDigestTriggerEvent,
 	now: Date,
 ) {
-	return serializeStateMutation(statePath, async () => {
-		const current = await readRunStateFile(statePath);
-		if (!current || current.runId !== runId) return current;
-		const next = {
-			...current,
-			joinedBy: [...current.joinedBy, { ...event, at: now.toISOString() }],
-		};
-		await writeRunStateFile(statePath, next);
-		return next;
-	});
+	const directory = periodDigestJoinEventsDir(period, runId);
+	await fs.mkdir(directory, { recursive: true });
+	await fs.writeFile(
+		path.join(directory, `${process.pid}-${randomUUID()}.json`),
+		`${JSON.stringify({ ...event, at: now.toISOString() })}\n`,
+		{ encoding: "utf8", flag: "wx" },
+	);
 }
 
 function sourceOrder(request: PeriodDigestRunRequest) {
@@ -398,10 +473,10 @@ function defaultDependencies(): PeriodDigestOrchestratorDependencies {
 			}
 			return credentials;
 		},
-		reconcileFreshness: async (period) => {
+		reconcileFreshness: async (period, options) => {
 			const { reconcilePeriodDigestFreshness } =
 				await import("./period-digest-freshness");
-			return reconcilePeriodDigestFreshness({ period });
+			return reconcilePeriodDigestFreshness({ period, ...options });
 		},
 		audit: (state) =>
 			appendScheduledJobAudit(
@@ -413,30 +488,77 @@ function defaultDependencies(): PeriodDigestOrchestratorDependencies {
 	};
 }
 
-async function waitForActiveRunState(statePath: string) {
-	for (let attempt = 0; attempt < 20; attempt += 1) {
-		const state = await readRunStateFile(statePath);
-		if (state && !["completed", "degraded", "failed"].includes(state.phase)) {
+async function waitForJoinableRunState({
+	statePath,
+	lockPath,
+	lockStaleMs,
+	timeoutMs,
+	pollIntervalMs,
+}: {
+	statePath: string;
+	lockPath: string;
+	lockStaleMs: number;
+	timeoutMs: number;
+	pollIntervalMs: number;
+}) {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const [state, lock] = await Promise.all([
+			readRunStateFile(statePath),
+			peekScheduledJobLockMetadata(lockPath, lockStaleMs, MAX_RUN_AGE_MS),
+		]);
+		if (!lock) return undefined;
+		if (state && (!lock.ownerId || state.ownerId === lock.ownerId))
 			return state;
+		if (Date.now() >= deadline) {
+			throw new Error(
+				"Period digest is locked but its run state is unavailable",
+			);
 		}
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 	}
-	return undefined;
 }
 
 async function waitForRunCompletion(
 	statePath: string,
+	lockPath: string,
 	runId: string,
+	lockStaleMs: number,
+	timeoutMs: number,
+	pollIntervalMs: number,
 ): Promise<PeriodDigestRunStateV1> {
+	const deadline = Date.now() + timeoutMs;
 	for (;;) {
 		const state = await readRunStateFile(statePath);
-		if (
-			state?.runId === runId &&
-			["completed", "degraded", "failed"].includes(state.phase)
-		) {
-			return state;
+		if (state && state.runId !== runId) {
+			throw new Error(
+				`Period digest run ${runId} was superseded by ${state.runId}`,
+			);
 		}
-		await new Promise((resolve) => setTimeout(resolve, 250));
+		if (state && ["completed", "degraded", "failed"].includes(state.phase)) {
+			return withJoinedTriggers(state);
+		}
+		const lock = await peekScheduledJobLockMetadata(
+			lockPath,
+			lockStaleMs,
+			MAX_RUN_AGE_MS,
+		);
+		if (!lock) {
+			throw new Error(`Period digest run ${runId} lost its active owner`);
+		}
+		if (Date.now() >= deadline) {
+			throw new Error(
+				`Period digest run ${runId} did not complete within ${String(timeoutMs)}ms`,
+			);
+		}
+		await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+	}
+}
+
+class PeriodDigestOwnershipLostError extends Error {
+	constructor(cause?: unknown) {
+		super("Period digest lease ownership was lost", { cause });
+		this.name = "PeriodDigestOwnershipLostError";
 	}
 }
 
@@ -454,13 +576,35 @@ async function runOwnedBatch({
 	dependencies: PeriodDigestOrchestratorDependencies;
 }): Promise<PeriodDigestRunStateV1> {
 	const ownerId = state.ownerId;
+	const ownerAbort = new AbortController();
+	let ownershipError: PeriodDigestOwnershipLostError | undefined;
+	const loseOwnership = (cause?: unknown) => {
+		if (ownershipError) return ownershipError;
+		ownershipError = new PeriodDigestOwnershipLostError(cause);
+		ownerAbort.abort(ownershipError);
+		return ownershipError;
+	};
+	const throwIfOwnershipLost = () => {
+		if (ownershipError) throw ownershipError;
+	};
+	let heartbeatTask = Promise.resolve();
 	const heartbeat = setInterval(() => {
-		void updateOwnedRunState(
-			statePath,
-			ownerId,
-			(current) => current,
-			dependencies.now(),
-		).then(() => releaseLock.heartbeat());
+		heartbeatTask = heartbeatTask
+			.then(async () => {
+				if (ownerAbort.signal.aborted) return;
+				const updated = await updateOwnedRunState(
+					statePath,
+					ownerId,
+					(current) => current,
+					dependencies.now(),
+				);
+				if (!updated || !(await releaseLock.heartbeat())) {
+					throw new PeriodDigestOwnershipLostError();
+				}
+			})
+			.catch((error) => {
+				loseOwnership(error);
+			});
 	}, dependencies.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS);
 	heartbeat.unref?.();
 	let completedSources = 0;
@@ -509,6 +653,7 @@ async function runOwnedBatch({
 		const language = request.language ?? selectPeriodDigestLanguage();
 		const promptHash = resolveEffectivePrompt("period-digest").promptHash;
 		for (const contentSource of state.sourceOrder) {
+			throwIfOwnershipLost();
 			const maxAttempts = Math.max(
 				1,
 				dependencies.maxGenerateAttempts ?? DEFAULT_MAX_GENERATE_ATTEMPTS,
@@ -545,13 +690,17 @@ async function runOwnedBatch({
 						since: window.since,
 						until: window.until,
 						...(language ? { language } : {}),
-						signal: AbortSignal.timeout(
-							dependencies.modelTimeoutMs ?? DEFAULT_MODEL_TIMEOUT_MS,
-						),
+						signal: AbortSignal.any([
+							ownerAbort.signal,
+							AbortSignal.timeout(
+								dependencies.modelTimeoutMs ?? DEFAULT_MODEL_TIMEOUT_MS,
+							),
+						]),
 					});
 					generationError = undefined;
 					break;
 				} catch (error) {
+					throwIfOwnershipLost();
 					generationError = error;
 					if (attempt < maxAttempts) {
 						await (dependencies.sleep ?? defaultDependencies().sleep)?.(
@@ -561,12 +710,13 @@ async function runOwnedBatch({
 				}
 			}
 			try {
+				throwIfOwnershipLost();
 				if (!generated) throw generationError;
 				const context = contexts.get(contentSource);
 				if (!context)
 					throw new Error(`Missing frozen ${contentSource} context`);
 				if (!(await releaseLock.heartbeat())) {
-					throw new Error("Period digest lease ownership was lost");
+					throw loseOwnership();
 				}
 				const versionId = dependencies.randomId();
 				(dependencies.publish ?? publishCurrentPeriodDigest)(
@@ -604,6 +754,7 @@ async function runOwnedBatch({
 					dependencies.now(),
 				);
 			} catch (error) {
+				throwIfOwnershipLost();
 				await updateOwnedRunState(
 					statePath,
 					ownerId,
@@ -641,17 +792,21 @@ async function runOwnedBatch({
 			dependencies.now(),
 		);
 		if (!finalState) throw new Error("Period digest run ownership was lost");
-		if (
-			Object.values(finalState.sources).every(
-				(source) => source.state === "completed",
-			)
-		) {
-			await dependencies
-				.reconcileFreshness?.(request.period)
-				.catch(() => undefined);
+		if (completedSources > 0) {
+			const suppressSources = DEFAULT_SOURCE_ORDER.filter(
+				(contentSource) => finalState.sources[contentSource].state === "failed",
+			);
+			const reconciliation =
+				suppressSources.length > 0
+					? dependencies.reconcileFreshness?.(request.period, {
+							suppressSources,
+						})
+					: dependencies.reconcileFreshness?.(request.period);
+			await reconciliation?.catch(() => undefined);
 		}
-		await dependencies.audit?.(finalState).catch(() => undefined);
-		return finalState;
+		const observedFinalState = await withJoinedTriggers(finalState);
+		await dependencies.audit?.(observedFinalState).catch(() => undefined);
+		return observedFinalState;
 	} catch (error) {
 		const failed = await updateOwnedRunState(
 			statePath,
@@ -667,12 +822,14 @@ async function runOwnedBatch({
 			dependencies.now(),
 		);
 		if (failed) {
-			await dependencies.audit?.(failed).catch(() => undefined);
-			return failed;
+			const observedFailed = await withJoinedTriggers(failed);
+			await dependencies.audit?.(observedFailed).catch(() => undefined);
+			return observedFailed;
 		}
 		throw error;
 	} finally {
 		clearInterval(heartbeat);
+		await heartbeatTask.catch(() => undefined);
 		await releaseLock();
 	}
 }
@@ -689,21 +846,30 @@ export async function requestPeriodDigestRun(
 		...dependencyOverrides,
 	} satisfies PeriodDigestOrchestratorDependencies;
 	const statePath = periodDigestRunStatePath(request.period);
-	const releaseLock = await acquireScheduledJobLock(
-		periodDigestRunLockPath(request.period),
-		dependencies.lockStaleMs ?? PERIOD_DIGEST_LOCK_STALE_MS,
-		{ totalSources: DEFAULT_SOURCE_ORDER.length },
-		MAX_RUN_AGE_MS,
-	);
-	if (!releaseLock) {
-		const active = await waitForActiveRunState(statePath);
-		if (!active) {
-			throw new Error(
-				"Period digest is locked but its run state is unavailable",
-			);
-		}
-		await recordJoinedTrigger(
+	const lockPath = periodDigestRunLockPath(request.period);
+	const lockStaleMs = dependencies.lockStaleMs ?? PERIOD_DIGEST_LOCK_STALE_MS;
+	let releaseLock: ScheduledJobLockRelease | undefined;
+	for (;;) {
+		releaseLock = await acquireScheduledJobLock(
+			lockPath,
+			lockStaleMs,
+			{ totalSources: DEFAULT_SOURCE_ORDER.length },
+			MAX_RUN_AGE_MS,
+		);
+		if (releaseLock) break;
+		const active = await waitForJoinableRunState({
 			statePath,
+			lockPath,
+			lockStaleMs,
+			timeoutMs:
+				dependencies.stateReadyTimeoutMs ?? DEFAULT_STATE_READY_TIMEOUT_MS,
+			pollIntervalMs:
+				dependencies.completionPollIntervalMs ??
+				DEFAULT_COMPLETION_POLL_INTERVAL_MS,
+		});
+		if (!active) continue;
+		await recordJoinedTrigger(
+			request.period,
 			active.runId,
 			{ trigger: request.trigger, origin: request.origin },
 			dependencies.now(),
@@ -711,13 +877,21 @@ export async function requestPeriodDigestRun(
 		return {
 			runId: active.runId,
 			joined: true,
-			completion: waitForRunCompletion(statePath, active.runId),
+			completion: waitForRunCompletion(
+				statePath,
+				lockPath,
+				active.runId,
+				lockStaleMs,
+				dependencies.completionWaitTimeoutMs ?? MAX_RUN_AGE_MS,
+				dependencies.completionPollIntervalMs ??
+					DEFAULT_COMPLETION_POLL_INTERVAL_MS,
+			),
 		};
 	}
 
 	const state = createInitialState(
 		request,
-		dependencies.randomId(),
+		releaseLock.ownerId,
 		dependencies.randomId(),
 		dependencies.now(),
 	);

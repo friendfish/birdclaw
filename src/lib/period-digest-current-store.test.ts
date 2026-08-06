@@ -110,7 +110,11 @@ describe("current period digest store", () => {
 			generatedAt: "2026-08-06T08:30:00.000Z",
 			markdown: "# Today following",
 			language: "zh-CN",
-			input: { maxTweets: 5_000, maxLinks: 20 },
+			input: {
+				provenance: "generated",
+				maxTweets: 5_000,
+				maxLinks: 20,
+			},
 		});
 
 		publishCurrentPeriodDigest(
@@ -214,10 +218,12 @@ describe("current period digest store", () => {
 			generatedAt: "2026-08-06T08:30:00.000Z",
 			markdown: "# Today all",
 			migratedFromLegacy: true,
+			input: { provenance: "legacy-unknown" },
 		});
 		expect(readCurrentPeriodDigest("24h", "for_you", db)).toMatchObject({
 			generatedAt: "2026-08-06T08:40:00.000Z",
 			migratedFromLegacy: true,
+			input: { provenance: "legacy-unknown" },
 		});
 		expect(readCurrentPeriodDigest("today", "following", db)).toBeNull();
 	});

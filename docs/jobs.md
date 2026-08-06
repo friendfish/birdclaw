@@ -1,6 +1,6 @@
 ---
 title: Jobs
-description: "Scheduler-friendly bookmark sync with launchd integration, audit logs, and lock files."
+description: "Scheduler-friendly sync and digest generation with launchd integration, audit logs, and lock files."
 ---
 
 # Jobs
@@ -115,10 +115,11 @@ birdclaw --json jobs install-bookmarks-launchd \
 
 The plist sources that file inside the scheduled process. The cookies stay on your machine, in your home directory, with mode `0600`. They are never written into the plist itself.
 
-## Scheduled digest archives
+## Scheduled digests
 
-`jobs run-digest-archive` generates and archives one period. The launchd
-installer creates independent Today, 24h, Yesterday, and Week agents:
+The launchd installer creates independent Today, 24h, Yesterday, and Week
+agents. Today/24h publish persistent current results; Yesterday/Week write dated
+Markdown and JSON archives:
 
 ```bash
 birdclaw --json jobs install-digest-archive-launchd \
@@ -150,6 +151,68 @@ It sources a trusted shell file and can carry variables such as
 command accepts both options when a scheduled digest needs a general environment
 file plus a separate strict Bird credential file.
 
+### Today and 24h current digests
+
+`jobs run-period-digest` generates one Today or 24h batch. A batch refreshes the
+information sources once, freezes the three contexts, and generates All,
+Following, and For You sequentially. Each source is published atomically as it
+finishes. Existing content remains visible while a replacement is running or if
+one source fails.
+
+```bash
+birdclaw --json jobs run-period-digest \
+  --period today \
+  --trigger manual \
+  --origin cli \
+  --requested-source for_you
+```
+
+A manual owner generates `--requested-source` first. Fixed scheduled and
+freshness owners use All, Following, then For You. Requests that collide for the
+same period join the active batch; they do not start a second batch or queue a
+follow-up run. The run state records both the owner trigger and each joining
+trigger with its origin.
+
+Today/24h do not create dated archive files and have no Save action. Their six
+logical pages are persistent latest-success values in the local database. Older
+Today/24h archive files are left untouched for manual access, but the app no
+longer reads or replaces them. Yesterday/Week remain the dated sources for
+longer-term analysis.
+
+The compatibility command
+`jobs run-digest-archive --period today|24h` delegates to the same current-digest
+orchestrator and reports `archived:false`. It reports archive-only or backfill
+flags in `ignoredOptions` instead of silently ignoring them: `--include-dms`,
+`--content-sources`,
+`--archive-dir`, `--retries`, `--retry-delay-seconds`, `--log`, `--since`,
+`--until`, and `--run-date`. Use `jobs run-period-digest` for new integrations.
+
+### Fixed and freshness agents
+
+Today and 24h each have two launchd paths:
+
+- the fixed calendar agent starts the configured morning batch;
+- a one-shot freshness agent wakes at the earliest same-day
+  `generatedAt + freshness` deadline across the three source pages.
+
+Freshness defaults to 12 hours and is configurable from 1 to 24 hours in Config.
+It never schedules across the local calendar-day boundary. Publishing a new
+source version or changing the setting recalculates the deadline. A one-shot
+attempt token prevents the same stale version from creating a retry loop.
+
+If a batch is partially successful, successful pages get new deadlines. A
+failed page's unchanged version is suppressed for that consumed freshness
+opportunity; it becomes eligible again after a manual/fixed run publishes a new
+version or the freshness setting changes. This preserves automatic scheduling
+without immediately rerunning the same failed work.
+
+The dynamic freshness agent reuses the `--program` and `--env-path` saved when
+the fixed digest agents are installed, so Homebrew/npm executable paths and
+variables such as `OPENAI_API_KEY` remain available. Saving Config reinstalls the
+fixed agents and reconciles the one-shot agents. The page also performs a
+token-guarded stale fallback, but normal freshness generation does not depend on
+opening the page.
+
 Credential precedence for Bird subprocesses is inherited process environment,
 then Config-managed credentials, then an explicit strict credential file. Each
 digest lock is renewed by a heartbeat while the job runs and has a six-hour
@@ -167,9 +230,7 @@ scheduled run instead of appearing as a missing archive.
 Scheduled Today and 24h generation uses the same tweet and link input limits as
 the corresponding page; Yesterday and Week retain the archive job's lower
 defaults. Page requests and scheduled jobs also share the same language
-precedence (explicit option, environment, then Config). Together these keep the
-current-digest latest-cache identity aligned without increasing the input cost
-of historical archive generation.
+precedence (explicit option, environment, then Config).
 
 ## Useful checks
 

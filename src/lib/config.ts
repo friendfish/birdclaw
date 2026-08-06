@@ -65,6 +65,10 @@ export interface BirdclawConfig {
 		freshnessSeconds?: number;
 		archiveDir?: string;
 		schedule?: Partial<Record<DigestSchedulePeriod, DigestScheduleTime>>;
+		launchd?: {
+			program?: string;
+			envFile?: string;
+		};
 	};
 	backup?: {
 		repoPath?: string;
@@ -146,6 +150,36 @@ export function writeBirdclawConfig(config: BirdclawConfig) {
 	writeFileSync(configPath, `${JSON.stringify(config, null, "\t")}\n`, "utf8");
 	cachedConfig = config;
 	return configPath;
+}
+
+export function resolveDigestLaunchdExecution() {
+	const launchd = getBirdclawConfig().digest?.launchd;
+	return {
+		program: launchd?.program?.trim() || "birdclaw",
+		...(launchd?.envFile?.trim() ? { envFile: launchd.envFile.trim() } : {}),
+	};
+}
+
+export function setDigestLaunchdExecution({
+	program,
+	envFile,
+}: {
+	program?: string;
+	envFile?: string;
+}) {
+	const config = getBirdclawConfig();
+	const nextConfig: BirdclawConfig = {
+		...config,
+		digest: {
+			...config.digest,
+			launchd: {
+				program: program?.trim() || "birdclaw",
+				...(envFile?.trim() ? { envFile: envFile.trim() } : {}),
+			},
+		},
+	};
+	writeBirdclawConfig(nextConfig);
+	return resolveDigestLaunchdExecution();
 }
 
 export function setActionsTransport(transport: ActionsTransport) {

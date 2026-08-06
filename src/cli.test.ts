@@ -14,6 +14,7 @@ const resolveLiveReadModeMock = vi.hoisted(() => vi.fn());
 const resolveLiveSyncModeMock = vi.hoisted(() => vi.fn());
 const resolveMentionThreadReadModeMock = vi.hoisted(() => vi.fn());
 const setActionsTransportMock = vi.fn();
+const setDigestLaunchdExecutionMock = vi.fn();
 const getQueryEnvelopeMock = vi.fn();
 const getNativeDbMock = vi.fn();
 const seedDemoDataMock = vi.fn();
@@ -118,6 +119,8 @@ vi.mock("#/lib/config", () => ({
 	resolveActionsTransport: (...args: unknown[]) =>
 		resolveActionsTransportMock(...args),
 	setActionsTransport: (...args: unknown[]) => setActionsTransportMock(...args),
+	setDigestLaunchdExecution: (...args: unknown[]) =>
+		setDigestLaunchdExecutionMock(...args),
 }));
 
 vi.mock("#/lib/live-transport-policy", () => ({
@@ -411,6 +414,7 @@ describe("cli", () => {
 		resolveLiveSyncModeMock.mockReset();
 		resolveMentionThreadReadModeMock.mockReset();
 		setActionsTransportMock.mockReset();
+		setDigestLaunchdExecutionMock.mockReset();
 		getQueryEnvelopeMock.mockReset();
 		getNativeDbMock.mockReset();
 		seedDemoDataMock.mockReset();
@@ -942,6 +946,10 @@ describe("cli", () => {
 			},
 			{ launchAgentsDir: undefined, load: false },
 		);
+		expect(setDigestLaunchdExecutionMock).toHaveBeenCalledWith({
+			program: "birdclaw",
+			envFile: "/tmp/digest.env",
+		});
 	});
 
 	it("forwards a strict digest credential path to the auditable job boundary", async () => {
@@ -1079,6 +1087,54 @@ describe("cli", () => {
 			}),
 		);
 		expect(runDigestArchiveJobMock).not.toHaveBeenCalled();
+	});
+
+	it("reports ignored archive-only options while preserving legacy Today/24h agents", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"run-digest-archive",
+			"--period",
+			"today",
+			"--include-dms",
+			"--content-sources",
+			"all",
+			"--archive-dir",
+			"/tmp/archive",
+			"--retries",
+			"4",
+			"--retry-delay-seconds",
+			"1",
+			"--log",
+			"/tmp/digest.log",
+			"--since",
+			"2026-08-06T00:00:00Z",
+			"--until",
+			"2026-08-06T08:00:00Z",
+			"--run-date",
+			"2026-08-06",
+		]);
+
+		expect(requestPeriodDigestRunMock).toHaveBeenCalledOnce();
+		expect(
+			JSON.parse(consoleLogMock.mock.lastCall?.[0] as string),
+		).toMatchObject({
+			archived: false,
+			ignoredOptions: [
+				"--include-dms",
+				"--content-sources",
+				"--archive-dir",
+				"--retries",
+				"--retry-delay-seconds",
+				"--log",
+				"--since",
+				"--until",
+				"--run-date",
+			],
+		});
 	});
 
 	it("forwards manual current-digest options without live sync", async () => {

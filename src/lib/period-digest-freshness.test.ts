@@ -13,6 +13,8 @@ import {
 	triggerDuePeriodDigestFreshness,
 	writePeriodDigestFreshnessState,
 } from "./period-digest-freshness";
+import { acquireScheduledJobLock } from "./scheduled-job";
+import type { LaunchAgentInstallResult } from "./launchd";
 
 const testHome = useTestHome({ prefix: "birdclaw-digest-freshness-" });
 
@@ -30,6 +32,22 @@ describe("period digest freshness", () => {
 		});
 
 		expect(due).toEqual(new Date(2026, 7, 6, 20, 0, 0));
+	});
+
+	it("suppresses a failed source version when calculating the next deadline", () => {
+		const due = calculatePeriodDigestFreshnessDeadline({
+			now: new Date(2026, 7, 6, 10, 0, 0),
+			freshnessSeconds: 12 * 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			generatedAt: {
+				all: new Date(2026, 7, 6, 6, 0, 0).toISOString(),
+				following: new Date(2026, 7, 6, 8, 30, 0).toISOString(),
+				for_you: new Date(2026, 7, 6, 8, 30, 0).toISOString(),
+			},
+			suppressedSources: ["all"],
+		});
+
+		expect(due).toEqual(new Date(2026, 7, 6, 20, 30, 0));
 	});
 
 	it("recalculates from refreshed content and never schedules across a day", () => {
@@ -57,12 +75,14 @@ describe("period digest freshness", () => {
 		).toBeNull();
 	});
 
-	it("rounds a one-shot launchd wakeup up to the next minute", () => {
-		const dueAt = new Date(2026, 7, 6, 10, 30, 1);
+	it("uses the already-rounded one-shot launchd wakeup", () => {
+		const fireAt = new Date(2026, 7, 6, 10, 31, 0);
 		const agent = buildPeriodDigestFreshnessLaunchAgent({
 			period: "today",
-			dueAt,
+			fireAt,
 			attemptToken: "attempt-1",
+			program: "/opt/homebrew/bin/birdclaw",
+			envFile: "~/.config/bird/env.sh",
 		});
 
 		expect(agent.schedule).toEqual({
@@ -74,18 +94,24 @@ describe("period digest freshness", () => {
 			minute: 31,
 		});
 		expect(agent.runAtLoad).toBe(false);
-		expect(agent.programArguments).toEqual(
-			expect.arrayContaining([
-				"run-period-digest",
-				"--trigger",
-				"freshness",
-				"--origin",
-				"launchd",
-				"--attempt-token",
-				"attempt-1",
-				"--bird-credentials-path",
-			]),
+		expect(agent.envFile).toContain("/.config/bird/env.sh");
+		expect(agent.programArguments[0]).toBe("/bin/bash");
+		expect(agent.programArguments.join(" ")).toContain(
+			"/opt/homebrew/bin/birdclaw",
 		);
+		const command = agent.programArguments.join(" ");
+		for (const expected of [
+			"run-period-digest",
+			"--trigger",
+			"freshness",
+			"--origin",
+			"launchd",
+			"--attempt-token",
+			"attempt-1",
+			"--bird-credentials-path",
+		]) {
+			expect(command).toContain(expected);
+		}
 	});
 
 	it("consumes the matching same-day attempt once and rejects stale tokens", async () => {
@@ -201,6 +227,60 @@ describe("period digest freshness", () => {
 		});
 		expect(second.state.status).toBe("scheduled");
 		expect(maximumActiveInstalls).toBe(1);
+	});
+
+	it("derives a stable token and preserves its consumed state across reconciliation", async () => {
+		const now = new Date(2026, 7, 6, 10, 0, 0);
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const input = {
+			period: "today" as const,
+			now,
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		};
+		const first = await reconcilePeriodDigestFreshness(input);
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: first.state.attemptToken,
+				now,
+			}),
+		).resolves.toEqual({ valid: true });
+
+		const second = await reconcilePeriodDigestFreshness(input);
+
+		expect(second.state.attemptToken).toBe(first.state.attemptToken);
+		expect(second.state.status).toBe("consumed");
+		expect(install).toHaveBeenCalledTimes(1);
+	});
+
+	it("waits for the cross-process scheduler lease before installing", async () => {
+		const lockPath = path.join(
+			testHome().root,
+			"locks",
+			"period-digest-freshness-today.lock",
+		);
+		const release = await acquireScheduledJobLock(lockPath, 60_000);
+		expect(release).toBeTypeOf("function");
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const reconciliation = reconcilePeriodDigestFreshness({
+			period: "today",
+			now: new Date(2026, 7, 6, 10, 0, 0),
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		});
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(install).not.toHaveBeenCalled();
+
+		await release?.();
+		await reconciliation;
+		expect(install).toHaveBeenCalledOnce();
 	});
 
 	it("treats missing, corrupt, and incomplete freshness state as absent", async () => {

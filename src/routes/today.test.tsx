@@ -236,12 +236,13 @@ describe("today route", () => {
 
 	it("does not clear the current result when Refresh requests a new batch", async () => {
 		let resolveTrigger!: (response: Response) => void;
+		let triggerRequest: RequestInit | undefined;
 		const triggerResponse = new Promise<Response>((resolve) => {
 			resolveTrigger = resolve;
 		});
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async (input: RequestInfo | URL) => {
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 				const url = new URL(String(input), "http://localhost");
 				if (url.pathname === "/api/data-sources") {
 					return jsonResponse(dataSourcesResponse());
@@ -252,7 +253,10 @@ describe("today route", () => {
 				if (url.pathname === "/api/period-digest-metadata") {
 					return jsonResponse(metadataResponse());
 				}
-				if (url.pathname === "/api/period-digest") return triggerResponse;
+				if (url.pathname === "/api/period-digest-runs") {
+					triggerRequest = init;
+					return triggerResponse;
+				}
 				throw new Error(`Unexpected fetch ${url.pathname}`);
 			}),
 		);
@@ -267,12 +271,14 @@ describe("today route", () => {
 		await waitFor(() =>
 			expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled(),
 		);
+		expect(triggerRequest?.method).toBe("POST");
+		expect(JSON.parse(String(triggerRequest?.body))).toEqual({
+			period: "today",
+			requestedSource: "all",
+			liveSync: true,
+		});
 
-		resolveTrigger(
-			new Response(
-				'{"type":"status","label":"Started digest in background","detail":"run-new"}\n',
-			),
-		);
+		resolveTrigger(jsonResponse({ ok: true, runId: "run-new", joined: false }));
 		await waitFor(() =>
 			expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
 		);

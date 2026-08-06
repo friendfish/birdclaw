@@ -16,6 +16,7 @@ import {
 import {
 	readPeriodDigestRunState,
 	requestPeriodDigestRun,
+	periodDigestRunLockPath,
 	periodDigestRunStatePath,
 	type PeriodDigestOrchestratorDependencies,
 } from "./period-digest-orchestrator";
@@ -144,6 +145,9 @@ describe("period digest orchestrator", () => {
 		expect(freshness).toMatchObject({ joined: true, runId: owner.runId });
 		expect(generate).toHaveBeenCalledTimes(1);
 		let state = await readPeriodDigestRunState("today");
+		const rawState = JSON.parse(
+			await fs.readFile(periodDigestRunStatePath("today"), "utf8"),
+		) as { joinedBy: unknown[] };
 		expect(state).toMatchObject({
 			runId: owner.runId,
 			startedBy: { trigger: "manual", origin: "page" },
@@ -162,6 +166,8 @@ describe("period digest orchestrator", () => {
 
 		gate.resolve(result("today", "for_you"));
 		state = await owner.completion;
+		await Promise.all([scheduled.completion, freshness.completion]);
+		expect(rawState.joinedBy).toEqual([]);
 		expect(state.phase).toBe("completed");
 		expect(generate.mock.calls.map(([input]) => input.contentSource)).toEqual([
 			"for_you",
@@ -170,6 +176,116 @@ describe("period digest orchestrator", () => {
 		]);
 		expect(deps.preSync).toHaveBeenCalledTimes(1);
 		expect(deps.readCredentials).toHaveBeenCalledTimes(1);
+	});
+
+	it("joins a terminal run while its owner is still finalizing", async () => {
+		const finalization = deferred<unknown>();
+		const deps = dependencies({
+			reconcileFreshness: vi.fn(() => finalization.promise),
+		});
+		const owner = await requestPeriodDigestRun(
+			{ period: "today", trigger: "scheduled", origin: "launchd" },
+			deps,
+		);
+		let terminal = await readPeriodDigestRunState("today");
+		for (
+			let attempt = 0;
+			terminal?.phase !== "completed" && attempt < 50;
+			attempt += 1
+		) {
+			await new Promise((resolve) => setTimeout(resolve, 2));
+			terminal = await readPeriodDigestRunState("today");
+		}
+		expect(terminal?.phase).toBe("completed");
+
+		const collision = await requestPeriodDigestRun(
+			{ period: "today", trigger: "manual", origin: "page" },
+			deps,
+		);
+		expect(collision).toMatchObject({ joined: true, runId: owner.runId });
+		await expect(collision.completion).resolves.toMatchObject({
+			runId: owner.runId,
+			phase: "completed",
+		});
+
+		finalization.resolve(undefined);
+		await owner.completion;
+	});
+
+	it("bounds a joiner's wait when the owner never reaches a terminal state", async () => {
+		const gate = deferred<PeriodDigestRunResult>();
+		const deps = dependencies({
+			generate: vi.fn(() => gate.promise),
+			completionWaitTimeoutMs: 10,
+			completionPollIntervalMs: 1,
+		});
+		const owner = await requestPeriodDigestRun(
+			{ period: "24h", trigger: "scheduled", origin: "launchd" },
+			deps,
+		);
+		const joiner = await requestPeriodDigestRun(
+			{ period: "24h", trigger: "manual", origin: "page" },
+			deps,
+		);
+		const outcome = await Promise.race([
+			joiner.completion.then(
+				() => "resolved",
+				() => "rejected",
+			),
+			new Promise<string>((resolve) =>
+				setTimeout(() => resolve("external-timeout"), 50),
+			),
+		]);
+
+		gate.resolve(result("24h", "all"));
+		await owner.completion;
+		await joiner.completion.catch(() => undefined);
+		expect(outcome).toBe("rejected");
+	});
+
+	it("aborts the batch and skips later sources after losing its lease", async () => {
+		const publish = vi.fn();
+		const generate = vi.fn(
+			async ({
+				signal,
+			}: Parameters<PeriodDigestOrchestratorDependencies["generate"]>[0]) => {
+				await fs.rm(periodDigestRunLockPath("today"), { force: true });
+				return new Promise<PeriodDigestRunResult>((_resolve, reject) => {
+					const fallback = setTimeout(
+						() => reject(new Error("model did not observe owner cancellation")),
+						50,
+					);
+					if (signal?.aborted) {
+						clearTimeout(fallback);
+						reject(signal.reason);
+						return;
+					}
+					signal?.addEventListener(
+						"abort",
+						() => {
+							clearTimeout(fallback);
+							reject(signal.reason);
+						},
+						{ once: true },
+					);
+				});
+			},
+		);
+		const run = await requestPeriodDigestRun(
+			{ period: "today", trigger: "scheduled", origin: "launchd" },
+			dependencies({
+				generate,
+				publish,
+				heartbeatIntervalMs: 2,
+			}),
+		);
+
+		await expect(run.completion).resolves.toMatchObject({
+			phase: "failed",
+			error: expect.stringContaining("lease ownership was lost"),
+		});
+		expect(generate).toHaveBeenCalledTimes(1);
+		expect(publish).not.toHaveBeenCalled();
 	});
 
 	it("freezes all source contexts before the first sequential generation", async () => {
@@ -262,7 +378,9 @@ describe("period digest orchestrator", () => {
 			generatedAt: "2026-08-06T08:30:00.000Z",
 			contentSource: "for_you",
 		});
-		expect(deps.reconcileFreshness).not.toHaveBeenCalled();
+		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
+			suppressSources: ["all"],
+		});
 	});
 
 	it("retries a source within the same batch and records the successful attempt", async () => {

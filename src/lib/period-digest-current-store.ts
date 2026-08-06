@@ -19,6 +19,14 @@ import { readSyncCache, writeSyncCache } from "./sync-cache";
 
 export type CurrentPeriodDigestPeriod = "today" | "24h";
 
+export type CurrentPeriodDigestInput =
+	| {
+			provenance?: "generated";
+			maxTweets: number;
+			maxLinks: number;
+	  }
+	| { provenance: "legacy-unknown" };
+
 export interface CurrentPeriodDigestV1 {
 	schemaVersion: 1;
 	period: CurrentPeriodDigestPeriod;
@@ -35,10 +43,7 @@ export interface CurrentPeriodDigestV1 {
 	reasoningEffort: string;
 	serviceTier: string;
 	parseStatus: "structured" | "fallback";
-	input: {
-		maxTweets: number;
-		maxLinks: number;
-	};
+	input: CurrentPeriodDigestInput;
 	sync: DigestArchiveSyncResult;
 	migratedFromLegacy?: boolean;
 }
@@ -125,6 +130,20 @@ function isContentSource(value: unknown): value is PeriodDigestContentSource {
 	return typeof value === "string" && CONTENT_SOURCES.has(value as never);
 }
 
+function isCurrentPeriodDigestInput(
+	value: unknown,
+): value is CurrentPeriodDigestInput {
+	if (!isRecord(value)) return false;
+	if (value.provenance === "legacy-unknown") {
+		return value.maxTweets === undefined && value.maxLinks === undefined;
+	}
+	return (
+		(value.provenance === undefined || value.provenance === "generated") &&
+		typeof value.maxTweets === "number" &&
+		typeof value.maxLinks === "number"
+	);
+}
+
 function isPeriodDigestContext(value: unknown): value is PeriodDigestContext {
 	if (!isRecord(value) || !isRecord(value.window)) return false;
 	return (
@@ -159,9 +178,7 @@ function parseCurrentPeriodDigest(
 		typeof value.reasoningEffort !== "string" ||
 		typeof value.serviceTier !== "string" ||
 		(value.parseStatus !== "structured" && value.parseStatus !== "fallback") ||
-		!isRecord(value.input) ||
-		typeof value.input.maxTweets !== "number" ||
-		typeof value.input.maxLinks !== "number" ||
+		!isCurrentPeriodDigestInput(value.input) ||
 		!isRecord(value.sync)
 	) {
 		return null;
@@ -193,6 +210,7 @@ export function publishCurrentPeriodDigest(
 		serviceTier: input.result.serviceTier,
 		parseStatus: input.result.parseStatus,
 		input: {
+			provenance: "generated",
 			maxTweets: input.maxTweets,
 			maxLinks: input.maxLinks,
 		},
@@ -330,22 +348,25 @@ export function migrateLegacyPeriodDigests(
 		const versionId = `legacy-${createHash("sha1")
 			.update(`${candidate.cacheKey}:${candidate.generatedAt}`)
 			.digest("hex")}`;
-		publishCurrentPeriodDigest(
-			{
-				period: candidate.period,
-				contentSource: candidate.contentSource,
-				runId: "legacy-migration",
-				versionId,
-				generatedAt: candidate.generatedAt,
-				result: candidate.result,
-				maxTweets: 2_500,
-				maxLinks: 12,
-				sync: { status: "skipped", steps: [] },
-				migratedFromLegacy: true,
-			},
-			db,
-			runtime,
-		);
+		const value: CurrentPeriodDigestV1 = {
+			schemaVersion: 1,
+			period: candidate.period,
+			contentSource: candidate.contentSource,
+			runId: "legacy-migration",
+			versionId,
+			generatedAt: candidate.generatedAt,
+			context: candidate.result.context,
+			digest: candidate.result.digest,
+			markdown: candidate.result.markdown,
+			model: candidate.result.model,
+			reasoningEffort: candidate.result.reasoningEffort,
+			serviceTier: candidate.result.serviceTier,
+			parseStatus: candidate.result.parseStatus,
+			input: { provenance: "legacy-unknown" },
+			sync: { status: "skipped", steps: [] },
+			migratedFromLegacy: true,
+		};
+		writeSyncCache(logicalKey, value, db, runtime);
 		migrated.push({
 			period: candidate.period,
 			contentSource: candidate.contentSource,

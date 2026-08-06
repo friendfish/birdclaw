@@ -44,6 +44,7 @@ import { Route as ApiNetworkMapRouteImport } from './routes/api/network-map'
 import { Route as ApiPeriodDigestRouteImport } from './routes/api/period-digest'
 import { Route as ApiPeriodDigestFreshnessRouteImport } from './routes/api/period-digest-freshness'
 import { Route as ApiPeriodDigestMetadataRouteImport } from './routes/api/period-digest-metadata'
+import { Route as ApiPeriodDigestRunsRouteImport } from './routes/api/period-digest-runs'
 import { Route as ApiProfileAnalysisRouteImport } from './routes/api/profile-analysis'
 import { Route as ApiProfileAnalysisMetadataRouteImport } from './routes/api/profile-analysis-metadata'
 import { Route as ApiProfileHydrateRouteImport } from './routes/api/profile-hydrate'
@@ -235,6 +236,11 @@ const ApiPeriodDigestMetadataRoute = ApiPeriodDigestMetadataRouteImport.update({
   path: '/api/period-digest-metadata',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPeriodDigestRunsRoute = ApiPeriodDigestRunsRouteImport.update({
+  id: '/api/period-digest-runs',
+  path: '/api/period-digest-runs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiProfileAnalysisRoute = ApiProfileAnalysisRouteImport.update({
   id: '/api/profile-analysis',
   path: '/api/profile-analysis',
@@ -346,6 +352,7 @@ export interface FileRoutesByFullPath {
   '/api/period-digest': typeof ApiPeriodDigestRoute
   '/api/period-digest-freshness': typeof ApiPeriodDigestFreshnessRoute
   '/api/period-digest-metadata': typeof ApiPeriodDigestMetadataRoute
+  '/api/period-digest-runs': typeof ApiPeriodDigestRunsRoute
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
   '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
@@ -397,6 +404,7 @@ export interface FileRoutesByTo {
   '/api/period-digest': typeof ApiPeriodDigestRoute
   '/api/period-digest-freshness': typeof ApiPeriodDigestFreshnessRoute
   '/api/period-digest-metadata': typeof ApiPeriodDigestMetadataRoute
+  '/api/period-digest-runs': typeof ApiPeriodDigestRunsRoute
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
   '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
@@ -449,6 +457,7 @@ export interface FileRoutesById {
   '/api/period-digest': typeof ApiPeriodDigestRoute
   '/api/period-digest-freshness': typeof ApiPeriodDigestFreshnessRoute
   '/api/period-digest-metadata': typeof ApiPeriodDigestMetadataRoute
+  '/api/period-digest-runs': typeof ApiPeriodDigestRunsRoute
   '/api/profile-analysis': typeof ApiProfileAnalysisRoute
   '/api/profile-analysis-metadata': typeof ApiProfileAnalysisMetadataRoute
   '/api/profile-hydrate': typeof ApiProfileHydrateRoute
@@ -502,6 +511,7 @@ export interface FileRouteTypes {
     | '/api/period-digest'
     | '/api/period-digest-freshness'
     | '/api/period-digest-metadata'
+    | '/api/period-digest-runs'
     | '/api/profile-analysis'
     | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
@@ -553,6 +563,7 @@ export interface FileRouteTypes {
     | '/api/period-digest'
     | '/api/period-digest-freshness'
     | '/api/period-digest-metadata'
+    | '/api/period-digest-runs'
     | '/api/profile-analysis'
     | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
@@ -604,6 +615,7 @@ export interface FileRouteTypes {
     | '/api/period-digest'
     | '/api/period-digest-freshness'
     | '/api/period-digest-metadata'
+    | '/api/period-digest-runs'
     | '/api/profile-analysis'
     | '/api/profile-analysis-metadata'
     | '/api/profile-hydrate'
@@ -656,6 +668,7 @@ export interface RootRouteChildren {
   ApiPeriodDigestRoute: typeof ApiPeriodDigestRoute
   ApiPeriodDigestFreshnessRoute: typeof ApiPeriodDigestFreshnessRoute
   ApiPeriodDigestMetadataRoute: typeof ApiPeriodDigestMetadataRoute
+  ApiPeriodDigestRunsRoute: typeof ApiPeriodDigestRunsRoute
   ApiProfileAnalysisRoute: typeof ApiProfileAnalysisRoute
   ApiProfileAnalysisMetadataRoute: typeof ApiProfileAnalysisMetadataRoute
   ApiProfileHydrateRoute: typeof ApiProfileHydrateRoute
@@ -918,6 +931,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPeriodDigestMetadataRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/period-digest-runs': {
+      id: '/api/period-digest-runs'
+      path: '/api/period-digest-runs'
+      fullPath: '/api/period-digest-runs'
+      preLoaderRoute: typeof ApiPeriodDigestRunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/profile-analysis': {
       id: '/api/profile-analysis'
       path: '/api/profile-analysis'
@@ -1066,6 +1086,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPeriodDigestRoute: ApiPeriodDigestRoute,
   ApiPeriodDigestFreshnessRoute: ApiPeriodDigestFreshnessRoute,
   ApiPeriodDigestMetadataRoute: ApiPeriodDigestMetadataRoute,
+  ApiPeriodDigestRunsRoute: ApiPeriodDigestRunsRoute,
   ApiProfileAnalysisRoute: ApiProfileAnalysisRoute,
   ApiProfileAnalysisMetadataRoute: ApiProfileAnalysisMetadataRoute,
   ApiProfileHydrateRoute: ApiProfileHydrateRoute,

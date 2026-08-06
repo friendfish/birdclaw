@@ -25,9 +25,11 @@ export const Route = createFileRoute("/api/period-digest-freshness")({
 								{ status: 400 },
 							);
 						}
-						const result = yield* Effect.promise(() =>
-							triggerDuePeriodDigestFreshness({ period, origin: "page" }),
-						);
+						const result = yield* Effect.tryPromise({
+							try: () =>
+								triggerDuePeriodDigestFreshness({ period, origin: "page" }),
+							catch: (error) => error,
+						});
 						return jsonResponse({ ok: true, ...result });
 					}),
 				),

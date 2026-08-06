@@ -25,6 +25,19 @@ import {
 import { parsePeriodDigestRequestOptions } from "#/lib/period-digest-request";
 import { peekScheduledJobLockEffect } from "#/lib/scheduled-job";
 
+let legacyMigrationAttempted = false;
+let legacyMigrationResult: ReturnType<
+	typeof migrateLegacyPeriodDigests
+> | null = null;
+
+function migrateLegacyPeriodDigestsOnce() {
+	if (!legacyMigrationAttempted) {
+		legacyMigrationAttempted = true;
+		legacyMigrationResult = migrateLegacyPeriodDigests();
+	}
+	return legacyMigrationResult;
+}
+
 function resultFromCurrent(
 	current: CurrentPeriodDigestV1 | null,
 ): PeriodDigestRunResult | null {
@@ -99,16 +112,17 @@ export const Route = createFileRoute("/api/period-digest-metadata")({
 						let current = readCurrentPeriodDigest(period, contentSource);
 						let migration = null;
 						if (!current) {
-							migration = migrateLegacyPeriodDigests();
+							migration = migrateLegacyPeriodDigestsOnce();
 							current = readCurrentPeriodDigest(period, contentSource);
 						}
 						const result = resultFromCurrent(current);
 						const isStale = current
 							? !isFreshDigestCache(current.generatedAt, period)
 							: true;
-						const runState = yield* Effect.promise(() =>
-							readPeriodDigestRunState(period),
-						);
+						const runState = yield* Effect.tryPromise({
+							try: () => readPeriodDigestRunState(period),
+							catch: (error) => error,
+						});
 						const lockActive = yield* peekScheduledJobLockEffect(
 							periodDigestRunLockPath(period),
 							PERIOD_DIGEST_LOCK_STALE_MS,

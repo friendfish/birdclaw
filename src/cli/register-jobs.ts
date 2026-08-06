@@ -13,6 +13,7 @@ import {
 	parseDigestContentSources,
 	runDigestArchiveJob,
 } from "#/lib/digest-archive-job";
+import { setDigestLaunchdExecution } from "#/lib/config";
 import type { PeriodDigestPreset } from "#/lib/period-digest";
 import { consumePeriodDigestFreshnessAttempt } from "#/lib/period-digest-freshness";
 import {
@@ -298,7 +299,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 	jobsCommand
 		.command("run-digest-archive")
 		.description(
-			"Generate and archive period digests (md+json) for all content sources",
+			"Generate current Today/24h digests or archive Yesterday/Week (md+json)",
 		)
 		.requiredOption("--period <period>", "today, yesterday, 24h, or week")
 		.option("--account <username>", "Account username or id")
@@ -325,9 +326,22 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			"--bird-credentials-path <path>",
 			"Strict AUTH_TOKEN/CT0 credential file",
 		)
-		.action(async (options) => {
+		.action(async (options, command) => {
 			const period = parsePeriod(options.period);
 			if (period === "today" || period === "24h") {
+				const ignoredOptions = [
+					["includeDms", "--include-dms"],
+					["contentSources", "--content-sources"],
+					["archiveDir", "--archive-dir"],
+					["retries", "--retries"],
+					["retryDelaySeconds", "--retry-delay-seconds"],
+					["log", "--log"],
+					["since", "--since"],
+					["until", "--until"],
+					["runDate", "--run-date"],
+				]
+					.filter(([key]) => command.getOptionValueSource(key) === "cli")
+					.map(([, flag]) => flag);
 				const run = await requestPeriodDigestRun({
 					period,
 					trigger: "scheduled",
@@ -344,6 +358,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 						ok: state.phase !== "failed",
 						archived: false,
 						joined: run.joined,
+						...(ignoredOptions.length > 0 ? { ignoredOptions } : {}),
 						...state,
 					},
 					true,
@@ -401,10 +416,10 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.option("--no-load", "Write plist without loading it")
 		.action(async (options) => {
 			// Fields that make sense applied identically to all 4 periods when
-			// --period all is used. label/program/env/stdout/stderr are
-			// per-period-only concerns (each agent needs its own label and log
-			// files) and are only meaningful for a single-period install.
+			// --period all is used. Labels and output paths remain per-period;
+			// program/env are shared so fixed and freshness agents execute alike.
 			const perPeriodOverrides = {
+				program: options.program,
 				account: options.account,
 				includeDms: Boolean(options.includeDms),
 				contentSources: parseDigestContentSources(options.contentSources),
@@ -429,6 +444,10 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 					},
 					installOptions,
 				);
+				setDigestLaunchdExecution({
+					program: options.program,
+					envFile: options.envPath ?? options.envFile,
+				});
 				print(result, true);
 				return;
 			}
@@ -440,11 +459,14 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				weekday:
 					options.weekday === undefined ? undefined : Number(options.weekday),
 				label: options.label,
-				program: options.program,
 				stdoutPath: options.stdout,
 				stderrPath: options.stderr,
 				...installOptions,
 				...perPeriodOverrides,
+			});
+			setDigestLaunchdExecution({
+				program: options.program,
+				envFile: options.envPath ?? options.envFile,
 			});
 			print(result, true);
 		});

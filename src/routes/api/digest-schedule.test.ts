@@ -34,7 +34,7 @@ vi.mock("#/lib/period-digest-freshness", async () => {
 });
 
 import { Route } from "./digest-schedule";
-import { resetBirdclawPathsForTests } from "#/lib/config";
+import { resetBirdclawPathsForTests, writeBirdclawConfig } from "#/lib/config";
 import { getBirdCredentialsPath } from "#/lib/bird-credentials";
 
 const GET = getRouteHandler(Route, "GET");
@@ -120,22 +120,26 @@ describe("api digest-schedule route", () => {
 			today: {
 				hour: 9,
 				minute: 30,
+				program: "birdclaw",
 				birdCredentialsPath: getBirdCredentialsPath(),
 			},
 			"24h": {
 				hour: 10,
 				minute: 0,
+				program: "birdclaw",
 				birdCredentialsPath: getBirdCredentialsPath(),
 			},
 			yesterday: {
 				hour: 2,
 				minute: 0,
+				program: "birdclaw",
 				birdCredentialsPath: getBirdCredentialsPath(),
 			},
 			week: {
 				hour: 3,
 				minute: 15,
 				weekday: 1,
+				program: "birdclaw",
 				birdCredentialsPath: getBirdCredentialsPath(),
 			},
 		});
@@ -164,6 +168,42 @@ describe("api digest-schedule route", () => {
 			archiveDir: "/tmp/my-archive",
 			schedule: { today: { hour: 9, minute: 30 } },
 		});
+	});
+
+	it("reuses persisted launchd execution settings for every fixed agent", async () => {
+		writeBirdclawConfig({
+			digest: {
+				launchd: {
+					program: "/opt/homebrew/bin/birdclaw",
+					envFile: "~/.config/bird/env.sh",
+				},
+			},
+		});
+		await POST({
+			request: new Request("http://localhost/api/digest-schedule", {
+				method: "POST",
+				body: JSON.stringify({
+					freshnessHours: 12,
+					schedule: {
+						today: { hour: 8, minute: 0 },
+						"24h": { hour: 8, minute: 45 },
+						yesterday: { hour: 1, minute: 0 },
+						week: { hour: 2, minute: 0 },
+					},
+				}),
+			}),
+		});
+
+		for (const period of ["today", "24h", "yesterday", "week"] as const) {
+			expect(
+				installAllDigestArchiveLaunchAgentsEffectMock.mock.calls[0]?.[0]?.[
+					period
+				],
+			).toMatchObject({
+				program: "/opt/homebrew/bin/birdclaw",
+				envFile: "~/.config/bird/env.sh",
+			});
+		}
 	});
 
 	it("always forces week's weekday to Monday regardless of request body", async () => {

@@ -9,7 +9,12 @@ import type {
 } from "#/lib/period-digest";
 import { applyPeriodDigestIdentityParams } from "#/lib/period-digest-url";
 
-const POLL_INTERVAL_MS = 3000;
+const ACTIVE_POLL_INTERVAL_MS = 3_000;
+const IDLE_POLL_INTERVAL_MS = 30_000;
+
+export function periodDigestMetadataPollInterval(isGenerating: boolean) {
+	return isGenerating ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS;
+}
 
 const periodDigestMetadataResponseSchema = z.object({
 	ok: z.boolean(),
@@ -68,7 +73,10 @@ export function usePeriodDigestMetadata({
 			),
 		enabled,
 		refetchInterval: (currentQuery) =>
-			currentQuery.state.data?.isGenerating ? POLL_INTERVAL_MS : false,
+			periodDigestMetadataPollInterval(
+				Boolean(currentQuery.state.data?.isGenerating),
+			),
+		refetchOnWindowFocus: true,
 	});
 	const attemptedFreshnessKey = useRef<string | null>(null);
 	const freshnessMutation = useMutation({

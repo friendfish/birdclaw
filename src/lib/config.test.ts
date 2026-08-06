@@ -13,8 +13,10 @@ import {
 	resolveActionsTransport,
 	resolveDigestArchiveDir,
 	resolveDigestFreshnessSeconds,
+	resolveDigestLaunchdExecution,
 	resolveMentionsDataSource,
 	setActionsTransport,
+	setDigestLaunchdExecution,
 } from "./config";
 
 const tempRoots: string[] = [];
@@ -280,6 +282,27 @@ describe("config", () => {
 			resetBirdclawPathsForTests();
 			expect(resolveDigestFreshnessSeconds()).toBe(12 * 60 * 60);
 		}
+	});
+
+	it("persists the launchd executable and environment file for freshness jobs", () => {
+		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
+		tempRoots.push(tempRoot);
+		process.env.BIRDCLAW_HOME = tempRoot;
+
+		expect(resolveDigestLaunchdExecution()).toEqual({ program: "birdclaw" });
+		expect(
+			setDigestLaunchdExecution({
+				program: " /opt/homebrew/bin/birdclaw ",
+				envFile: " ~/.config/bird/env.sh ",
+			}),
+		).toEqual({
+			program: "/opt/homebrew/bin/birdclaw",
+			envFile: "~/.config/bird/env.sh",
+		});
+		expect(getBirdclawConfig().digest?.launchd).toEqual({
+			program: "/opt/homebrew/bin/birdclaw",
+			envFile: "~/.config/bird/env.sh",
+		});
 	});
 
 	it("defaults bird command to PATH lookup", () => {

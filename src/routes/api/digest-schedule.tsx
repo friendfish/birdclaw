@@ -6,6 +6,7 @@ import {
 	getBirdclawConfig,
 	resolveDigestArchiveDir,
 	resolveDigestFreshnessSeconds,
+	resolveDigestLaunchdExecution,
 	writeBirdclawConfig,
 } from "#/lib/config";
 import {
@@ -80,7 +81,10 @@ export const Route = createFileRoute("/api/digest-schedule")({
 						const denied = sensitiveRequestErrorResponse(request);
 						if (denied) return denied;
 
-						const status = yield* Effect.promise(schedulerStatus);
+						const status = yield* Effect.tryPromise({
+							try: schedulerStatus,
+							catch: (error) => error,
+						});
 						return jsonResponse({
 							ok: true,
 							archiveDir: resolveDigestArchiveDir(),
@@ -116,37 +120,46 @@ export const Route = createFileRoute("/api/digest-schedule")({
 							},
 						};
 						writeBirdclawConfig(nextConfig);
+						const launchdExecution = resolveDigestLaunchdExecution();
 
 						const installResults =
 							yield* installAllDigestArchiveLaunchAgentsEffect({
 								today: {
 									...parsed.schedule.today,
+									...launchdExecution,
 									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 								"24h": {
 									...parsed.schedule["24h"],
+									...launchdExecution,
 									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 								yesterday: {
 									...parsed.schedule.yesterday,
+									...launchdExecution,
 									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 								week: {
 									...parsed.schedule.week,
+									...launchdExecution,
 									weekday: 1,
 									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 							});
-						const freshnessResults = yield* Effect.promise(() =>
-							reconcileAllPeriodDigestFreshness(),
-						);
+						const freshnessResults = yield* Effect.tryPromise({
+							try: () => reconcileAllPeriodDigestFreshness(),
+							catch: (error) => error,
+						});
 						const fixedHealthy = Object.values(installResults).every(
 							(result) => result.ok,
 						);
 						const freshnessHealthy = Object.values(freshnessResults).every(
 							(result) => result.state.status !== "error",
 						);
-						const status = yield* Effect.promise(schedulerStatus);
+						const status = yield* Effect.tryPromise({
+							try: schedulerStatus,
+							catch: (error) => error,
+						});
 
 						return jsonResponse({
 							ok: fixedHealthy && freshnessHealthy,

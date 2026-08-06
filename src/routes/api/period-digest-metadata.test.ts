@@ -159,6 +159,8 @@ describe("api period-digest-metadata route", () => {
 	it("runs the one-time legacy migration before returning an empty first-use state", async () => {
 		readCurrentPeriodDigestMock
 			.mockReturnValueOnce(null)
+			.mockReturnValueOnce(currentDigest("2026-08-06T07:00:00.000Z"))
+			.mockReturnValueOnce(null)
 			.mockReturnValueOnce(currentDigest("2026-08-06T07:00:00.000Z"));
 		migrateLegacyPeriodDigestsMock.mockReturnValue({
 			migrated: [{ period: "today", contentSource: "all" }],
@@ -166,10 +168,15 @@ describe("api period-digest-metadata route", () => {
 		});
 
 		const body = await (await GET({ request: requestFor() })).json();
+		const second = await (await GET({ request: requestFor() })).json();
 
 		expect(migrateLegacyPeriodDigestsMock).toHaveBeenCalledTimes(1);
-		expect(readCurrentPeriodDigestMock).toHaveBeenCalledTimes(2);
+		expect(readCurrentPeriodDigestMock).toHaveBeenCalledTimes(4);
 		expect(body.result).toMatchObject({
+			markdown: "# Existing Today",
+			updatedAt: "2026-08-06T07:00:00.000Z",
+		});
+		expect(second.result).toMatchObject({
 			markdown: "# Existing Today",
 			updatedAt: "2026-08-06T07:00:00.000Z",
 		});
