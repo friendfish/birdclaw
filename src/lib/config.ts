@@ -168,13 +168,20 @@ export function setDigestLaunchdExecution({
 	envFile?: string;
 }) {
 	const config = getBirdclawConfig();
+	const current = config.digest?.launchd;
+	const nextProgram =
+		program === undefined
+			? current?.program?.trim() || "birdclaw"
+			: program.trim() || "birdclaw";
+	const nextEnvFile =
+		envFile === undefined ? current?.envFile?.trim() : envFile.trim();
 	const nextConfig: BirdclawConfig = {
 		...config,
 		digest: {
 			...config.digest,
 			launchd: {
-				program: program?.trim() || "birdclaw",
-				...(envFile?.trim() ? { envFile: envFile.trim() } : {}),
+				program: nextProgram,
+				...(nextEnvFile ? { envFile: nextEnvFile } : {}),
 			},
 		},
 	};

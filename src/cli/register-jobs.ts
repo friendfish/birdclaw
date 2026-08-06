@@ -13,7 +13,10 @@ import {
 	parseDigestContentSources,
 	runDigestArchiveJob,
 } from "#/lib/digest-archive-job";
-import { setDigestLaunchdExecution } from "#/lib/config";
+import {
+	resolveDigestLaunchdExecution,
+	setDigestLaunchdExecution,
+} from "#/lib/config";
 import type { PeriodDigestPreset } from "#/lib/period-digest";
 import { consumePeriodDigestFreshnessAttempt } from "#/lib/period-digest-freshness";
 import {
@@ -414,12 +417,22 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		.option("--stderr <path>", "launchd stderr path")
 		.option("--launch-agents-dir <path>", "LaunchAgents directory")
 		.option("--no-load", "Write plist without loading it")
-		.action(async (options) => {
+		.action(async (options, command) => {
+			const programExplicit = command.getOptionValueSource("program") === "cli";
+			const envFileExplicit =
+				command.getOptionValueSource("envPath") === "cli" ||
+				command.getOptionValueSource("envFile") === "cli";
+			const savedExecution = resolveDigestLaunchdExecution();
+			const requestedEnvFile = options.envPath ?? options.envFile;
+			const execution = {
+				program: programExplicit ? options.program : savedExecution.program,
+				envFile: envFileExplicit ? requestedEnvFile : savedExecution.envFile,
+			};
 			// Fields that make sense applied identically to all 4 periods when
 			// --period all is used. Labels and output paths remain per-period;
 			// program/env are shared so fixed and freshness agents execute alike.
 			const perPeriodOverrides = {
-				program: options.program,
+				program: execution.program,
 				account: options.account,
 				includeDms: Boolean(options.includeDms),
 				contentSources: parseDigestContentSources(options.contentSources),
@@ -427,7 +440,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				retries: Number(options.retries),
 				retryDelaySeconds: Number(options.retryDelaySeconds),
 				logPath: options.log,
-				envFile: options.envPath ?? options.envFile,
+				envFile: execution.envFile,
 				birdCredentialsPath: options.birdCredentialsPath,
 			};
 			const installOptions = {
@@ -444,10 +457,12 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 					},
 					installOptions,
 				);
-				setDigestLaunchdExecution({
-					program: options.program,
-					envFile: options.envPath ?? options.envFile,
-				});
+				if (programExplicit || envFileExplicit) {
+					setDigestLaunchdExecution({
+						...(programExplicit ? { program: options.program } : {}),
+						...(envFileExplicit ? { envFile: requestedEnvFile } : {}),
+					});
+				}
 				print(result, true);
 				return;
 			}
@@ -464,10 +479,12 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				...installOptions,
 				...perPeriodOverrides,
 			});
-			setDigestLaunchdExecution({
-				program: options.program,
-				envFile: options.envPath ?? options.envFile,
-			});
+			if (programExplicit || envFileExplicit) {
+				setDigestLaunchdExecution({
+					...(programExplicit ? { program: options.program } : {}),
+					...(envFileExplicit ? { envFile: requestedEnvFile } : {}),
+				});
+			}
 			print(result, true);
 		});
 }

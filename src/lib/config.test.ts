@@ -303,6 +303,19 @@ describe("config", () => {
 			program: "/opt/homebrew/bin/birdclaw",
 			envFile: "~/.config/bird/env.sh",
 		});
+
+		expect(
+			setDigestLaunchdExecution({ program: "/usr/local/bin/birdclaw" }),
+		).toEqual({
+			program: "/usr/local/bin/birdclaw",
+			envFile: "~/.config/bird/env.sh",
+		});
+		expect(
+			setDigestLaunchdExecution({ envFile: " ~/.config/bird/new.env " }),
+		).toEqual({
+			program: "/usr/local/bin/birdclaw",
+			envFile: "~/.config/bird/new.env",
+		});
 	});
 
 	it("defaults bird command to PATH lookup", () => {

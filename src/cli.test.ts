@@ -15,6 +15,7 @@ const resolveLiveSyncModeMock = vi.hoisted(() => vi.fn());
 const resolveMentionThreadReadModeMock = vi.hoisted(() => vi.fn());
 const setActionsTransportMock = vi.fn();
 const setDigestLaunchdExecutionMock = vi.fn();
+const resolveDigestLaunchdExecutionMock = vi.fn();
 const getQueryEnvelopeMock = vi.fn();
 const getNativeDbMock = vi.fn();
 const seedDemoDataMock = vi.fn();
@@ -119,6 +120,7 @@ vi.mock("#/lib/config", () => ({
 	resolveActionsTransport: (...args: unknown[]) =>
 		resolveActionsTransportMock(...args),
 	setActionsTransport: (...args: unknown[]) => setActionsTransportMock(...args),
+	resolveDigestLaunchdExecution: () => resolveDigestLaunchdExecutionMock(),
 	setDigestLaunchdExecution: (...args: unknown[]) =>
 		setDigestLaunchdExecutionMock(...args),
 }));
@@ -415,6 +417,8 @@ describe("cli", () => {
 		resolveMentionThreadReadModeMock.mockReset();
 		setActionsTransportMock.mockReset();
 		setDigestLaunchdExecutionMock.mockReset();
+		resolveDigestLaunchdExecutionMock.mockReset();
+		resolveDigestLaunchdExecutionMock.mockReturnValue({ program: "birdclaw" });
 		getQueryEnvelopeMock.mockReset();
 		getNativeDbMock.mockReset();
 		seedDemoDataMock.mockReset();
@@ -947,8 +951,65 @@ describe("cli", () => {
 			{ launchAgentsDir: undefined, load: false },
 		);
 		expect(setDigestLaunchdExecutionMock).toHaveBeenCalledWith({
-			program: "birdclaw",
 			envFile: "/tmp/digest.env",
+		});
+	});
+
+	it("reuses saved digest launchd execution when only changing a schedule", async () => {
+		resolveDigestLaunchdExecutionMock.mockReturnValue({
+			program: "/opt/homebrew/bin/birdclaw",
+			envFile: "/tmp/digest.env",
+		});
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"install-digest-archive-launchd",
+			"--period",
+			"today",
+			"--hour",
+			"9",
+		]);
+
+		expect(installDigestArchiveLaunchAgentMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				period: "today",
+				program: "/opt/homebrew/bin/birdclaw",
+				envFile: "/tmp/digest.env",
+				hour: 9,
+			}),
+		);
+		expect(setDigestLaunchdExecutionMock).not.toHaveBeenCalled();
+	});
+
+	it("persists only explicitly supplied digest launchd execution fields", async () => {
+		resolveDigestLaunchdExecutionMock.mockReturnValue({
+			program: "/opt/homebrew/bin/birdclaw",
+			envFile: "/tmp/digest.env",
+		});
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"install-digest-archive-launchd",
+			"--period",
+			"24h",
+			"--program",
+			"/usr/local/bin/birdclaw",
+		]);
+
+		expect(installDigestArchiveLaunchAgentMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				program: "/usr/local/bin/birdclaw",
+				envFile: "/tmp/digest.env",
+			}),
+		);
+		expect(setDigestLaunchdExecutionMock).toHaveBeenCalledWith({
+			program: "/usr/local/bin/birdclaw",
 		});
 	});
 

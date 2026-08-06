@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -143,6 +144,8 @@ export interface PeriodDigestOrchestratorDependencies {
 	completionWaitTimeoutMs?: number;
 	completionPollIntervalMs?: number;
 	stateReadyTimeoutMs?: number;
+	lockAcquisitionTimeoutMs?: number;
+	lockRetryDelayMs?: number;
 }
 
 export interface PeriodDigestRunRequestResult {
@@ -164,6 +167,9 @@ export const PERIOD_DIGEST_LOCK_STALE_MS = 60_000;
 const MAX_RUN_AGE_MS = 6 * 60 * 60_000;
 const DEFAULT_COMPLETION_POLL_INTERVAL_MS = 250;
 const DEFAULT_STATE_READY_TIMEOUT_MS = 5_000;
+const DEFAULT_LOCK_ACQUISITION_TIMEOUT_MS = 5_000;
+const DEFAULT_LOCK_RETRY_DELAY_MS = 25;
+const MAX_RETAINED_JOIN_EVENT_RUNS = 32;
 const MAX_TWEETS = 5_000;
 const MAX_LINKS = 20;
 const stateMutationQueues = new Map<string, Promise<void>>();
@@ -206,12 +212,15 @@ function periodDigestJoinEventsDir(
 	period: CurrentPeriodDigestPeriod,
 	runId: string,
 ) {
+	return path.join(periodDigestJoinEventsRoot(period), runId);
+}
+
+function periodDigestJoinEventsRoot(period: CurrentPeriodDigestPeriod) {
 	return path.join(
 		getBirdclawPaths().rootDir,
 		"runs",
 		"period-digest-joins",
 		period,
-		runId,
 	);
 }
 
@@ -380,6 +389,43 @@ async function recordJoinedTrigger(
 		path.join(directory, `${process.pid}-${randomUUID()}.json`),
 		`${JSON.stringify({ ...event, at: now.toISOString() })}\n`,
 		{ encoding: "utf8", flag: "wx" },
+	);
+}
+
+async function cleanupJoinedTriggerEvents(
+	period: CurrentPeriodDigestPeriod,
+	currentRunId: string,
+) {
+	const root = periodDigestJoinEventsRoot(period);
+	const entries = await fs
+		.readdir(root, { withFileTypes: true })
+		.catch(() => [] as Dirent[]);
+	const directories = await Promise.all(
+		entries
+			.filter((entry) => entry.isDirectory())
+			.map(async (entry) => ({
+				name: entry.name,
+				mtimeMs: await fs
+					.stat(path.join(root, entry.name))
+					.then((stat) => stat.mtimeMs)
+					.catch(() => 0),
+			})),
+	);
+	directories.sort((left, right) => right.mtimeMs - left.mtimeMs);
+	const retained = new Set<string>();
+	if (directories.some(({ name }) => name === currentRunId)) {
+		retained.add(currentRunId);
+	}
+	for (const directory of directories) {
+		if (retained.size >= MAX_RETAINED_JOIN_EVENT_RUNS) break;
+		retained.add(directory.name);
+	}
+	await Promise.all(
+		directories
+			.filter(({ name }) => !retained.has(name))
+			.map(({ name }) =>
+				fs.rm(path.join(root, name), { recursive: true, force: true }),
+			),
 	);
 }
 
@@ -830,6 +876,9 @@ async function runOwnedBatch({
 	} finally {
 		clearInterval(heartbeat);
 		await heartbeatTask.catch(() => undefined);
+		await cleanupJoinedTriggerEvents(request.period, state.runId).catch(
+			() => undefined,
+		);
 		await releaseLock();
 	}
 }
@@ -848,6 +897,10 @@ export async function requestPeriodDigestRun(
 	const statePath = periodDigestRunStatePath(request.period);
 	const lockPath = periodDigestRunLockPath(request.period);
 	const lockStaleMs = dependencies.lockStaleMs ?? PERIOD_DIGEST_LOCK_STALE_MS;
+	const acquisitionTimeoutMs =
+		dependencies.lockAcquisitionTimeoutMs ??
+		DEFAULT_LOCK_ACQUISITION_TIMEOUT_MS;
+	const acquisitionDeadline = Date.now() + acquisitionTimeoutMs;
 	let releaseLock: ScheduledJobLockRelease | undefined;
 	for (;;) {
 		releaseLock = await acquireScheduledJobLock(
@@ -867,13 +920,23 @@ export async function requestPeriodDigestRun(
 				dependencies.completionPollIntervalMs ??
 				DEFAULT_COMPLETION_POLL_INTERVAL_MS,
 		});
-		if (!active) continue;
+		if (!active) {
+			if (Date.now() >= acquisitionDeadline) {
+				throw new Error(
+					`Could not acquire the ${request.period} digest run lock within ${String(acquisitionTimeoutMs)}ms`,
+				);
+			}
+			await dependencies.sleep?.(
+				dependencies.lockRetryDelayMs ?? DEFAULT_LOCK_RETRY_DELAY_MS,
+			);
+			continue;
+		}
 		await recordJoinedTrigger(
 			request.period,
 			active.runId,
 			{ trigger: request.trigger, origin: request.origin },
 			dependencies.now(),
-		);
+		).catch(() => undefined);
 		return {
 			runId: active.runId,
 			joined: true,

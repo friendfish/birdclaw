@@ -206,6 +206,10 @@ opportunity; it becomes eligible again after a manual/fixed run publishes a new
 version or the freshness setting changes. This preserves automatic scheduling
 without immediately rerunning the same failed work.
 
+If all three sources fail, that freshness opportunity remains consumed and no
+additional automatic freshness run is scheduled for those unchanged versions on
+the same day. A manual refresh or the next fixed scheduled run can retry them.
+
 The dynamic freshness agent reuses the `--program` and `--env-path` saved when
 the fixed digest agents are installed, so Homebrew/npm executable paths and
 variables such as `OPENAI_API_KEY` remain available. Saving Config reinstalls the

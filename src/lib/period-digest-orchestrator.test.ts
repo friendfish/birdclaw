@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { useTestHome } from "../test/test-home";
@@ -83,6 +84,15 @@ function deferred<T>() {
 		resolve = resolvePromise;
 	});
 	return { promise, resolve };
+}
+
+function joinEventsRoot(period: "today" | "24h") {
+	return path.join(
+		testHome().paths.rootDir,
+		"runs",
+		"period-digest-joins",
+		period,
+	);
 }
 
 function dependencies(
@@ -176,6 +186,126 @@ describe("period digest orchestrator", () => {
 		]);
 		expect(deps.preSync).toHaveBeenCalledTimes(1);
 		expect(deps.readCredentials).toHaveBeenCalledTimes(1);
+	});
+
+	it("still joins when recording optional trigger provenance fails", async () => {
+		const gate = deferred<PeriodDigestRunResult>();
+		const deps = dependencies({ generate: vi.fn(() => gate.promise) });
+		const owner = await requestPeriodDigestRun(
+			{ period: "today", trigger: "scheduled", origin: "launchd" },
+			deps,
+		);
+		const eventDirectory = path.join(joinEventsRoot("today"), owner.runId);
+		await fs.mkdir(path.dirname(eventDirectory), { recursive: true });
+		await fs.writeFile(
+			eventDirectory,
+			"blocks event directory creation",
+			"utf8",
+		);
+
+		try {
+			const joiner = await requestPeriodDigestRun(
+				{ period: "today", trigger: "manual", origin: "page" },
+				deps,
+			);
+
+			expect(joiner).toMatchObject({ joined: true, runId: owner.runId });
+			gate.resolve(result("today", "all"));
+			await Promise.all([owner.completion, joiner.completion]);
+		} finally {
+			gate.resolve(result("today", "all"));
+			await owner.completion;
+		}
+	});
+
+	it("bounds retained join-event run directories", async () => {
+		const root = joinEventsRoot("24h");
+		await Promise.all(
+			Array.from({ length: 34 }, async (_, index) => {
+				const directory = path.join(
+					root,
+					`old-run-${String(index).padStart(2, "0")}`,
+				);
+				await fs.mkdir(directory, { recursive: true });
+				const timestamp = new Date(1_000 + index * 1_000);
+				await fs.utimes(directory, timestamp, timestamp);
+			}),
+		);
+
+		const run = await requestPeriodDigestRun(
+			{ period: "24h", trigger: "scheduled", origin: "launchd" },
+			dependencies(),
+		);
+		await run.completion;
+
+		const retained = await fs.readdir(root);
+		expect(retained).toHaveLength(32);
+		expect(retained).not.toContain("old-run-00");
+		expect(retained).not.toContain("old-run-01");
+	});
+
+	it("backs off while another process owns stale-lock reclamation", async () => {
+		const lockPath = periodDigestRunLockPath("today");
+		await fs.mkdir(path.dirname(lockPath), { recursive: true });
+		await fs.writeFile(lockPath, "invalid", "utf8");
+		const stale = new Date(Date.now() - 120_000);
+		await fs.utimes(lockPath, stale, stale);
+		await fs.writeFile(
+			`${lockPath}.reclaim`,
+			JSON.stringify({
+				ownerId: "active-reclaimer",
+				startedAt: new Date().toISOString(),
+				host: os.hostname(),
+				pid: process.pid,
+			}),
+			"utf8",
+		);
+		const sleep = vi.fn(
+			(milliseconds: number) =>
+				new Promise<void>((resolve) => setTimeout(resolve, milliseconds)),
+		);
+		setTimeout(() => void fs.rm(`${lockPath}.reclaim`, { force: true }), 20);
+
+		const run = await requestPeriodDigestRun(
+			{ period: "today", trigger: "scheduled", origin: "launchd" },
+			dependencies({
+				sleep,
+				lockAcquisitionTimeoutMs: 1_000,
+				lockRetryDelayMs: 2,
+			}),
+		);
+		await run.completion;
+
+		expect(sleep).toHaveBeenCalledWith(2);
+	});
+
+	it("bounds lock acquisition while stale-lock reclamation stays busy", async () => {
+		const lockPath = periodDigestRunLockPath("24h");
+		await fs.mkdir(path.dirname(lockPath), { recursive: true });
+		await fs.writeFile(lockPath, "invalid", "utf8");
+		const stale = new Date(Date.now() - 120_000);
+		await fs.utimes(lockPath, stale, stale);
+		await fs.writeFile(
+			`${lockPath}.reclaim`,
+			JSON.stringify({
+				ownerId: "active-reclaimer",
+				startedAt: new Date().toISOString(),
+				host: os.hostname(),
+				pid: process.pid,
+			}),
+			"utf8",
+		);
+		setTimeout(() => void fs.rm(`${lockPath}.reclaim`, { force: true }), 100);
+
+		await expect(
+			requestPeriodDigestRun(
+				{ period: "24h", trigger: "manual", origin: "page" },
+				dependencies({
+					lockAcquisitionTimeoutMs: 25,
+					lockRetryDelayMs: 2,
+				}),
+			),
+		).rejects.toThrow("Could not acquire the 24h digest run lock within 25ms");
 	});
 
 	it("joins a terminal run while its owner is still finalizing", async () => {
