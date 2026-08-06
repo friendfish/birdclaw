@@ -12,7 +12,7 @@
 
 Today/24h 不再是历史归档，而是两个持续刷新的当前信息视图：
 
-- Today/24h 各自按 period 形成一个批次；批次内顺序生成 All、Following、For You。
+- Today/24h 各自按 period 形成一个批次；定时/过期批次按 All、Following、For You 生成，手工批次优先生成用户当前查看的来源。
 - 定时、内容过期和手工刷新统一进入同一个跨进程 single-flight 编排器。
 - 撞车请求加入当前批次，不拒绝、不排队，也不在当前批次结束后补跑第二次。
 - 每个页面只读取对应 `period + contentSource` 的持久化 latest-success。
@@ -67,11 +67,11 @@ period + contentSource
 period + runId
 ```
 
-同一 period 同时最多有一个活动批次。Today 与 24h 是两个独立 period，可以同时运行。每个批次固定包含三个来源，执行顺序为：
+同一 period 同时最多有一个活动批次。Today 与 24h 是两个独立 period，可以同时运行。每个批次固定包含三个来源，但来源顺序由取得 lease 的首个触发决定：
 
-```text
-All -> Following -> For You
-```
+- fixed scheduled / freshness：`All -> Following -> For You`；
+- manual：当前页面的 `requestedSource` 优先，其余来源按上述默认顺序补齐；
+- 加入已有批次的请求不能重排已经开始的批次。
 
 ### 结果版本身份
 
@@ -108,16 +108,67 @@ flowchart LR
     P --> F
 ```
 
+### 主时序：撞车、逐来源发布与页面保留
+
+```mermaid
+sequenceDiagram
+    participant Page as Today/24h page
+    participant Trigger as launchd / freshness CLI
+    participant O as PeriodDigestOrchestrator
+    participant Lease as Period lease + run state
+    participant Sync as Source pre-sync
+    participant Model as Digest model
+    participant Latest as LatestDigestStore
+
+    Page->>Latest: Read latest-success
+    Latest-->>Page: Existing complete result
+    Trigger->>O: requestPeriodDigest(period, trigger)
+    Page->>O: requestPeriodDigest(period, manual, requestedSource)
+    O->>Lease: Acquire or join
+    alt Another owner already holds the lease
+        Lease-->>O: Existing runId
+        O-->>Page: Same runId, joined=true
+        O-->>Trigger: Same runId, joined=true
+    else Caller becomes owner
+        Lease-->>O: New runId and owner lease
+        O->>Sync: Sync once and freeze three contexts
+        Sync-->>O: Fresh or degraded context set
+        loop Sources in owner-selected order
+            O->>Model: Generate one source
+            alt Source succeeds and lease is still owned
+                Model-->>O: Complete result
+                O->>Latest: Atomic upsert for this source
+                Latest-->>Page: Next poll returns new version
+            else Source fails
+                Model-->>O: Error
+                O->>Lease: Record source failure, keep old latest
+            end
+        end
+        O->>Lease: Finalize run and release lease
+    end
+    Note over Page,Latest: Run-state changes never clear the displayed result
+```
+
+### 模块迁移对照
+
+| 模块 | 当前实现 | 目标实现 |
+|---|---|---|
+| 任务所有者 | Web stream、archive job 各自启动生成 | 所有入口调用同一个跨进程 orchestrator |
+| 当前内容 | 生成参数参与 latest key，stale 时可能隐藏 | `period + contentSource` stable latest-success |
+| 生成状态 | 与本次 HTTP/NDJSON 内容流耦合 | 持久化 run state，与正文正交 |
+| freshness | 页面请求时判断并触发 | launchd 一次性唤醒为主，页面只做故障兜底 |
+| Today/24h 存储 | latest cache 与日期归档并存 | 只保存持久化 latest-success；旧归档保持原样 |
+
 ### PeriodDigestOrchestrator
 
 所有生成入口只调用一个共享接口：
 
 ```ts
-requestPeriodDigest({ period, trigger }):
+requestPeriodDigest({ period, trigger, requestedSource? }):
   { runId: string; joined: boolean }
 ```
 
-`trigger` 为 `scheduled | freshness | manual`。触发来源只用于审计和 UI，不改变结果优先级。去除 Today/24h 归档后，`scheduled` 不再拥有特殊的存档覆盖权限。
+`trigger` 为 `scheduled | freshness | manual`。`requestedSource` 只允许 manual 传入，并且只影响新 owner 批次的来源顺序，不参与批次身份、结果身份或碰撞判定。触发来源只用于审计和 UI，不改变结果优先级。去除 Today/24h 归档后，`scheduled` 不再拥有特殊的存档覆盖权限。
 
 编排器负责：
 
@@ -148,6 +199,7 @@ interface PeriodDigestRunState {
   period: "today" | "24h";
   startedBy: "scheduled" | "freshness" | "manual";
   joinedTriggers: Array<"scheduled" | "freshness" | "manual">;
+  prioritySource?: "all" | "following" | "for_you";
   ownerId: string;
   pid: number;
   host: string;
@@ -206,7 +258,7 @@ period-digest-current:v1:24h:for_you
 
 ### 3. 来源生成与发布
 
-三个来源依次执行并沿用有界重试和单次模型超时：
+三个来源按 owner 创建时确定的顺序依次执行，并沿用有界重试和单次模型超时。manual owner 将当前 `requestedSource` 放在第一位；scheduled/freshness owner 使用默认顺序。后续 join 不改变顺序。
 
 - 成功：立即写入该来源 stable latest key，页面可在批次结束前看到新版本。
 - 失败：保留该来源旧 latest-success，记录错误，然后继续下一个来源。
@@ -239,9 +291,11 @@ Yesterday/Week 继续调用现有 `run-digest-archive` 并落盘。
 任一 Today/24h source 页面的 Refresh 都请求整个 period 批次，而不是只生成当前 source：
 
 - 按钮在当前 period 已运行时禁用。
+- 请求携带当前 `contentSource` 作为 `requestedSource`；如果它成为 owner，该来源优先生成和发布。
 - 请求立即返回 run ID；模型任务不绑定 HTTP 连接或 React 组件。
 - 页面切换只停止当前页面轮询，不取消服务端批次。
 - 返回页面后通过 run state 继续观察。
+- 如果请求加入已经运行的批次，沿用原批次顺序，不中断或重排正在执行的来源。
 
 ### 内容过期
 
@@ -266,13 +320,15 @@ expiresAt = baseAt + freshnessSeconds
 
 公式本身不会执行任务，因此系统为每个 period 维护一个动态 launchd 一次性唤醒。它不是周期轮询器，也不依赖 Web 后端常驻：
 
-- Config 保存、版本发布和批次结束时重新计算，并安装、更新或卸载对应 agent。
-- agent 的 `StartCalendarInterval` 只指向当前有效 `expiresAt`。
+- Config 保存、应用启动/升级和批次结束时重新计算，并安装、更新或卸载对应 agent。来源发布只更新本批次的候选到期点，批次 finalization 最多重装一次 agent。
+- 精确 `expiresAt` 向上取整到下一分钟形成 `wakeAt`，agent 的 `StartCalendarInterval` 指向 `wakeAt`；CLI 仍用未取整的 `expiresAt` 校验，因此不会提前消费 token。
+- 同 period 的 plist 更新使用 scheduler lease 串行化，先写临时文件并原子替换，再执行 launchctl 更新，避免 Config 保存和批次结束并发覆盖。
+- 更新失败时保留最后一个已成功安装的 agent（如果存在），并在 scheduler state、run audit 和 Config 状态中记录 `degraded`；失败不能被顶层 `ok:true` 隐藏。
 - agent 到点后调用 `run-period-digest --trigger freshness --freshness-token <token>`。
 - CLI 在取得编排 lease 前重新读取 stable latest 和 Config，校验 token、自然日和当前 `expiresAt`；过时 agent 只记录 no-op，不能错误生成。
 - 同日到期时 Mac 正在休眠，launchd 在唤醒后按系统语义补启动；CLI 随后执行有效性校验。
 - 如果唤醒时已经跨日，该 token 作废并退出，由新一天固定定时负责。
-- 一次性任务触发、no-op 或版本更新后重新计算 agent，避免旧日历项在未来重复执行。
+- 一次性任务触发、no-op、应用启动或升级后执行 reconcile，避免旧日历项在未来重复执行，并修复上次安装失败。
 
 为避免失败版本形成即时重试循环，持久化一个 freshness attempt token：
 
@@ -283,6 +339,14 @@ token = page identity + versionId/scheduled-base + freshnessSeconds
 任何批次在该 token 已过期后开始时，都视为已经消费该次过期机会。即使该来源本轮失败，相同 token 也不会再次自动触发；固定定时或用户 Refresh 仍可重试。新版本或 Config 时长变化会产生新 token。
 
 freshness agent 和固定定时 agent 都独立于 Web 后端运行；两者在撞车时仍通过同一个 period lease 加入同一批次。
+
+页面兜底不替代后台调度：state API 仍是只读接口；页面发现内容 stale、没有活动批次且对应 attempt token 尚未消费时，可以调用与 CLI 相同的 freshness POST 入口。该请求仍进入 orchestrator，撞车即 join，并由 attempt token 保证同一版本不会因反复切页而重复触发。这样 launchd 失效时打开页面可以自愈，但正常 freshness 不依赖页面访问。
+
+### 自动生成频次与成本边界
+
+默认 12 小时 freshness、早间固定定时且不跨日时，每个 period 每天最多一个 fixed batch 和一个 freshness batch；Today/24h 合计最多四个自动批次、十二次模型调用。手工 Refresh 不计入该估算，但仍受 single-flight 限制。
+
+Config 将 freshness 限定为 1 至 24 小时，并在保存前展示按当前固定时间推算的每日自动批次数和模型调用数。自定义时长下，同日 freshness 轮数按当前版本的 `generatedAt + freshness` 连续推算；系统不另设会阻止手工 Refresh 的每日硬上限。attempt token 解决失败重试风暴，配置下限解决过小间隔造成的正常成功高频循环。
 
 ## 页面与 API
 
@@ -308,7 +372,7 @@ GET  /api/period-digest-state?period=today&contentSource=all
 POST /api/period-digest-runs
 ```
 
-GET 返回 latest-success、run state、是否 stale、`expiresAt` 和最近错误。POST 只接受 `period` 和 `trigger=manual`，返回 `{ runId, joined }`。现有 stream/metadata API 在页面迁移后移除或保留内部兼容层，不能继续作为第二个任务所有者。
+GET 返回 latest-success、run state、是否 stale、`expiresAt`、attempt token 状态和最近错误。POST 接受 `period`、trigger，以及 manual 请求的 `requestedSource`，返回 `{ runId, joined }`。现有 stream/metadata API 在页面迁移后移除或保留内部兼容层，不能继续作为第二个任务所有者。
 
 ### 展示状态
 
@@ -339,11 +403,11 @@ Schedule 区域继续配置四个固定时间，并新增摘要有效时长：
 - `Yesterday archive schedule`
 - `Week archive schedule`
 - `Today/24h freshness`，默认 12 小时
-- `Archive directory`，明确只服务 Yesterday/Week 和已有遗留文件
+- `Archive directory`，辅助文案明确为“用于 Yesterday/Week；已有 Today/24h 文件仍可在此访问，但新页面不再使用”
 
 保存后：
 
-1. 校验有效时长为正数且在合理上限内。
+1. 校验有效时长为 1 至 24 小时，并展示当前计划对应的自动批次/模型调用估算。
 2. 写入 Config。
 3. 更新 Today/24h 的 current-digest launchd agent。
 4. 更新 Yesterday/Week 的 archive agent。
@@ -377,9 +441,9 @@ Config 同时展示 Today/24h 最近批次状态、固定计划时间和当前�
 1. 如果某个 stable key 已存在，直接使用，不做迁移。
 2. 枚举 `period-digest-latest:%` 旧缓存行并校验 JSON schema。
 3. 只接受 `context.includeDms=false` 的条目。
-4. 通过 `context.window.label` 的严格旧值 `Today` / `Last 24 hours` 映射 period，通过 `context.contentSource` 映射 source。
+4. 旧 schema 没有显式 period，只能通过冻结的迁移兼容表 `LEGACY_PERIOD_LABELS = { Today: "today", "Last 24 hours": "24h" }` 映射；该常量不复用 UI/prompt 展示文案。通过 `context.contentSource` 映射 source。
 5. 对每个逻辑页面选择 `result.updatedAt` 最新的有效条目，复制到 stable key，并标记 `migratedFromLegacy:true`。
-6. 无法确定身份或内容损坏的条目跳过，不删除旧行。
+6. 无法确定身份或内容损坏的条目跳过、不删除旧行，并记录可见的 migration diagnostic，不能静默失败。
 7. stable key 建立后不再执行该页面的迁移。
 
 迁移结果即使已经 stale 也可展示；stale 只影响后台触发，不影响内容可见性。
@@ -438,11 +502,11 @@ Today/24h audit 从“archive job”语义改为“current digest run”，至�
 - 页面身份只包含 period/source，不包含生成参数或 DMs。
 - stable latest key 六种组合固定且不含日期。
 - latest-success upsert 原子替换，失败保留旧值。
-- 旧缓存迁移选择正确 period/source、排除 DMs、选择最新有效版本。
+- 旧缓存迁移使用冻结的 legacy label 兼容表选择正确 period/source、排除 DMs、选择最新有效版本，并报告无法识别的条目。
 - freshness 默认 12 小时、Config 修改重算、成功发布重算。
 - 三个 source 取最早同日到期点；跨日不安排。
 - attempt token 防止失败版本即时循环，同时允许固定定时和手工重试。
-- freshness launchd 的安装、过时 token no-op、同日休眠补跑和跨日失效。
+- freshness launchd 的分钟向上取整、串行原子安装、安装失败可见性、过时 token no-op、同日休眠补跑和跨日失效。
 - run state 的 owner、heartbeat、PID、绝对上限和 owner-safe 更新。
 
 ### 编排集成测试
@@ -459,11 +523,13 @@ Today/24h audit 从“archive job”语义改为“current digest run”，至�
 
 - state API 在 fresh、stale、generating、degraded、failed 时始终返回已有 latest-success。
 - Refresh 触发整个 period 批次并在活动期间禁用。
+- manual owner 优先生成当前 requestedSource；join 已有批次时不重排。
 - 手工刷新开始、定时开始和 freshness 开始均不清空 Markdown。
 - 来源成功后才替换正文；失败时保留原时间戳和正文。
 - 跨日未生成时显示前一日 latest-success 和明确时间/Outdated 状态。
 - Today/24h 无 DM 开关、无 Save；Yesterday/Week 历史 UI 不回归。
 - Config 保存 freshness 和计划时间，并呈现每个 agent 的真实安装结果。
+- launchd 不可用时页面 stale 兜底通过同一 attempt token 最多触发一次，并保持旧正文。
 
 ### CLI/launchd 测试
 
@@ -482,12 +548,14 @@ Today/24h audit 从“archive job”语义改为“current digest run”，至�
 | 当天尚未成功生成 | 显示跨日保留的最后成功结果 |
 | freshness 到期并开始生成 | 原内容保持直到新版本成功 |
 | 手工 Refresh | 触发 period 批次，原内容保持 |
+| For You 手工 Refresh 成为 owner | For You 先生成发布，随后完成另外两个来源 |
 | 三种触发撞车 | 一个 run ID、一次同步、一个三来源批次 |
 | 一个来源失败 | 该来源保持旧内容，另外两个继续更新 |
 | 批次全部失败 | 所有页面保持旧内容并显示失败 |
 | 首次安装从未成功 | 显示首次生成/错误状态，不伪造正文 |
 | 新自然日定时尚未完成 | 显示上一日最后成功内容和实际生成时间 |
 | 旧 Today/24h 归档存在 | 文件保留，但新页面/API 不读取和写入 |
+| freshness agent 安装失败 | Config/状态显示 degraded；旧 agent、启动 reconcile 或页面兜底负责恢复 |
 
 ## 方案取舍
 

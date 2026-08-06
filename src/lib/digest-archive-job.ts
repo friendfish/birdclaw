@@ -43,8 +43,9 @@ import {
 	startScheduledJobRun,
 } from "./scheduled-job";
 import {
-	streamPeriodDigest,
 	normalizeDigestLanguage,
+	selectPeriodDigestLanguage,
+	streamPeriodDigest,
 	type PeriodDigestContentSource,
 	type PeriodDigestContext,
 	type PeriodDigestPreset,
@@ -213,16 +214,7 @@ export function formatDigestArchiveRunDate(date: Date) {
 }
 
 export function resolveDigestArchiveLanguage(requested?: string) {
-	return normalizeDigestLanguage(selectDigestArchiveLanguage(requested));
-}
-
-function selectDigestArchiveLanguage(requested?: string) {
-	return (
-		requested?.trim() ||
-		process.env.BIRDCLAW_DIGEST_LANGUAGE?.trim() ||
-		getBirdclawConfig().language?.aiLanguage?.trim() ||
-		undefined
-	);
+	return normalizeDigestLanguage(selectPeriodDigestLanguage(requested));
 }
 
 async function writeJsonAtomically(jsonPath: string, value: unknown) {
@@ -484,8 +476,12 @@ function runOneContentSourceEffect({
 						includeDms,
 						refresh: true,
 						liveSync,
-						maxTweets: PERIOD_DIGEST_PAGE_IDENTITY.maxTweets,
-						maxLinks: PERIOD_DIGEST_PAGE_IDENTITY.maxLinks,
+						...(period === "today" || period === "24h"
+							? {
+									maxTweets: PERIOD_DIGEST_PAGE_IDENTITY.maxTweets,
+									maxLinks: PERIOD_DIGEST_PAGE_IDENTITY.maxLinks,
+								}
+							: {}),
 						language,
 						since,
 						until,
@@ -617,7 +613,7 @@ export function runDigestArchiveJobEffect(
 			formatDigestArchiveRunDate(options.now?.() ?? new Date()),
 		);
 		const selectedLanguage = yield* trySync(() =>
-			selectDigestArchiveLanguage(options.language),
+			selectPeriodDigestLanguage(options.language),
 		);
 		const auditOptionsBase = {
 			period,

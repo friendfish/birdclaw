@@ -40,6 +40,12 @@ import {
 	replaceDigestArchiveEntryEffect,
 } from "./digest-archive-job";
 import {
+	__test__ as periodDigestTest,
+	type PeriodDigestOptions,
+} from "./period-digest";
+import { parsePeriodDigestRequestOptions } from "./period-digest-request";
+import { applyPeriodDigestIdentityParams } from "./period-digest-url";
+import {
 	digestArchiveRunStatePath,
 	readDigestArchiveRunState,
 } from "./digest-archive-run-state";
@@ -168,6 +174,61 @@ describe("digest-archive-job", () => {
 			expect(json.period).toBe("today");
 			expect(json.runDate).toBe("2026-07-27");
 		}
+	});
+
+	it.each([
+		["today", 5000, 20],
+		["24h", 5000, 20],
+		["yesterday", undefined, undefined],
+		["week", undefined, undefined],
+	] as const)(
+		"applies the expected scheduled input limits for %s",
+		async (period, expectedMaxTweets, expectedMaxLinks) => {
+			streamPeriodDigestMock.mockResolvedValue(digestResult());
+
+			await runEffectPromise(
+				runDigestArchiveJobEffect({
+					period,
+					archiveDir: tempArchiveDir(),
+					contentSources: ["all"],
+					liveSync: false,
+					now: () => new Date(2026, 6, 27),
+				}),
+			);
+
+			const [options] = streamPeriodDigestMock.mock.calls.at(-1) as [
+				PeriodDigestOptions,
+			];
+			expect(options.maxTweets).toBe(expectedMaxTweets);
+			expect(options.maxLinks).toBe(expectedMaxLinks);
+		},
+	);
+
+	it("keeps scheduled and page latest keys aligned for Config language", async () => {
+		writeBirdclawConfig({ language: { aiLanguage: "zh-CN" } });
+		streamPeriodDigestMock.mockResolvedValue(digestResult());
+
+		await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir: tempArchiveDir(),
+				contentSources: ["all"],
+				liveSync: false,
+				now: () => new Date(2026, 6, 27),
+			}),
+		);
+
+		const [scheduledOptions] = streamPeriodDigestMock.mock.calls.at(-1) as [
+			PeriodDigestOptions,
+		];
+		const url = new URL("http://birdclaw.local/api/period-digest");
+		applyPeriodDigestIdentityParams(url, "today", false, "all");
+		const pageOptions = parsePeriodDigestRequestOptions(url);
+		const promptHash = "same-prompt";
+
+		expect(periodDigestTest.latestDigestCacheKey(pageOptions, promptHash)).toBe(
+			periodDigestTest.latestDigestCacheKey(scheduledOptions, promptHash),
+		);
 	});
 
 	it("caches unchanged audit status and invalidates after an append", async () => {

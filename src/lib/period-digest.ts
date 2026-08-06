@@ -150,6 +150,15 @@ export function normalizeDigestLanguage(
 	}
 }
 
+export function selectPeriodDigestLanguage(requested?: string) {
+	return (
+		requested?.trim() ||
+		process.env.BIRDCLAW_DIGEST_LANGUAGE?.trim() ||
+		getBirdclawConfig().language?.aiLanguage?.trim() ||
+		undefined
+	);
+}
+
 interface CompactTweet {
 	id: string;
 	url: string;
@@ -634,9 +643,7 @@ export function collectPeriodDigestContext(
 }
 
 function languageFromOptions(options: PeriodDigestOptions) {
-	return normalizeDigestLanguage(
-		options.language ?? process.env.BIRDCLAW_DIGEST_LANGUAGE,
-	);
+	return normalizeDigestLanguage(selectPeriodDigestLanguage(options.language));
 }
 
 function modelFromOptions(options: PeriodDigestOptions) {

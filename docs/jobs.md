@@ -165,9 +165,11 @@ file and lock-ownership failures, are surfaced on the Today page from the latest
 scheduled run instead of appearing as a missing archive.
 
 Scheduled Today and 24h generation uses the same tweet and link input limits as
-the corresponding page. This keeps the latest-cache identity aligned so opening
-the page adopts the scheduled result instead of displaying an older live result
-or starting a duplicate generation.
+the corresponding page; Yesterday and Week retain the archive job's lower
+defaults. Page requests and scheduled jobs also share the same language
+precedence (explicit option, environment, then Config). Together these keep the
+current-digest latest-cache identity aligned without increasing the input cost
+of historical archive generation.
 
 ## Useful checks
 
