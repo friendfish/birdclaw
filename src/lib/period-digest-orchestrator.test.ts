@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { useTestHome } from "../test/test-home";
 import type {
@@ -14,6 +16,7 @@ import {
 import {
 	readPeriodDigestRunState,
 	requestPeriodDigestRun,
+	periodDigestRunStatePath,
 	type PeriodDigestOrchestratorDependencies,
 } from "./period-digest-orchestrator";
 
@@ -296,5 +299,157 @@ describe("period digest orchestrator", () => {
 				startedBy: { trigger: "scheduled", origin: "launchd" },
 			}),
 		);
+	});
+
+	it("rejects a requested source on non-manual triggers", async () => {
+		await expect(
+			requestPeriodDigestRun(
+				{
+					period: "today",
+					trigger: "scheduled",
+					origin: "launchd",
+					requestedSource: "all",
+				},
+				dependencies(),
+			),
+		).rejects.toThrow("requestedSource is only valid for manual digest runs");
+	});
+
+	it("records pre-sync failures without clearing an existing run state", async () => {
+		const audit = vi.fn(async () =>
+			Promise.reject(new Error("audit unavailable")),
+		);
+		const deps = dependencies({
+			preSync: vi.fn(async () => Promise.reject(new Error("sync unavailable"))),
+			audit,
+		});
+
+		const run = await requestPeriodDigestRun(
+			{
+				period: "24h",
+				trigger: "freshness",
+				origin: "cli",
+				liveSync: false,
+			},
+			deps,
+		);
+		const finalState = await run.completion;
+
+		expect(finalState).toMatchObject({
+			phase: "failed",
+			error: "sync unavailable",
+			sync: { status: "skipped" },
+		});
+		expect(deps.readCredentials).not.toHaveBeenCalled();
+		expect(audit).toHaveBeenCalledOnce();
+	});
+
+	it("marks a batch failed when every source generation fails", async () => {
+		const deps = dependencies({
+			generate: vi.fn(async () =>
+				Promise.reject(new Error("model unavailable")),
+			),
+			reconcileFreshness: vi.fn(async () =>
+				Promise.reject(new Error("unused")),
+			),
+		});
+
+		const run = await requestPeriodDigestRun(
+			{ period: "today", trigger: "scheduled", origin: "launchd" },
+			deps,
+		);
+		const finalState = await run.completion;
+
+		expect(finalState.phase).toBe("failed");
+		expect(Object.values(finalState.sources)).toEqual([
+			expect.objectContaining({ state: "failed", attempts: 1 }),
+			expect.objectContaining({ state: "failed", attempts: 1 }),
+			expect.objectContaining({ state: "failed", attempts: 1 }),
+		]);
+		expect(deps.reconcileFreshness).not.toHaveBeenCalled();
+	});
+
+	it("forwards account and language while tolerating post-publication hook failures", async () => {
+		const deps = dependencies({
+			reconcileFreshness: vi.fn(async () =>
+				Promise.reject(new Error("scheduler unavailable")),
+			),
+			audit: vi.fn(async () => Promise.reject(new Error("audit unavailable"))),
+		});
+
+		const run = await requestPeriodDigestRun(
+			{
+				period: "today",
+				trigger: "manual",
+				origin: "cli",
+				account: "alice",
+				language: "zh-CN",
+				liveSync: false,
+			},
+			deps,
+		);
+		const finalState = await run.completion;
+
+		expect(finalState.phase).toBe("completed");
+		expect(deps.preSync).toHaveBeenCalledWith(
+			expect.objectContaining({ account: "alice", liveSync: false }),
+		);
+		expect(deps.collectContext).toHaveBeenCalledWith(
+			expect.objectContaining({ account: "alice" }),
+		);
+		expect(deps.generate).toHaveBeenCalledWith(
+			expect.objectContaining({ account: "alice", language: "zh-CN" }),
+		);
+		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today");
+		expect(deps.audit).toHaveBeenCalledOnce();
+	});
+
+	it("ignores corrupt and incompatible persisted run states", async () => {
+		const deps = dependencies();
+		const run = await requestPeriodDigestRun(
+			{ period: "24h", trigger: "scheduled", origin: "launchd" },
+			deps,
+		);
+		const valid = await run.completion;
+		const statePath = periodDigestRunStatePath("24h");
+		await fs.mkdir(path.dirname(statePath), { recursive: true });
+
+		await fs.writeFile(statePath, "{not-json", "utf8");
+		await expect(readPeriodDigestRunState("24h")).resolves.toBeUndefined();
+
+		const invalidStates: unknown[] = [
+			null,
+			[],
+			{ ...valid, schemaVersion: 2 },
+			{ ...valid, runId: 1 },
+			{ ...valid, period: "week" },
+			{ ...valid, startedBy: undefined },
+			{ ...valid, startedBy: { trigger: "unknown", origin: "launchd" } },
+			{ ...valid, startedBy: { trigger: "scheduled", origin: "unknown" } },
+			{ ...valid, joinedBy: null },
+			{ ...valid, sourceOrder: null },
+			{ ...valid, sourceOrder: ["unknown"] },
+			{ ...valid, ownerId: 1 },
+			{ ...valid, pid: "pid" },
+			{ ...valid, host: 1 },
+			{ ...valid, startedAt: 1 },
+			{ ...valid, heartbeatAt: 1 },
+			{ ...valid, phase: 1 },
+			{ ...valid, sources: null },
+		];
+
+		for (const invalid of invalidStates) {
+			await fs.writeFile(statePath, JSON.stringify(invalid), "utf8");
+			await expect(readPeriodDigestRunState("24h")).resolves.toBeUndefined();
+		}
+
+		const validCliOrigin = {
+			...valid,
+			startedBy: { trigger: "manual" as const, origin: "cli" as const },
+		};
+		await fs.writeFile(statePath, JSON.stringify(validCliOrigin), "utf8");
+		await expect(readPeriodDigestRunState("24h")).resolves.toMatchObject({
+			startedBy: { trigger: "manual", origin: "cli" },
+		});
 	});
 });

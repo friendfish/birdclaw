@@ -254,4 +254,115 @@ describe("current period digest store", () => {
 			runId: "stable-run",
 		});
 	});
+
+	it("rejects incomplete or incompatible stable current rows", () => {
+		const { db } = testHome();
+		const valid = publishCurrentPeriodDigest(
+			{
+				period: "today",
+				contentSource: "all",
+				runId: "run-valid",
+				versionId: "version-valid",
+				generatedAt: "2026-08-06T08:30:00.000Z",
+				result: result("Today", "all"),
+				maxTweets: 5_000,
+				maxLinks: 20,
+				sync: { status: "fresh", steps: [] },
+			},
+			db,
+		);
+		const key = currentPeriodDigestKey("today", "all");
+		const invalidRows: unknown[] = [
+			null,
+			[],
+			{ ...valid, schemaVersion: 2 },
+			{ ...valid, period: "week" },
+			{ ...valid, contentSource: "unknown" },
+			{ ...valid, runId: 1 },
+			{ ...valid, versionId: 1 },
+			{ ...valid, generatedAt: "not-a-date" },
+			{ ...valid, context: null },
+			{ ...valid, context: { ...valid.context, window: null } },
+			{ ...valid, markdown: 1 },
+			{ ...valid, model: 1 },
+			{ ...valid, reasoningEffort: 1 },
+			{ ...valid, serviceTier: 1 },
+			{ ...valid, parseStatus: "invalid" },
+			{ ...valid, input: null },
+			{ ...valid, input: { ...valid.input, maxTweets: "5000" } },
+			{ ...valid, input: { ...valid.input, maxLinks: "20" } },
+			{ ...valid, sync: null },
+			{ ...valid, digest: { title: "missing required fields" } },
+		];
+
+		for (const invalid of invalidRows) {
+			writeSyncCache(key, invalid, db);
+			expect(readCurrentPeriodDigest("today", "all", db)).toBeNull();
+		}
+
+		writeSyncCache(key, { ...valid, parseStatus: "fallback" }, db);
+		expect(readCurrentPeriodDigest("today", "all", db)?.parseStatus).toBe(
+			"fallback",
+		);
+	});
+
+	it("diagnoses malformed legacy identities and supports legacy defaults", () => {
+		const { db } = testHome();
+		const writeLegacy = (key: string, value: unknown, writtenAt: string) =>
+			writeSyncCache(
+				key,
+				value,
+				db,
+				createServerRuntimeServices({ now: () => new Date(writtenAt) }),
+			);
+		const base = result("Today", "all", "invalid-updated-at");
+		const { contentSource: _contentSource, ...contextWithoutSource } =
+			base.context;
+
+		writeLegacy(
+			"period-digest-latest:v1:default-source",
+			{
+				...base,
+				context: contextWithoutSource,
+				parseStatus: "fallback",
+			},
+			"2026-08-06T08:30:00.000Z",
+		);
+		writeLegacy(
+			"period-digest-latest:v1:unknown-label",
+			{ ...base, context: context("Yesterday", "all") },
+			"2026-08-06T08:31:00.000Z",
+		);
+		writeLegacy(
+			"period-digest-latest:v1:unknown-source",
+			{
+				...base,
+				context: { ...context("Today", "all"), contentSource: "unknown" },
+			},
+			"2026-08-06T08:32:00.000Z",
+		);
+		writeLegacy(
+			"period-digest-latest:v1:invalid-payload",
+			{ context: null },
+			"2026-08-06T08:33:00.000Z",
+		);
+
+		const migration = migrateLegacyPeriodDigests(db);
+
+		expect(migration.migrated).toContainEqual({
+			period: "today",
+			contentSource: "all",
+		});
+		expect(migration.diagnostics).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ reason: "unknown-period-label" }),
+				expect.objectContaining({ reason: "invalid-content-source" }),
+				expect.objectContaining({ reason: "invalid-payload" }),
+			]),
+		);
+		expect(readCurrentPeriodDigest("today", "all", db)).toMatchObject({
+			generatedAt: "2026-08-06T08:30:00.000Z",
+			parseStatus: "fallback",
+		});
+	});
 });

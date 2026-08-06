@@ -1,10 +1,14 @@
 // @vitest-environment node
+import fs from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { useTestHome } from "../test/test-home";
 import {
 	buildPeriodDigestFreshnessLaunchAgent,
 	calculatePeriodDigestFreshnessDeadline,
 	consumePeriodDigestFreshnessAttempt,
+	periodDigestFreshnessStatePath,
+	readPeriodDigestFreshnessState,
 	reconcilePeriodDigestFreshness,
 	triggerDuePeriodDigestFreshness,
 	writePeriodDigestFreshnessState,
@@ -197,5 +201,135 @@ describe("period digest freshness", () => {
 		});
 		expect(second.state.status).toBe("scheduled");
 		expect(maximumActiveInstalls).toBe(1);
+	});
+
+	it("treats missing, corrupt, and incomplete freshness state as absent", async () => {
+		const statePath = periodDigestFreshnessStatePath("today");
+		await expect(
+			readPeriodDigestFreshnessState("today"),
+		).resolves.toBeUndefined();
+		await fs.mkdir(path.dirname(statePath), { recursive: true });
+		await fs.writeFile(statePath, "{not-json", "utf8");
+		await expect(
+			readPeriodDigestFreshnessState("today"),
+		).resolves.toBeUndefined();
+
+		for (const invalid of [
+			{},
+			{ schemaVersion: 2 },
+			{ schemaVersion: 1, period: "24h" },
+			{ schemaVersion: 1, period: "today", attemptToken: 1 },
+			{
+				schemaVersion: 1,
+				period: "today",
+				attemptToken: "token",
+				dueAt: 1,
+			},
+			{
+				schemaVersion: 1,
+				period: "today",
+				attemptToken: "token",
+				dueAt: "due",
+				fireAt: 1,
+			},
+			{
+				schemaVersion: 1,
+				period: "today",
+				attemptToken: "token",
+				dueAt: "due",
+				fireAt: "fire",
+				status: 1,
+			},
+			{
+				schemaVersion: 1,
+				period: "today",
+				attemptToken: "token",
+				dueAt: "due",
+				fireAt: "fire",
+				status: "scheduled",
+				updatedAt: 1,
+			},
+		]) {
+			await fs.writeFile(statePath, JSON.stringify(invalid), "utf8");
+			await expect(
+				readPeriodDigestFreshnessState("today"),
+			).resolves.toBeUndefined();
+		}
+	});
+
+	it("rejects missing, early, and cross-day freshness attempts", async () => {
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: "missing",
+				now: new Date(2026, 7, 6, 10, 0, 0),
+			}),
+		).resolves.toEqual({ valid: false, reason: "missing-state" });
+
+		const dueAt = new Date(2026, 7, 6, 12, 0, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "current",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "scheduled",
+			updatedAt: new Date(2026, 7, 6, 9, 0, 0).toISOString(),
+		});
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: "current",
+				now: new Date(2026, 7, 6, 11, 0, 0),
+			}),
+		).resolves.toEqual({ valid: false, reason: "not-due" });
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: "current",
+				now: new Date(2026, 7, 7, 12, 0, 0),
+			}),
+		).resolves.toEqual({ valid: false, reason: "cross-day" });
+	});
+
+	it("returns disabled without installing or triggering when due time crosses midnight", async () => {
+		const install = vi.fn();
+		const reconciled = await reconcilePeriodDigestFreshness({
+			period: "24h",
+			now: new Date(2026, 7, 6, 20, 0, 0),
+			freshnessSeconds: 12 * 60 * 60,
+			schedule: { hour: 18, minute: 0 },
+			install,
+		});
+		expect(reconciled).toMatchObject({
+			state: { status: "disabled", dueAt: "", fireAt: "" },
+			installResult: null,
+		});
+		expect(install).not.toHaveBeenCalled();
+
+		const requestRun = vi.fn();
+		await expect(
+			triggerDuePeriodDigestFreshness({
+				period: "24h",
+				origin: "cli",
+				now: new Date(2026, 7, 6, 20, 1, 0),
+				requestRun,
+			}),
+		).resolves.toEqual({ triggered: false, reason: "disabled" });
+		expect(requestRun).not.toHaveBeenCalled();
+	});
+
+	it("persists non-Error launchd installation failures", async () => {
+		const reconciled = await reconcilePeriodDigestFreshness({
+			period: "today",
+			now: new Date(2026, 7, 6, 10, 0, 0),
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install: vi.fn(async () => Promise.reject("launchctl denied")),
+		});
+		expect(reconciled.state).toMatchObject({
+			status: "error",
+			installError: "launchctl denied",
+		});
 	});
 });

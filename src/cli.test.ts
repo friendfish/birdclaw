@@ -1081,6 +1081,168 @@ describe("cli", () => {
 		expect(runDigestArchiveJobMock).not.toHaveBeenCalled();
 	});
 
+	it("forwards manual current-digest options without live sync", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"run-period-digest",
+			"--period",
+			"24h",
+			"--trigger",
+			"manual",
+			"--origin",
+			"page",
+			"--requested-source",
+			"for_you",
+			"--account",
+			"alice",
+			"--no-live-sync",
+		]);
+
+		expect(requestPeriodDigestRunMock).toHaveBeenCalledWith({
+			period: "24h",
+			trigger: "manual",
+			origin: "page",
+			requestedSource: "for_you",
+			account: "alice",
+			liveSync: false,
+		});
+	});
+
+	it("runs a valid freshness wakeup and reports a failed batch", async () => {
+		consumePeriodDigestFreshnessAttemptMock.mockResolvedValue({ valid: true });
+		requestPeriodDigestRunMock.mockResolvedValue({
+			runId: "failed-run",
+			joined: true,
+			completion: Promise.resolve({ runId: "failed-run", phase: "failed" }),
+		});
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"run-period-digest",
+			"--period",
+			"today",
+			"--trigger",
+			"freshness",
+			"--origin",
+			"launchd",
+			"--attempt-token",
+			"valid-token",
+		]);
+
+		expect(consumePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
+			period: "today",
+			attemptToken: "valid-token",
+		});
+		expect(requestPeriodDigestRunMock).toHaveBeenCalledOnce();
+		expect(process.exitCode).toBe(1);
+	});
+
+	it("rejects invalid current-digest command identities before dispatch", async () => {
+		const { runCli } = await loadCli();
+		const cases = [
+			{
+				args: ["--period", "yesterday"],
+				message: "--period must be today or 24h",
+			},
+			{
+				args: ["--period", "invalid"],
+				message: "--period must be today, yesterday, 24h, or week",
+			},
+			{
+				args: ["--period", "today", "--trigger", "invalid"],
+				message: "--trigger must be scheduled, freshness, or manual",
+			},
+			{
+				args: ["--period", "today", "--origin", "invalid"],
+				message: "--origin must be launchd, page, or cli",
+			},
+			{
+				args: [
+					"--period",
+					"today",
+					"--trigger",
+					"freshness",
+					"--origin",
+					"launchd",
+				],
+				message: "--attempt-token is required for freshness launchd wakeups",
+			},
+		];
+
+		for (const testCase of cases) {
+			await expect(
+				runCli([
+					"node",
+					"birdclaw",
+					"jobs",
+					"run-period-digest",
+					...testCase.args,
+				]),
+			).rejects.toThrow(testCase.message);
+		}
+		expect(requestPeriodDigestRunMock).not.toHaveBeenCalled();
+	});
+
+	it("keeps archived-period backfills and single-agent installation intact", async () => {
+		runDigestArchiveJobMock.mockResolvedValue({ ok: false });
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"run-digest-archive",
+			"--period",
+			"week",
+			"--run-date",
+			"2026-08-04",
+		]);
+		expect(runDigestArchiveJobMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				period: "week",
+				now: expect.any(Function),
+			}),
+		);
+		expect(runDigestArchiveJobMock.mock.calls[0]?.[0].now()).toEqual(
+			new Date("2026-08-04T00:00:00"),
+		);
+		expect(process.exitCode).toBe(1);
+
+		process.exitCode = undefined;
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"install-digest-archive-launchd",
+			"--period",
+			"week",
+			"--hour",
+			"9",
+			"--minute",
+			"15",
+			"--weekday",
+			"2",
+			"--env-file",
+			"/tmp/legacy.env",
+		]);
+		expect(installDigestArchiveLaunchAgentMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				period: "week",
+				hour: 9,
+				minute: 15,
+				weekday: 2,
+				envFile: "/tmp/legacy.env",
+			}),
+		);
+	});
+
 	it("rejects invalid account and bookmark job modes before dispatch", async () => {
 		const { runCli } = await loadCli();
 		const cases = [

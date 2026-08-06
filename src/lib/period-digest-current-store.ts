@@ -231,7 +231,14 @@ function parseLegacyCandidate(
 	} catch {
 		return { reason: "invalid-json" };
 	}
-	if (!isRecord(value) || !isPeriodDigestContext(value.context)) {
+	if (!isRecord(value) || !isRecord(value.context)) {
+		return { reason: "invalid-payload" };
+	}
+	const contentSource = value.context.contentSource ?? "all";
+	if (!isContentSource(contentSource)) {
+		return { reason: "invalid-content-source" };
+	}
+	if (!isPeriodDigestContext(value.context)) {
 		return { reason: "invalid-payload" };
 	}
 	if (value.context.includeDms) {
@@ -239,10 +246,6 @@ function parseLegacyCandidate(
 	}
 	const period = LEGACY_PERIOD_LABELS[value.context.window.label];
 	if (!period) return { reason: "unknown-period-label" };
-	const contentSource = value.context.contentSource ?? "all";
-	if (!isContentSource(contentSource)) {
-		return { reason: "invalid-content-source" };
-	}
 	const digest = periodDigestSchema.safeParse(value.digest);
 	const generatedAt = isIsoTimestamp(value.updatedAt)
 		? value.updatedAt
