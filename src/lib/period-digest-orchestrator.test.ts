@@ -279,6 +279,46 @@ describe("period digest orchestrator", () => {
 		expect(sleep).toHaveBeenCalledWith(2);
 	});
 
+	it("uses the default backoff when an injected sleep is undefined", async () => {
+		const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+		const lockPath = periodDigestRunLockPath("24h");
+		await fs.mkdir(path.dirname(lockPath), { recursive: true });
+		await fs.writeFile(lockPath, "invalid", "utf8");
+		const stale = new Date(Date.now() - 120_000);
+		await fs.utimes(lockPath, stale, stale);
+		await fs.writeFile(
+			`${lockPath}.reclaim`,
+			JSON.stringify({
+				ownerId: "active-reclaimer",
+				startedAt: new Date().toISOString(),
+				host: os.hostname(),
+				pid: process.pid,
+			}),
+			"utf8",
+		);
+		setTimeout(() => void fs.rm(`${lockPath}.reclaim`, { force: true }), 20);
+
+		try {
+			const run = await requestPeriodDigestRun(
+				{ period: "24h", trigger: "scheduled", origin: "launchd" },
+				dependencies({
+					sleep: undefined,
+					lockAcquisitionTimeoutMs: 500,
+					lockRetryDelayMs: 2,
+				}),
+			);
+
+			await expect(run.completion).resolves.toMatchObject({
+				phase: "completed",
+			});
+			expect(
+				setTimeoutSpy.mock.calls.some(([, milliseconds]) => milliseconds === 2),
+			).toBe(true);
+		} finally {
+			setTimeoutSpy.mockRestore();
+		}
+	});
+
 	it("bounds lock acquisition while stale-lock reclamation stays busy", async () => {
 		const lockPath = periodDigestRunLockPath("24h");
 		await fs.mkdir(path.dirname(lockPath), { recursive: true });

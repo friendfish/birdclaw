@@ -474,6 +474,10 @@ function createInitialState(
 	};
 }
 
+function defaultSleep(milliseconds: number) {
+	return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function defaultDependencies(): PeriodDigestOrchestratorDependencies {
 	return {
 		now: () => new Date(),
@@ -529,8 +533,7 @@ function defaultDependencies(): PeriodDigestOrchestratorDependencies {
 				path.join(getBirdclawPaths().rootDir, "logs", "period-digest.jsonl"),
 				state,
 			),
-		sleep: (milliseconds) =>
-			new Promise((resolve) => setTimeout(resolve, milliseconds)),
+		sleep: defaultSleep,
 	};
 }
 
@@ -749,7 +752,7 @@ async function runOwnedBatch({
 					throwIfOwnershipLost();
 					generationError = error;
 					if (attempt < maxAttempts) {
-						await (dependencies.sleep ?? defaultDependencies().sleep)?.(
+						await (dependencies.sleep ?? defaultSleep)(
 							dependencies.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
 						);
 					}
@@ -926,7 +929,7 @@ export async function requestPeriodDigestRun(
 					`Could not acquire the ${request.period} digest run lock within ${String(acquisitionTimeoutMs)}ms`,
 				);
 			}
-			await dependencies.sleep?.(
+			await (dependencies.sleep ?? defaultSleep)(
 				dependencies.lockRetryDelayMs ?? DEFAULT_LOCK_RETRY_DELAY_MS,
 			);
 			continue;
