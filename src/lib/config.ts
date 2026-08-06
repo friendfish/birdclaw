@@ -31,6 +31,22 @@ export interface DigestScheduleTime {
 	weekday?: number;
 }
 
+export const DEFAULT_DIGEST_FRESHNESS_SECONDS = 12 * 60 * 60;
+
+export function resolveDigestFreshnessSeconds() {
+	const environment = process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS;
+	if (environment) {
+		const parsed = Number.parseInt(environment, 10);
+		if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+	}
+	const configured = getBirdclawConfig().digest?.freshnessSeconds;
+	return typeof configured === "number" &&
+		configured >= 60 * 60 &&
+		configured <= 24 * 60 * 60
+		? configured
+		: DEFAULT_DIGEST_FRESHNESS_SECONDS;
+}
+
 export interface BirdclawConfig {
 	accounts?: {
 		default?: string;
@@ -49,6 +65,10 @@ export interface BirdclawConfig {
 		freshnessSeconds?: number;
 		archiveDir?: string;
 		schedule?: Partial<Record<DigestSchedulePeriod, DigestScheduleTime>>;
+		launchd?: {
+			program?: string;
+			envFile?: string;
+		};
 	};
 	backup?: {
 		repoPath?: string;
@@ -130,6 +150,43 @@ export function writeBirdclawConfig(config: BirdclawConfig) {
 	writeFileSync(configPath, `${JSON.stringify(config, null, "\t")}\n`, "utf8");
 	cachedConfig = config;
 	return configPath;
+}
+
+export function resolveDigestLaunchdExecution() {
+	const launchd = getBirdclawConfig().digest?.launchd;
+	return {
+		program: launchd?.program?.trim() || "birdclaw",
+		...(launchd?.envFile?.trim() ? { envFile: launchd.envFile.trim() } : {}),
+	};
+}
+
+export function setDigestLaunchdExecution({
+	program,
+	envFile,
+}: {
+	program?: string;
+	envFile?: string;
+}) {
+	const config = getBirdclawConfig();
+	const current = config.digest?.launchd;
+	const nextProgram =
+		program === undefined
+			? current?.program?.trim() || "birdclaw"
+			: program.trim() || "birdclaw";
+	const nextEnvFile =
+		envFile === undefined ? current?.envFile?.trim() : envFile.trim();
+	const nextConfig: BirdclawConfig = {
+		...config,
+		digest: {
+			...config.digest,
+			launchd: {
+				program: nextProgram,
+				...(nextEnvFile ? { envFile: nextEnvFile } : {}),
+			},
+		},
+	};
+	writeBirdclawConfig(nextConfig);
+	return resolveDigestLaunchdExecution();
 }
 
 export function setActionsTransport(transport: ActionsTransport) {

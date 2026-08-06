@@ -12,8 +12,11 @@ import {
 	resetBirdclawPathsForTests,
 	resolveActionsTransport,
 	resolveDigestArchiveDir,
+	resolveDigestFreshnessSeconds,
+	resolveDigestLaunchdExecution,
 	resolveMentionsDataSource,
 	setActionsTransport,
+	setDigestLaunchdExecution,
 } from "./config";
 
 const tempRoots: string[] = [];
@@ -33,6 +36,7 @@ afterEach(() => {
 	delete process.env.BIRDCLAW_CONFIG;
 	delete process.env.BIRDCLAW_ACTIONS_TRANSPORT;
 	delete process.env.BIRDCLAW_BIRD_COMMAND;
+	delete process.env.BIRDCLAW_DIGEST_FRESHNESS_SECONDS;
 	delete process.env.BIRDCLAW_DIGEST_ARCHIVE_DIR;
 	if (originalLiveDataSource === undefined) {
 		delete process.env.BIRDCLAW_LIVE_DATA_SOURCE;
@@ -254,6 +258,64 @@ describe("config", () => {
 		expect(resolveDigestArchiveDir("/tmp/from-param")).toBe(
 			path.resolve("/tmp/from-param"),
 		);
+	});
+
+	it("accepts 1-24 hour digest freshness and rejects invalid config values", () => {
+		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
+		tempRoots.push(tempRoot);
+		process.env.BIRDCLAW_HOME = tempRoot;
+
+		expect(resolveDigestFreshnessSeconds()).toBe(12 * 60 * 60);
+		for (const freshnessSeconds of [60 * 60, 24 * 60 * 60]) {
+			writeFileSync(
+				path.join(tempRoot, "config.json"),
+				JSON.stringify({ digest: { freshnessSeconds } }),
+			);
+			resetBirdclawPathsForTests();
+			expect(resolveDigestFreshnessSeconds()).toBe(freshnessSeconds);
+		}
+		for (const freshnessSeconds of [0, 25 * 60 * 60]) {
+			writeFileSync(
+				path.join(tempRoot, "config.json"),
+				JSON.stringify({ digest: { freshnessSeconds } }),
+			);
+			resetBirdclawPathsForTests();
+			expect(resolveDigestFreshnessSeconds()).toBe(12 * 60 * 60);
+		}
+	});
+
+	it("persists the launchd executable and environment file for freshness jobs", () => {
+		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
+		tempRoots.push(tempRoot);
+		process.env.BIRDCLAW_HOME = tempRoot;
+
+		expect(resolveDigestLaunchdExecution()).toEqual({ program: "birdclaw" });
+		expect(
+			setDigestLaunchdExecution({
+				program: " /opt/homebrew/bin/birdclaw ",
+				envFile: " ~/.config/bird/env.sh ",
+			}),
+		).toEqual({
+			program: "/opt/homebrew/bin/birdclaw",
+			envFile: "~/.config/bird/env.sh",
+		});
+		expect(getBirdclawConfig().digest?.launchd).toEqual({
+			program: "/opt/homebrew/bin/birdclaw",
+			envFile: "~/.config/bird/env.sh",
+		});
+
+		expect(
+			setDigestLaunchdExecution({ program: "/usr/local/bin/birdclaw" }),
+		).toEqual({
+			program: "/usr/local/bin/birdclaw",
+			envFile: "~/.config/bird/env.sh",
+		});
+		expect(
+			setDigestLaunchdExecution({ envFile: " ~/.config/bird/new.env " }),
+		).toEqual({
+			program: "/usr/local/bin/birdclaw",
+			envFile: "~/.config/bird/new.env",
+		});
 	});
 
 	it("defaults bird command to PATH lookup", () => {

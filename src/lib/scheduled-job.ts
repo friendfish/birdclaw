@@ -30,6 +30,7 @@ export interface ScheduledJobLockMetadata {
 export const DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS = 6 * 60 * 60_000;
 
 export type ScheduledJobLockRelease = (() => Promise<void>) & {
+	readonly ownerId: string;
 	heartbeat(): Promise<boolean>;
 };
 
@@ -114,6 +115,10 @@ async function tryCreateScheduledJobLock(
 		}
 		await fs.rm(lockPath, { force: true });
 	}) as ScheduledJobLockRelease;
+	Object.defineProperty(release, "ownerId", {
+		value: ownerId,
+		enumerable: true,
+	});
 	release.heartbeat = () => heartbeatScheduledJobLock(lockPath, ownerId);
 	return release;
 }

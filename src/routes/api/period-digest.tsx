@@ -47,6 +47,17 @@ export const Route = createFileRoute("/api/period-digest")({
 								{ status: 400 },
 							);
 						}
+						const period = normalizePeriod(options.period);
+						if (period === "today" || period === "24h") {
+							return jsonResponse(
+								{
+									ok: false,
+									error:
+										"Today/24h generation requires POST /api/period-digest-runs",
+								},
+								{ status: 405, headers: { allow: "POST" } },
+							);
+						}
 						return createEffectNdjsonResponse<PeriodDigestStreamEvent>({
 							request,
 							schema: periodDigestStreamEventSchema,
@@ -59,11 +70,6 @@ export const Route = createFileRoute("/api/period-digest")({
 							],
 							run: ({ emit }) =>
 								Effect.gen(function* () {
-									// A scheduled digest-archive job holds this lock for the
-									// whole run — defer to it rather than racing a second
-									// generation for the same period (background job wins;
-									// see the design discussion in PR #31 / issue #30).
-									const period = normalizePeriod(options.period);
 									const isArchiving = yield* peekScheduledJobLockEffect(
 										digestArchiveLockPath(period),
 										DEFAULT_LOCK_STALE_MS,

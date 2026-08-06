@@ -423,7 +423,10 @@ birdclaw --json jobs install-bookmarks-launchd --program /opt/homebrew/bin/birdc
 
 ### `jobs run-digest-archive`
 
-- generates and archives one of `today`, `24h`, `yesterday`, or `week`
+- generates dated archives for `yesterday` or `week`
+- accepts `today` and `24h` only as an upgrade compatibility path: these periods
+  delegate to the current-digest orchestrator, do not archive, and report
+  archive/backfill-only flags in `ignoredOptions`
 - runs live X sync non-interactively before generating the three content-source
   digests
 - `--bird-credentials-path <path>` strictly reads only literal `AUTH_TOKEN` and
@@ -432,8 +435,25 @@ birdclaw --json jobs install-bookmarks-launchd --program /opt/homebrew/bin/birdc
 
 ```bash
 birdclaw --json jobs run-digest-archive \
-  --period today \
+  --period yesterday \
   --bird-credentials-path ~/.birdclaw/credentials/bird.env
+```
+
+### `jobs run-period-digest`
+
+- generates and atomically publishes all three current source pages for `today`
+  or `24h`
+- performs one shared live sync per batch unless `--no-live-sync` is passed
+- joins an existing same-period batch instead of starting or queueing another
+- `--requested-source` is valid with a manual trigger and moves that page first
+- freshness launchd calls require the installed one-shot `--attempt-token`
+
+```bash
+birdclaw --json jobs run-period-digest \
+  --period 24h \
+  --trigger manual \
+  --origin cli \
+  --requested-source all
 ```
 
 ### `jobs install-digest-archive-launchd`
@@ -445,6 +465,10 @@ birdclaw --json jobs run-digest-archive \
   environment file before Birdclaw starts
 - both options may be combined when launchd needs general variables such as
   `OPENAI_API_KEY` in addition to managed X credentials
+- Today/24h fixed agents call `run-period-digest`; Yesterday/Week agents call
+  `run-digest-archive`
+- the fixed agents' `--program` and `--env-path` are persisted and reused by
+  Today/24h one-shot freshness agents
 
 ```bash
 birdclaw --json jobs install-digest-archive-launchd \

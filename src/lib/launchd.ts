@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,7 +11,15 @@ const DEFAULT_LAUNCHD_PATH =
 
 export type LaunchAgentSchedule =
 	| { kind: "interval"; intervalSeconds: number }
-	| { kind: "calendar"; hour: number; minute: number; weekday?: number };
+	| {
+			kind: "calendar";
+			hour: number;
+			minute: number;
+			weekday?: number;
+			year?: number;
+			month?: number;
+			day?: number;
+	  };
 
 export interface LaunchAgent {
 	label: string;
@@ -20,6 +29,7 @@ export interface LaunchAgent {
 	stderrPath: string;
 	programArguments: string[];
 	plist: string;
+	runAtLoad: boolean;
 	envFile?: string;
 }
 
@@ -34,6 +44,21 @@ export interface LaunchAgentInstallResult {
 	stderrPath: string;
 	schedule: LaunchAgentSchedule;
 	envFile?: string;
+}
+
+const installQueues = new Map<string, Promise<void>>();
+
+function serializeInstall<T>(plistPath: string, install: () => Promise<T>) {
+	const previous = installQueues.get(plistPath) ?? Promise.resolve();
+	const operation = previous.then(install);
+	const tail = operation.then(
+		() => undefined,
+		() => undefined,
+	);
+	installQueues.set(plistPath, tail);
+	return operation.finally(() => {
+		if (installQueues.get(plistPath) === tail) installQueues.delete(plistPath);
+	});
 }
 
 export interface LaunchAgentInstallOptions {
@@ -100,18 +125,23 @@ function scheduleXml(schedule: LaunchAgentSchedule) {
 		return `<key>StartInterval</key>
   <integer>${String(schedule.intervalSeconds)}</integer>`;
 	}
-	const weekdayEntry =
-		schedule.weekday === undefined
-			? ""
-			: `
-    <key>Weekday</key>
-    <integer>${String(schedule.weekday)}</integer>`;
+	const calendarEntries = [
+		["Year", schedule.year],
+		["Month", schedule.month],
+		["Day", schedule.day],
+		["Weekday", schedule.weekday],
+		["Hour", schedule.hour],
+		["Minute", schedule.minute],
+	]
+		.filter((entry): entry is [string, number] => entry[1] !== undefined)
+		.map(
+			([key, value]) =>
+				`    <key>${key}</key>\n    <integer>${String(value)}</integer>`,
+		)
+		.join("\n");
 	return `<key>StartCalendarInterval</key>
   <dict>
-    <key>Hour</key>
-    <integer>${String(schedule.hour)}</integer>
-    <key>Minute</key>
-    <integer>${String(schedule.minute)}</integer>${weekdayEntry}
+${calendarEntries}
   </dict>`;
 }
 
@@ -123,7 +153,11 @@ export function buildLaunchAgent({
 	stderrPath,
 	programArguments,
 	envFile,
-}: Omit<LaunchAgent, "plist" | "envFile"> & { envFile?: string }): LaunchAgent {
+	runAtLoad = true,
+}: Omit<LaunchAgent, "plist" | "envFile" | "runAtLoad"> & {
+	envFile?: string;
+	runAtLoad?: boolean;
+}): LaunchAgent {
 	const resolvedLogPath = resolveUserPath(logPath);
 	const resolvedStdoutPath = resolveUserPath(stdoutPath);
 	const resolvedStderrPath = resolveUserPath(stderrPath);
@@ -140,7 +174,7 @@ export function buildLaunchAgent({
   </array>
   ${scheduleXml(schedule)}
   <key>RunAtLoad</key>
-  <true/>
+  <${runAtLoad ? "true" : "false"}/>
   <key>StandardOutPath</key>
   ${stringEntry(resolvedStdoutPath)}
   <key>StandardErrorPath</key>
@@ -161,6 +195,7 @@ export function buildLaunchAgent({
 		stderrPath: resolvedStderrPath,
 		programArguments,
 		plist,
+		runAtLoad,
 		...(resolvedEnvFile ? { envFile: resolvedEnvFile } : {}),
 	};
 }
@@ -182,20 +217,31 @@ export function installLaunchAgentEffect(
 		]) {
 			yield* tryPromise(() => fs.mkdir(directory, { recursive: true }));
 		}
-		yield* tryPromise(() => fs.writeFile(plistPath, agent.plist, "utf8"));
-
-		let loaded = false;
-		if (options.load !== false) {
-			yield* runSubprocessEffect({
-				command: "launchctl",
-				args: ["unload", plistPath],
-			}).pipe(Effect.catchAll(() => Effect.void));
-			yield* runSubprocessEffect({
-				command: "launchctl",
-				args: ["load", "-w", plistPath],
-			});
-			loaded = true;
-		}
+		const loaded = yield* tryPromise(() =>
+			serializeInstall(plistPath, async () => {
+				const temporaryPath = `${plistPath}.${process.pid}.${randomUUID()}.tmp`;
+				try {
+					await fs.writeFile(temporaryPath, agent.plist, "utf8");
+					await fs.rename(temporaryPath, plistPath);
+				} finally {
+					await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+				}
+				if (options.load === false) return false;
+				await Effect.runPromise(
+					runSubprocessEffect({
+						command: "launchctl",
+						args: ["unload", plistPath],
+					}).pipe(Effect.catchAll(() => Effect.void)),
+				);
+				await Effect.runPromise(
+					runSubprocessEffect({
+						command: "launchctl",
+						args: ["load", "-w", plistPath],
+					}),
+				);
+				return true;
+			}),
+		);
 
 		return {
 			ok: true,

@@ -59,11 +59,48 @@ const digestScheduleTimeSchema = z.object({
 const digestScheduleResponseSchema = z.object({
 	ok: z.boolean(),
 	archiveDir: z.string(),
+	freshnessHours: z.number(),
 	schedule: z.object({
 		today: digestScheduleTimeSchema,
 		"24h": digestScheduleTimeSchema,
 		yesterday: digestScheduleTimeSchema,
 		week: digestScheduleTimeSchema,
+	}),
+	freshness: z.object({
+		today: z
+			.object({
+				status: z.string(),
+				dueAt: z.string(),
+				fireAt: z.string(),
+				installError: z.string().optional(),
+			})
+			.nullable(),
+		"24h": z
+			.object({
+				status: z.string(),
+				dueAt: z.string(),
+				fireAt: z.string(),
+				installError: z.string().optional(),
+			})
+			.nullable(),
+	}),
+	runs: z.object({
+		today: z
+			.object({
+				phase: z.string(),
+				finishedAt: z.string().optional(),
+				error: z.string().optional(),
+			})
+			.passthrough()
+			.nullable(),
+		"24h": z
+			.object({
+				phase: z.string(),
+				finishedAt: z.string().optional(),
+				error: z.string().optional(),
+			})
+			.passthrough()
+			.nullable(),
 	}),
 });
 
@@ -99,6 +136,19 @@ function parseTime(value: string): { hour: number; minute: number } {
 		hour: Number(hourText) || 0,
 		minute: Number(minuteText) || 0,
 	};
+}
+
+function automaticBatchEstimate(
+	freshnessHours: number,
+	times: Array<{ hour: number; minute: number }>,
+) {
+	const freshnessRuns = times.reduce((total, time) => {
+		const remainingHours = 24 - time.hour - time.minute / 60;
+		return (
+			total + Math.max(0, Math.floor((remainingHours - 0.001) / freshnessHours))
+		);
+	}, 0);
+	return times.length + freshnessRuns;
 }
 
 function CredentialsPanel() {
@@ -356,12 +406,16 @@ function ConfigRoute() {
 	const [aiLanguage, setAiLanguage] = useState("zh-CN");
 	const [uiLanguage, setUiLanguage] = useState("zh-CN");
 
-	// Digest archive schedule state
+	// Digest scheduling state
 	const [todayTime, setTodayTime] = useState("08:00");
 	const [hour24Time, setHour24Time] = useState("08:45");
 	const [yesterdayTime, setYesterdayTime] = useState("01:00");
 	const [weekTime, setWeekTime] = useState("02:00");
 	const [archiveDir, setArchiveDir] = useState("");
+	const [freshnessHours, setFreshnessHours] = useState(12);
+	const [digestScheduleStatus, setDigestScheduleStatus] = useState<
+		z.infer<typeof digestScheduleResponseSchema> | undefined
+	>();
 	const [scheduleSaving, setScheduleSaving] = useState(false);
 	const [scheduleError, setScheduleError] = useState<string | null>(null);
 	const [scheduleSuccess, setScheduleSuccess] = useState(false);
@@ -436,6 +490,8 @@ function ConfigRoute() {
 						),
 					);
 					setArchiveDir(response.archiveDir);
+					setFreshnessHours(response.freshnessHours);
+					setDigestScheduleStatus(response);
 				}
 			} catch (err) {
 				setScheduleError(err instanceof Error ? err.message : "Load failed");
@@ -558,6 +614,7 @@ function ConfigRoute() {
 					},
 					body: JSON.stringify({
 						archiveDir,
+						freshnessHours,
 						schedule: {
 							today: parseTime(todayTime),
 							"24h": parseTime(hour24Time),
@@ -569,9 +626,14 @@ function ConfigRoute() {
 				digestScheduleResponseSchema,
 				"Failed to save digest schedule",
 			);
+			setDigestScheduleStatus(response);
 			if (response.ok) {
 				setScheduleSuccess(true);
 				setTimeout(() => setScheduleSuccess(false), 3000);
+			} else {
+				setScheduleError(
+					"配置已保存，但部分后台调度安装失败。请检查下方状态。",
+				);
 			}
 		} catch (err) {
 			setScheduleError(err instanceof Error ? err.message : "Save failed");
@@ -579,6 +641,10 @@ function ConfigRoute() {
 			setScheduleSaving(false);
 		}
 	};
+	const estimatedAutomaticBatches = automaticBatchEstimate(freshnessHours, [
+		parseTime(todayTime),
+		parseTime(hour24Time),
+	]);
 
 	return (
 		<section className={mainColumnClass}>
@@ -666,7 +732,7 @@ function ConfigRoute() {
 										: "border-transparent text-[var(--ink-soft)] hover:text-[var(--ink)]",
 								)}
 							>
-								摘要归档调度
+								摘要调度
 							</button>
 							<button
 								type="button"
@@ -699,8 +765,7 @@ function ConfigRoute() {
 										required
 									/>
 									<p className="text-[12px] text-[var(--ink-soft)]">
-										每天定时生成 Today 摘要（All/Following/For
-										You）并归档；手动刷新仍然可用。
+										每天定时更新 Today 当前摘要；手动刷新仍然可用。
 									</p>
 								</div>
 
@@ -716,7 +781,37 @@ function ConfigRoute() {
 										required
 									/>
 									<p className="text-[12px] text-[var(--ink-soft)]">
-										每天定时生成 24h 摘要并归档；手动刷新仍然可用。
+										每天定时更新 24h 当前摘要；手动刷新仍然可用。
+									</p>
+								</div>
+
+								<div className="flex flex-col gap-1.5">
+									<label
+										htmlFor="digest-freshness-hours"
+										className="text-[14px] font-bold text-[var(--ink)]"
+									>
+										Today/24h 有效时长（小时）
+									</label>
+									<input
+										id="digest-freshness-hours"
+										type="number"
+										min={1}
+										max={24}
+										step={1}
+										value={freshnessHours}
+										onChange={(event) =>
+											setFreshnessHours(Number(event.target.value))
+										}
+										className={textFieldClass}
+										required
+									/>
+									<p className="text-[12px] text-[var(--ink-soft)]">
+										当前摘要生成后按此时长后台更新；到期跨日则不再触发。
+									</p>
+									<p className="text-[12px] font-semibold text-[var(--ink)]">
+										预计每天 {estimatedAutomaticBatches}{" "}
+										个自动批次，最多调用模型 {estimatedAutomaticBatches * 3}{" "}
+										次。
 									</p>
 								</div>
 
@@ -766,10 +861,40 @@ function ConfigRoute() {
 										className={textFieldClass}
 									/>
 									<p className="text-[12px] text-[var(--ink-soft)]">
-										定时生成的摘要（Markdown +
-										JSON）落盘归档的根目录。留空使用默认路径。
+										Yesterday/Week 定时摘要（Markdown +
+										JSON）的归档根目录。留空使用默认路径。
 									</p>
 								</div>
+
+								{digestScheduleStatus ? (
+									<div className="divide-y divide-[var(--line)] border-y border-[var(--line)]">
+										{(["today", "24h"] as const).map((period) => {
+											const freshness = digestScheduleStatus.freshness[period];
+											const run = digestScheduleStatus.runs[period];
+											const freshnessText = !freshness
+												? "调度尚未初始化"
+												: freshness.status === "scheduled"
+													? `下次超时 ${new Date(freshness.dueAt).toLocaleString()}`
+													: freshness.status === "error"
+														? `调度安装失败：${freshness.installError ?? "未知错误"}`
+														: "今日不再触发超时更新";
+											return (
+												<div
+													key={period}
+													className="flex flex-col gap-1 py-3 min-[640px]:flex-row min-[640px]:items-center min-[640px]:justify-between"
+												>
+													<span className="text-[13px] font-bold text-[var(--ink)]">
+														{period === "today" ? "Today" : "24h"} ·{" "}
+														{freshnessText}
+													</span>
+													<span className="text-[12px] text-[var(--ink-soft)]">
+														最近批次：{run?.phase ?? "暂无"}
+													</span>
+												</div>
+											);
+										})}
+									</div>
+								) : null}
 
 								{scheduleError ? (
 									<div className="flex items-center gap-2 rounded-md border border-[var(--alert)] bg-[var(--alert-soft)] p-3 text-[14px] text-[var(--alert)]">

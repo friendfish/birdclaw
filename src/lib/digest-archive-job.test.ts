@@ -40,6 +40,12 @@ import {
 	replaceDigestArchiveEntryEffect,
 } from "./digest-archive-job";
 import {
+	__test__ as periodDigestTest,
+	type PeriodDigestOptions,
+} from "./period-digest";
+import { parsePeriodDigestRequestOptions } from "./period-digest-request";
+import { applyPeriodDigestIdentityParams } from "./period-digest-url";
+import {
 	digestArchiveRunStatePath,
 	readDigestArchiveRunState,
 } from "./digest-archive-run-state";
@@ -148,6 +154,11 @@ describe("digest-archive-job", () => {
 		expect(entry.ok).toBe(true);
 		expect(entry.steps).toHaveLength(3);
 		expect(entry.runDate).toBe("2026-07-27");
+		for (const [options] of streamPeriodDigestMock.mock.calls) {
+			expect(options).toEqual(
+				expect.objectContaining({ maxTweets: 5000, maxLinks: 20 }),
+			);
+		}
 
 		for (const contentSource of ["all", "following", "for_you"]) {
 			const { markdownPath, jsonPath } = resolveDigestArchivePaths({
@@ -163,6 +174,61 @@ describe("digest-archive-job", () => {
 			expect(json.period).toBe("today");
 			expect(json.runDate).toBe("2026-07-27");
 		}
+	});
+
+	it.each([
+		["today", 5000, 20],
+		["24h", 5000, 20],
+		["yesterday", undefined, undefined],
+		["week", undefined, undefined],
+	] as const)(
+		"applies the expected scheduled input limits for %s",
+		async (period, expectedMaxTweets, expectedMaxLinks) => {
+			streamPeriodDigestMock.mockResolvedValue(digestResult());
+
+			await runEffectPromise(
+				runDigestArchiveJobEffect({
+					period,
+					archiveDir: tempArchiveDir(),
+					contentSources: ["all"],
+					liveSync: false,
+					now: () => new Date(2026, 6, 27),
+				}),
+			);
+
+			const [options] = streamPeriodDigestMock.mock.calls.at(-1) as [
+				PeriodDigestOptions,
+			];
+			expect(options.maxTweets).toBe(expectedMaxTweets);
+			expect(options.maxLinks).toBe(expectedMaxLinks);
+		},
+	);
+
+	it("keeps scheduled and page latest keys aligned for Config language", async () => {
+		writeBirdclawConfig({ language: { aiLanguage: "zh-CN" } });
+		streamPeriodDigestMock.mockResolvedValue(digestResult());
+
+		await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "today",
+				archiveDir: tempArchiveDir(),
+				contentSources: ["all"],
+				liveSync: false,
+				now: () => new Date(2026, 6, 27),
+			}),
+		);
+
+		const [scheduledOptions] = streamPeriodDigestMock.mock.calls.at(-1) as [
+			PeriodDigestOptions,
+		];
+		const url = new URL("http://birdclaw.local/api/period-digest");
+		applyPeriodDigestIdentityParams(url, "today", false, "all");
+		const pageOptions = parsePeriodDigestRequestOptions(url);
+		const promptHash = "same-prompt";
+
+		expect(periodDigestTest.latestDigestCacheKey(pageOptions, promptHash)).toBe(
+			periodDigestTest.latestDigestCacheKey(scheduledOptions, promptHash),
+		);
 	});
 
 	it("caches unchanged audit status and invalidates after an append", async () => {
@@ -1215,7 +1281,7 @@ describe("digest-archive-job", () => {
 
 	it("passes managed Bird credentials without a shell wrapper or token arguments", () => {
 		const agent = buildDigestArchiveLaunchAgentPlist({
-			period: "today",
+			period: "yesterday",
 			birdCredentialsPath: "/tmp/bird.env",
 		});
 
@@ -1234,5 +1300,32 @@ describe("digest-archive-job", () => {
 		);
 		expect(agent.plist).not.toContain("/bin/bash");
 		expect(agent.envFile).toBeUndefined();
+	});
+
+	it("installs current-digest commands for Today/24h and keeps archive commands for historical periods", () => {
+		const today = buildDigestArchiveLaunchAgentPlist({ period: "today" });
+		const day = buildDigestArchiveLaunchAgentPlist({ period: "24h" });
+		const yesterday = buildDigestArchiveLaunchAgentPlist({
+			period: "yesterday",
+		});
+		const week = buildDigestArchiveLaunchAgentPlist({ period: "week" });
+
+		for (const current of [today, day]) {
+			expect(current.programArguments).toEqual(
+				expect.arrayContaining([
+					"jobs",
+					"run-period-digest",
+					"--trigger",
+					"scheduled",
+					"--origin",
+					"launchd",
+				]),
+			);
+			expect(current.programArguments).not.toContain("run-digest-archive");
+		}
+		for (const archived of [yesterday, week]) {
+			expect(archived.programArguments).toContain("run-digest-archive");
+			expect(archived.programArguments).not.toContain("run-period-digest");
+		}
 	});
 });

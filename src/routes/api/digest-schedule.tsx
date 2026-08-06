@@ -5,12 +5,19 @@ import { getBirdCredentialsPath } from "#/lib/bird-credentials";
 import {
 	getBirdclawConfig,
 	resolveDigestArchiveDir,
+	resolveDigestFreshnessSeconds,
+	resolveDigestLaunchdExecution,
 	writeBirdclawConfig,
 } from "#/lib/config";
 import {
 	installAllDigestArchiveLaunchAgentsEffect,
 	resolveDigestScheduleTime,
 } from "#/lib/digest-archive-job";
+import {
+	readPeriodDigestFreshnessState,
+	reconcileAllPeriodDigestFreshness,
+} from "#/lib/period-digest-freshness";
+import { readPeriodDigestRunState } from "#/lib/period-digest-orchestrator";
 import {
 	jsonResponse,
 	requestJsonEffect,
@@ -25,6 +32,7 @@ const scheduleTimeSchema = z.object({
 
 const digestScheduleRequestSchema = z.object({
 	archiveDir: z.string().optional(),
+	freshnessHours: z.number().int().min(1).max(24),
 	schedule: z.object({
 		today: scheduleTimeSchema,
 		"24h": scheduleTimeSchema,
@@ -44,6 +52,26 @@ function currentSchedule() {
 	};
 }
 
+async function schedulerStatus() {
+	const [todayFreshness, hour24Freshness, todayRun, hour24Run] =
+		await Promise.all([
+			readPeriodDigestFreshnessState("today"),
+			readPeriodDigestFreshnessState("24h"),
+			readPeriodDigestRunState("today"),
+			readPeriodDigestRunState("24h"),
+		]);
+	return {
+		freshness: {
+			today: todayFreshness ?? null,
+			"24h": hour24Freshness ?? null,
+		},
+		runs: {
+			today: todayRun ?? null,
+			"24h": hour24Run ?? null,
+		},
+	};
+}
+
 export const Route = createFileRoute("/api/digest-schedule")({
 	server: {
 		handlers: {
@@ -53,11 +81,16 @@ export const Route = createFileRoute("/api/digest-schedule")({
 						const denied = sensitiveRequestErrorResponse(request);
 						if (denied) return denied;
 
-						yield* Effect.void;
+						const status = yield* Effect.tryPromise({
+							try: schedulerStatus,
+							catch: (error) => error,
+						});
 						return jsonResponse({
 							ok: true,
 							archiveDir: resolveDigestArchiveDir(),
+							freshnessHours: resolveDigestFreshnessSeconds() / 3600,
 							schedule: currentSchedule(),
+							...status,
 						});
 					}),
 				),
@@ -74,6 +107,7 @@ export const Route = createFileRoute("/api/digest-schedule")({
 							...config,
 							digest: {
 								...config.digest,
+								freshnessSeconds: parsed.freshnessHours * 3600,
 								...(parsed.archiveDir !== undefined
 									? { archiveDir: parsed.archiveDir }
 									: {}),
@@ -86,33 +120,55 @@ export const Route = createFileRoute("/api/digest-schedule")({
 							},
 						};
 						writeBirdclawConfig(nextConfig);
+						const launchdExecution = resolveDigestLaunchdExecution();
 
 						const installResults =
 							yield* installAllDigestArchiveLaunchAgentsEffect({
 								today: {
 									...parsed.schedule.today,
+									...launchdExecution,
 									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 								"24h": {
 									...parsed.schedule["24h"],
+									...launchdExecution,
 									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 								yesterday: {
 									...parsed.schedule.yesterday,
+									...launchdExecution,
 									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 								week: {
 									...parsed.schedule.week,
+									...launchdExecution,
 									weekday: 1,
 									birdCredentialsPath: getBirdCredentialsPath(),
 								},
 							});
+						const freshnessResults = yield* Effect.tryPromise({
+							try: () => reconcileAllPeriodDigestFreshness(),
+							catch: (error) => error,
+						});
+						const fixedHealthy = Object.values(installResults).every(
+							(result) => result.ok,
+						);
+						const freshnessHealthy = Object.values(freshnessResults).every(
+							(result) => result.state.status !== "error",
+						);
+						const status = yield* Effect.tryPromise({
+							try: schedulerStatus,
+							catch: (error) => error,
+						});
 
 						return jsonResponse({
-							ok: true,
+							ok: fixedHealthy && freshnessHealthy,
 							archiveDir: resolveDigestArchiveDir(),
+							freshnessHours: resolveDigestFreshnessSeconds() / 3600,
 							schedule: currentSchedule(),
 							installResults,
+							freshnessResults,
+							...status,
 						});
 					}),
 				),

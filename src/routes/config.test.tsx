@@ -36,11 +36,24 @@ function scheduleResponse() {
 	return {
 		ok: true,
 		archiveDir: "",
+		freshnessHours: 12,
 		schedule: {
 			today: { hour: 8, minute: 0 },
 			"24h": { hour: 8, minute: 45 },
 			yesterday: { hour: 1, minute: 0 },
 			week: { hour: 2, minute: 0, weekday: 1 },
+		},
+		freshness: {
+			today: {
+				status: "scheduled",
+				dueAt: "2026-08-06T20:00:00.000Z",
+				fireAt: "2026-08-06T20:00:00.000Z",
+			},
+			"24h": { status: "disabled", dueAt: "", fireAt: "" },
+		},
+		runs: {
+			today: { phase: "completed", finishedAt: "2026-08-06T08:20:00.000Z" },
+			"24h": null,
 		},
 	};
 }
@@ -292,7 +305,7 @@ describe("config prompt panel", () => {
 		});
 		fireEvent.click(screen.getByRole("button", { name: "Save Config" }));
 		expect(await screen.findByText("save rejected")).toBeVisible();
-		fireEvent.click(screen.getByRole("button", { name: "摘要归档调度" }));
+		fireEvent.click(screen.getByRole("button", { name: "摘要调度" }));
 		await act(async () => {
 			rejectSchedule?.(new Error("schedule unavailable"));
 		});
@@ -329,9 +342,7 @@ describe("config prompt panel", () => {
 		);
 
 		const view = render(<ConfigRoute />);
-		fireEvent.click(
-			await screen.findByRole("button", { name: "摘要归档调度" }),
-		);
+		fireEvent.click(await screen.findByRole("button", { name: "摘要调度" }));
 		const timeInputs =
 			view.container.querySelectorAll<HTMLInputElement>('input[type="time"]');
 		for (const [index, value] of [
@@ -343,6 +354,12 @@ describe("config prompt panel", () => {
 			fireEvent.change(timeInputs[index], { target: { value } });
 		}
 		fireEvent.change(
+			screen.getByRole("spinbutton", {
+				name: "Today/24h 有效时长（小时）",
+			}),
+			{ target: { value: "6" } },
+		);
+		fireEvent.change(
 			screen.getByPlaceholderText("~/.birdclaw/digest-archive"),
 			{
 				target: { value: "/tmp/digests" },
@@ -352,6 +369,7 @@ describe("config prompt panel", () => {
 		expect(await screen.findByText("调度已保存并生效。")).toBeVisible();
 		expect(scheduleBodies[0]).toEqual({
 			archiveDir: "/tmp/digests",
+			freshnessHours: 6,
 			schedule: {
 				today: { hour: 9, minute: 10 },
 				"24h": { hour: 10, minute: 20 },
@@ -359,6 +377,8 @@ describe("config prompt panel", () => {
 				week: { hour: 12, minute: 40 },
 			},
 		});
+		expect(screen.getByText(/Today.*下次超时/u)).toBeVisible();
+		expect(screen.getByText(/预计每天 6 个自动批次/u)).toBeVisible();
 
 		fireEvent.click(screen.getByRole("button", { name: "Save Config" }));
 		expect(await screen.findByText("schedule save failed")).toBeVisible();
@@ -381,7 +401,7 @@ describe("config prompt panel", () => {
 
 		render(<ConfigRoute />);
 		expect(await screen.findByRole("combobox")).toHaveValue("openai");
-		fireEvent.click(screen.getByRole("button", { name: "摘要归档调度" }));
+		fireEvent.click(screen.getByRole("button", { name: "摘要调度" }));
 		expect(screen.getByDisplayValue("08:00")).toBeVisible();
 	});
 });

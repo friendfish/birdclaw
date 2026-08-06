@@ -63,6 +63,15 @@ Unchanged polls reuse the parsed four-period snapshot. A changed or replaced fil
 invalidates the cache, and reverse scanning stops after the latest record for all
 four periods has been found.
 
+## Scheduled Cache Identity
+
+Today and 24h discover a completed scheduled result through the same latest
+digest cache used by the live page. The page and scheduled archive job therefore
+share the `maxTweets=5000` and `maxLinks=20` identity values. If these values
+diverge, the scheduled run still writes its archive successfully but the page
+looks up a different cache row and can display an older live result or generate
+again when opened.
+
 ## Error Handling
 
 - A missing strict credential file produces no explicit Bird override, so the job
@@ -87,3 +96,5 @@ four periods has been found.
   and in-flight request cancellation.
 - Status tests prove unchanged audit logs are read once, changed logs invalidate
   the cache, and sanitized batch failures reach the Today UI.
+- Digest archive tests prove scheduled generation uses the same input limits as
+  the Today page's latest-cache identity.

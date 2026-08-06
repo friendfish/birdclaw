@@ -43,13 +43,15 @@ import {
 	startScheduledJobRun,
 } from "./scheduled-job";
 import {
-	streamPeriodDigest,
 	normalizeDigestLanguage,
+	selectPeriodDigestLanguage,
+	streamPeriodDigest,
 	type PeriodDigestContentSource,
 	type PeriodDigestContext,
 	type PeriodDigestPreset,
 	type PeriodDigestRunResult,
 } from "./period-digest";
+import { PERIOD_DIGEST_PAGE_IDENTITY } from "./period-digest-url";
 import { sensitiveErrorMessage } from "./sensitive-values";
 
 const DEFAULT_CONTENT_SOURCES: PeriodDigestContentSource[] = [
@@ -212,16 +214,7 @@ export function formatDigestArchiveRunDate(date: Date) {
 }
 
 export function resolveDigestArchiveLanguage(requested?: string) {
-	return normalizeDigestLanguage(selectDigestArchiveLanguage(requested));
-}
-
-function selectDigestArchiveLanguage(requested?: string) {
-	return (
-		requested?.trim() ||
-		process.env.BIRDCLAW_DIGEST_LANGUAGE?.trim() ||
-		getBirdclawConfig().language?.aiLanguage?.trim() ||
-		undefined
-	);
+	return normalizeDigestLanguage(selectPeriodDigestLanguage(requested));
 }
 
 async function writeJsonAtomically(jsonPath: string, value: unknown) {
@@ -483,6 +476,12 @@ function runOneContentSourceEffect({
 						includeDms,
 						refresh: true,
 						liveSync,
+						...(period === "today" || period === "24h"
+							? {
+									maxTweets: PERIOD_DIGEST_PAGE_IDENTITY.maxTweets,
+									maxLinks: PERIOD_DIGEST_PAGE_IDENTITY.maxLinks,
+								}
+							: {}),
 						language,
 						since,
 						until,
@@ -614,7 +613,7 @@ export function runDigestArchiveJobEffect(
 			formatDigestArchiveRunDate(options.now?.() ?? new Date()),
 		);
 		const selectedLanguage = yield* trySync(() =>
-			selectDigestArchiveLanguage(options.language),
+			selectPeriodDigestLanguage(options.language),
 		);
 		const auditOptionsBase = {
 			period,
@@ -942,6 +941,27 @@ function buildProgramArguments({
 	envFile,
 	birdCredentialsPath,
 }: DigestArchiveLaunchAgentOptions & { logPath: string }) {
+	if (period === "today" || period === "24h") {
+		const args = [
+			"--json",
+			"jobs",
+			"run-period-digest",
+			"--period",
+			period,
+			"--trigger",
+			"scheduled",
+			"--origin",
+			"launchd",
+		];
+		if (account) args.push("--account", account);
+		if (birdCredentialsPath) {
+			args.push(
+				"--bird-credentials-path",
+				resolveUserPath(birdCredentialsPath),
+			);
+		}
+		return buildLaunchProgramArguments({ program, args, envFile });
+	}
 	const args = [
 		"--json",
 		"jobs",

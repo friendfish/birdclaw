@@ -698,7 +698,7 @@ launchctl kickstart -k gui/$(id -u)/com.steipete.birdclaw.bookmarks-sync
 tail -n 1 ~/.birdclaw/audit/bookmarks-sync.jsonl | jq .
 ```
 
-### Scheduled Digest Archives and X Credentials
+### Scheduled Digests and X Credentials
 
 The Config page stores non-interactive X credentials at
 `~/.birdclaw/credentials/bird.env`. The managed file contains exactly literal
@@ -719,6 +719,13 @@ launchd also needs variables such as `OPENAI_API_KEY`. It can be combined with
 `--bird-credentials-path`; inherited environment values are the base, Config
 credentials override inherited `AUTH_TOKEN`/`CT0`, and an explicit strict
 credential path overrides both.
+
+Today/24h agents publish persistent latest-success content and do not write
+dated archives; Yesterday/Week continue to archive Markdown and JSON for later
+analysis. Today/24h also receive same-day one-shot freshness agents based on the
+Config freshness setting. Those agents reuse the fixed installation's
+`--program` and `--env-path`, and all fixed, freshness, and manual collisions
+join one same-period generation batch.
 
 ## Typical Workflow
 
