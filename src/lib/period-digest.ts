@@ -22,9 +22,11 @@ import { syncMentionsEffect } from "./mentions-live";
 import { listDmConversations } from "./dm-read-model";
 import { getTweetsByIds, listTimelineItems } from "./timeline-read-model";
 import {
+	type OpenAIStreamDiagnostics,
 	type OpenAIStreamState,
 	processOpenAIResponseSseChunk,
 } from "./openai-response-runtime";
+import { assertDisplayablePeriodDigest } from "./period-digest-integrity";
 import {
 	type EffectivePrompt,
 	materializeEffectivePrompt,
@@ -93,6 +95,7 @@ export interface PeriodDigestRunResult {
 	reasoningEffort: string;
 	serviceTier: string;
 	parseStatus: "structured" | "fallback";
+	diagnostics?: OpenAIStreamDiagnostics;
 	cached: boolean;
 	updatedAt: string;
 }
@@ -1032,6 +1035,7 @@ export interface CachedPeriodDigestValue {
 	updatedAt?: string;
 	usage?: unknown;
 	responseId?: string;
+	diagnostics?: OpenAIStreamDiagnostics;
 }
 
 function cachedDigestResult(
@@ -1047,6 +1051,7 @@ function cachedDigestResult(
 		reasoningEffort: cached.value.reasoningEffort,
 		serviceTier: cached.value.serviceTier,
 		parseStatus: cached.value.parseStatus,
+		diagnostics: cached.value.diagnostics,
 		cached: true,
 		updatedAt: cached.value.updatedAt ?? cached.updatedAt,
 	};
@@ -1319,6 +1324,13 @@ function completeOpenAIStreamEffect(
 	handlers: PeriodDigestStreamHandlers,
 ): Effect.Effect<PeriodDigestRunResult, Error> {
 	return Effect.gen(function* () {
+		yield* tryDigestSync(() =>
+			assertDisplayablePeriodDigest({
+				digest: stream.value,
+				markdown: stream.markdown,
+				parseStatus: stream.parseStatus,
+			}),
+		);
 		const enrichedContext = yield* tryDigestSync(() =>
 			enrichContextWithCitedTweets(context, stream.value),
 		);
@@ -1337,6 +1349,7 @@ function completeOpenAIStreamEffect(
 				parseStatus: stream.parseStatus,
 				usage: stream.usage,
 				responseId: stream.responseId,
+				...(stream.diagnostics ? { diagnostics: stream.diagnostics } : {}),
 			} satisfies CachedPeriodDigestValue),
 		);
 		const result: PeriodDigestRunResult = {
@@ -1347,6 +1360,7 @@ function completeOpenAIStreamEffect(
 			reasoningEffort: reasoningEffortFromOptions(options),
 			serviceTier: serviceTierFromOptions(options),
 			parseStatus: stream.parseStatus,
+			...(stream.diagnostics ? { diagnostics: stream.diagnostics } : {}),
 			cached: false,
 			updatedAt,
 		};
@@ -1361,6 +1375,7 @@ function completeOpenAIStreamEffect(
 					reasoningEffort: result.reasoningEffort,
 					serviceTier: result.serviceTier,
 					parseStatus: result.parseStatus,
+					...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
 					updatedAt: result.updatedAt,
 				} satisfies CachedPeriodDigestValue,
 			),
@@ -1524,6 +1539,7 @@ export function streamPeriodDigestEffect(
 						reasoningEffort: result.reasoningEffort,
 						serviceTier: result.serviceTier,
 						parseStatus: result.parseStatus,
+						...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
 						updatedAt: result.updatedAt,
 					} satisfies CachedPeriodDigestValue,
 				),

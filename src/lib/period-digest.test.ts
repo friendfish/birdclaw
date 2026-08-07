@@ -562,6 +562,11 @@ describe("period digest", () => {
 		expect(result.digest.actionItems).toHaveLength(1);
 		expect(result.markdown).toBe(markdown.trimEnd());
 		expect(result.cached).toBe(false);
+		expect(result.diagnostics).toEqual({
+			responseId: "resp_1",
+			visibleTextLength: 34,
+			reasoningTextLength: 0,
+		});
 
 		const body = JSON.parse(
 			String(fetchMock.mock.calls[0]?.[1]?.body),
@@ -570,6 +575,36 @@ describe("period digest", () => {
 		expect(body.reasoning).toEqual({ effort: "medium" });
 		expect(body.service_tier).toBe("priority");
 		expect(body.stream).toBe(true);
+	});
+
+	it("does not cache a structured placeholder digest with visible Markdown", async () => {
+		const streamed = [
+			sseFrame({
+				type: "response.output_text.delta",
+				delta:
+					'# Placeholder shell\n\n---\n{"title":"[zh-CN]","summary":"[zh-CN]","keyTopics":[],"notableLinks":[],"people":[],"actionItems":[],"sourceTweetIds":[]}',
+			}),
+			"data: [DONE]\n\n",
+		].join("");
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamResponse(streamed)));
+		const db = getNativeDb();
+		const before = db
+			.prepare("select count(*) as count from sync_cache")
+			.get() as { count: number };
+
+		await expect(
+			streamPeriodDigest({
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
+				refresh: true,
+				language: "zh-CN",
+			}),
+		).rejects.toThrow("displayable content");
+
+		const after = db
+			.prepare("select count(*) as count from sync_cache")
+			.get() as { count: number };
+		expect(after.count).toBe(before.count);
 	});
 
 	it("runs playground drafts locally without writing digest caches", async () => {
@@ -845,7 +880,9 @@ describe("period digest", () => {
 			}),
 			"data: [DONE]\n\n",
 		].join("");
-		const fetchMock = vi.fn().mockResolvedValue(streamResponse(streamed));
+		const fetchMock = vi
+			.fn()
+			.mockImplementation(() => Promise.resolve(streamResponse(streamed)));
 		vi.stubGlobal("fetch", fetchMock);
 		const options = {
 			since: "2026-01-01T00:00:00.000Z",
@@ -895,7 +932,9 @@ describe("period digest", () => {
 			}),
 			"data: [DONE]\n\n",
 		].join("");
-		const fetchMock = vi.fn().mockResolvedValue(streamResponse(streamed));
+		const fetchMock = vi
+			.fn()
+			.mockImplementation(() => Promise.resolve(streamResponse(streamed)));
 		vi.stubGlobal("fetch", fetchMock);
 		const options = {
 			since: "2026-01-01T00:00:00.000Z",
@@ -1087,6 +1126,7 @@ describe("period digest", () => {
 		);
 
 		expect(parsed.markdown).toContain("Solo Markdown");
+		expect(parsed.markdown.trim()).not.toBe("");
 		expect(parsed.digest.title).toBe("Resumen");
 		expect(parsed.digest.summary).toContain("Solo Markdown");
 
