@@ -8,6 +8,7 @@ import * as os from "node:os";
 import {
 	createAnalysisRequestBody,
 	parseHybridAnalysis,
+	readHybridAnalysisStreamEffect,
 	requestHybridAnalysisEffect,
 	resolveAnalysisModelSettings,
 } from "./analysis-runtime";
@@ -123,5 +124,66 @@ describe("analysis runtime", () => {
 			markdown: "Profile",
 			value: { title: "ok" },
 		});
+	});
+
+	it("propagates successful Chat stream diagnostics", async () => {
+		const stream = new ReadableStream({
+			start(controller) {
+				for (const event of [
+					{
+						id: "chat_1",
+						choices: [{ delta: { content: "Summary" }, finish_reason: null }],
+					},
+					{
+						id: "chat_1",
+						choices: [{ delta: {}, finish_reason: "stop" }],
+					},
+					"[DONE]",
+				]) {
+					controller.enqueue(
+						new TextEncoder().encode(
+							`data: ${event === "[DONE]" ? event : JSON.stringify(event)}\n\n`,
+						),
+					);
+				}
+				controller.close();
+			},
+		});
+
+		const result = await Effect.runPromise(
+			readHybridAnalysisStreamEffect(new Response(stream), {
+				parse: (value) => value as { title: string },
+				fallback: (markdown) => ({ title: markdown }),
+			}),
+		);
+
+		expect(result.diagnostics).toEqual({
+			responseId: "chat_1",
+			finishReason: "stop",
+			visibleTextLength: 7,
+			reasoningTextLength: 0,
+		});
+	});
+
+	it("rejects whitespace-only non-stream response output", async () => {
+		const runtime = createRuntimeServices({
+			env: (name) => (name === "OPENAI_API_KEY" ? "test" : undefined),
+			fetch: vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ output_text: " \n\t " }), {
+					status: 200,
+				}),
+			),
+		});
+
+		await expect(
+			Effect.runPromise(
+				requestHybridAnalysisEffect({
+					body: {},
+					runtime,
+					parse: (value) => value as { title: string },
+					fallback: () => ({ title: "fallback" }),
+				}),
+			),
+		).rejects.toThrow("OpenAI returned no output text");
 	});
 });
