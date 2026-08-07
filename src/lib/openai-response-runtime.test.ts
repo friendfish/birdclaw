@@ -95,6 +95,8 @@ async function expectStreamError(events: unknown[]) {
 	if (!Exit.isFailure(exit))
 		throw new Error("Expected the OpenAI stream to fail");
 	const error = Option.getOrUndefined(Cause.failureOption(exit.cause));
+	if (!(error instanceof OpenAIStreamError))
+		throw new Error("Expected an OpenAIStreamError");
 	expect(error).toBeInstanceOf(OpenAIStreamError);
 	expect(
 		isOpenAIStreamDiagnostics(openAIStreamDiagnosticsFromError(error)),
@@ -135,9 +137,22 @@ describe("OpenAI response runtime", () => {
 			usage: { output_tokens: 2 },
 			diagnostics: {
 				responseId: "resp_1",
-				visibleTextLength: 21,
+				visibleTextLength: 5,
 				reasoningTextLength: 0,
 			},
+		});
+	});
+
+	it("rejects hybrid JSON with no pre-delimiter visible text", async () => {
+		const error = await expectStreamError([
+			{
+				type: "response.output_text.delta",
+				delta: '\n---\n{"ok":true}',
+			},
+		]);
+		expect(openAIStreamDiagnosticsFromError(error)).toEqual({
+			visibleTextLength: 0,
+			reasoningTextLength: 0,
 		});
 	});
 
@@ -160,22 +175,71 @@ describe("OpenAI response runtime", () => {
 	});
 
 	it("rejects reasoning-only Chat Completions output with diagnostics", async () => {
-		const error = await expectStreamError([
-			{
-				id: "chat_reasoning",
-				choices: [
-					{
-						delta: { reasoning_content: "thinking" },
-						finish_reason: "stop",
-					},
-				],
-			},
-		]);
+		const event = {
+			id: "chat_reasoning",
+			choices: [
+				{
+					delta: { reasoning_content: "thinking", reasoning: "analysis" },
+					finish_reason: "stop",
+				},
+			],
+		};
+		const state = createOpenAIStreamState();
+		processOpenAIResponseSseChunk(state, `data: ${JSON.stringify(event)}\n\n`);
+		expect(state.rawText).toBe("");
+		expect(state.reasoningTextLength).toBe(16);
+
+		const error = await expectStreamError([event]);
 		expect(openAIStreamDiagnosticsFromError(error)).toEqual({
 			responseId: "chat_reasoning",
 			finishReason: "stop",
 			visibleTextLength: 0,
-			reasoningTextLength: 8,
+			reasoningTextLength: 16,
+		});
+	});
+
+	it("retains explicit stream error messages at EOF", async () => {
+		const error = await expectStreamError([
+			{
+				type: "response.error",
+				error: { message: "quota exceeded" },
+			},
+		]);
+		expect(error.message).toContain("quota exceeded");
+	});
+
+	it("reads chunked CRLF SSE frames", async () => {
+		const payload = `data: ${JSON.stringify({
+			type: "response.output_text.delta",
+			delta: "CRLF",
+		})}\r\n\r\ndata: ${JSON.stringify({
+			type: "response.completed",
+			response: { id: "resp_crlf" },
+		})}\r\n\r\n`;
+		const stream = new ReadableStream({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode(payload.slice(0, 7)));
+				controller.enqueue(new TextEncoder().encode(payload.slice(7, -3)));
+				controller.enqueue(new TextEncoder().encode(payload.slice(-3)));
+				controller.close();
+			},
+		});
+		const visible: string[] = [];
+		const result = await Effect.runPromise(
+			readOpenAIResponseStreamEffect(new Response(stream), {
+				onDelta: (delta) => visible.push(delta),
+			}),
+		);
+
+		expect(visible).toEqual(["CRLF"]);
+		expect(result).toEqual({
+			rawText: "CRLF",
+			responseId: "resp_crlf",
+			diagnostics: {
+				responseId: "resp_crlf",
+				visibleTextLength: 4,
+				reasoningTextLength: 0,
+			},
 		});
 	});
 

@@ -64,6 +64,7 @@ export function openAIStreamDiagnosticsFromError(
 export interface OpenAIStreamState {
 	eventBuffer: string;
 	rawText: string;
+	visibleText?: string;
 	pendingVisible: string;
 	jsonMode: boolean;
 	responseId?: string;
@@ -119,6 +120,7 @@ export function createOpenAIStreamState(): OpenAIStreamState {
 	return {
 		eventBuffer: "",
 		rawText: "",
+		visibleText: "",
 		pendingVisible: "",
 		jsonMode: false,
 		reasoningTextLength: 0,
@@ -138,9 +140,19 @@ function buildDiagnostics(state: OpenAIStreamState): OpenAIStreamDiagnostics {
 		...(state.finishReason !== undefined
 			? { finishReason: state.finishReason }
 			: {}),
-		visibleTextLength: state.rawText.length,
+		visibleTextLength: (state.visibleText ?? "").length,
 		reasoningTextLength: state.reasoningTextLength ?? 0,
 	};
+}
+
+function emitTrackedVisibleDelta(
+	state: OpenAIStreamState,
+	delta: string,
+	onDelta: ((delta: string) => void) | undefined,
+) {
+	if (!delta) return;
+	state.visibleText = (state.visibleText ?? "") + delta;
+	onDelta?.(delta);
 }
 
 function emitVisibleDelta(
@@ -157,7 +169,7 @@ function emitVisibleDelta(
 	const delimiterIndex = combined.search(delimiterPattern);
 	if (delimiterIndex >= 0) {
 		const visible = combined.slice(0, delimiterIndex);
-		if (visible) onDelta?.(visible);
+		emitTrackedVisibleDelta(state, visible, onDelta);
 		state.pendingVisible = "";
 		state.jsonMode = true;
 		return;
@@ -170,7 +182,7 @@ function emitVisibleDelta(
 
 	const visible = combined.slice(0, -delimiterHold);
 	state.pendingVisible = combined.slice(-delimiterHold);
-	if (visible) onDelta?.(visible);
+	emitTrackedVisibleDelta(state, visible, onDelta);
 }
 
 function handleOpenAIEvent(
@@ -295,12 +307,14 @@ export function processOpenAIResponseSseChunk(
 	} = {},
 ) {
 	state.eventBuffer += chunk;
-	let boundary = state.eventBuffer.indexOf("\n\n");
-	while (boundary >= 0) {
-		const block = state.eventBuffer.slice(0, boundary);
-		state.eventBuffer = state.eventBuffer.slice(boundary + 2);
+	let separator = /\r?\n\r?\n/.exec(state.eventBuffer);
+	while (separator?.index !== undefined) {
+		const block = state.eventBuffer.slice(0, separator.index);
+		state.eventBuffer = state.eventBuffer.slice(
+			separator.index + separator[0].length,
+		);
 		const data = block
-			.split("\n")
+			.split(/\r?\n/)
 			.filter((line) => line.startsWith("data:"))
 			.map((line) => line.slice(5).trimStart())
 			.join("\n");
@@ -328,7 +342,7 @@ export function processOpenAIResponseSseChunk(
 				// The feature parser decides whether partial output remains usable.
 			}
 		}
-		boundary = state.eventBuffer.indexOf("\n\n");
+		separator = /\r?\n\r?\n/.exec(state.eventBuffer);
 	}
 }
 
@@ -361,15 +375,16 @@ export function readOpenAIResponseStreamEffect(
 				continue;
 			}
 			if (!state.jsonMode && state.pendingVisible) {
-				options.onDelta?.(state.pendingVisible);
+				emitTrackedVisibleDelta(state, state.pendingVisible, options.onDelta);
+				state.pendingVisible = "";
 			}
 			const diagnostics = buildDiagnostics(state);
 			if (state.error) {
 				return yield* Effect.fail(
-					new OpenAIStreamError("OpenAI stream failed", diagnostics),
+					new OpenAIStreamError(state.error, diagnostics),
 				);
 			}
-			if (!state.rawText.trim()) {
+			if (!(state.visibleText ?? "").trim()) {
 				return yield* Effect.fail(
 					new OpenAIStreamError(
 						"OpenAI stream returned no visible output",
