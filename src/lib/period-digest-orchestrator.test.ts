@@ -867,4 +867,77 @@ describe("period digest orchestrator", () => {
 			startedBy: { trigger: "manual", origin: "cli" },
 		});
 	});
+
+	it("canonicalizes source diagnostics when reading persisted run state", async () => {
+		const statePath = periodDigestRunStatePath("today");
+		await fs.mkdir(path.dirname(statePath), { recursive: true });
+		await fs.writeFile(
+			statePath,
+			JSON.stringify({
+				schemaVersion: 1,
+				runId: "legacy-diagnostics-run",
+				period: "today",
+				startedBy: { trigger: "scheduled", origin: "launchd" },
+				joinedBy: [],
+				sourceOrder: ["all", "following", "for_you"],
+				ownerId: "legacy-owner",
+				pid: 123,
+				host: "legacy-host",
+				startedAt: "2026-08-06T08:00:00.000Z",
+				heartbeatAt: "2026-08-06T08:05:00.000Z",
+				phase: "degraded",
+				sources: {
+					all: {
+						state: "completed",
+						attempts: 2,
+						generatedAt: "2026-08-06T08:04:00.000Z",
+						versionId: "version-all",
+						diagnostics: {
+							responseId: "resp_legacy",
+							finishReason: "stop",
+							visibleTextLength: 42,
+							reasoningTextLength: 7,
+							rawText: "legacy raw text must not escape",
+							prompt: "legacy prompt must not escape",
+						},
+					},
+					following: {
+						state: "failed",
+						attempts: 3,
+						error: "model timeout",
+						diagnostics: {
+							visibleTextLength: -1,
+							reasoningTextLength: 0,
+							rawText: "invalid diagnostics must be removed",
+						},
+					},
+					for_you: { state: "pending", attempts: 0 },
+				},
+			}),
+			"utf8",
+		);
+
+		const state = await readPeriodDigestRunState("today");
+
+		expect(state?.sources.all).toEqual({
+			state: "completed",
+			attempts: 2,
+			generatedAt: "2026-08-06T08:04:00.000Z",
+			versionId: "version-all",
+			diagnostics: {
+				responseId: "resp_legacy",
+				finishReason: "stop",
+				visibleTextLength: 42,
+				reasoningTextLength: 7,
+			},
+		});
+		expect(state?.sources.following).toEqual({
+			state: "failed",
+			attempts: 3,
+			error: "model timeout",
+		});
+		expect(JSON.stringify(state)).not.toContain("legacy raw text");
+		expect(JSON.stringify(state)).not.toContain("legacy prompt");
+		expect(JSON.stringify(state)).not.toContain("invalid diagnostics");
+	});
 });

@@ -1064,7 +1064,13 @@ function cachedDigestResult(
 		typeof cachedContext.window.label !== "string" ||
 		typeof cachedContext.window.since !== "string" ||
 		typeof cachedContext.window.until !== "string" ||
+		(cachedContext.account !== undefined &&
+			typeof cachedContext.account !== "string") ||
 		typeof cachedContext.includeDms !== "boolean" ||
+		(cachedContext.contentSource !== undefined &&
+			cachedContext.contentSource !== "all" &&
+			cachedContext.contentSource !== "following" &&
+			cachedContext.contentSource !== "for_you") ||
 		!cachedContext.counts ||
 		typeof cachedContext.counts !== "object" ||
 		!Array.isArray(cachedContext.tweets) ||

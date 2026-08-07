@@ -1262,6 +1262,59 @@ describe("period digest", () => {
 		},
 	);
 
+	it.each([
+		["object account", { account: { id: "not-a-string" } }],
+		["unknown content source", { contentSource: "unknown" }],
+	])(
+		"regenerates when latest cached context has an invalid %s",
+		async (_name, contextOverride) => {
+			const streamed = [
+				sseFrame({
+					type: "response.output_text.delta",
+					delta:
+						'# Fresh context\n\nGenerated safely.\n\n---\n{"title":"Fresh context","summary":"Generated safely","keyTopics":[],"notableLinks":[],"people":[],"actionItems":[],"sourceTweetIds":[]}',
+				}),
+				"data: [DONE]\n\n",
+			].join("");
+			const fetchMock = vi.fn().mockResolvedValue(streamResponse(streamed));
+			vi.stubGlobal("fetch", fetchMock);
+			const options = {
+				period: "today",
+				contentSource: "all" as const,
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
+			};
+			const context = collectPeriodDigestContext(options);
+			writeSyncCache(
+				__test__.latestDigestCacheKey(options, effectivePrompt().promptHash),
+				{
+					context: { ...context, ...contextOverride },
+					digest: {
+						title: "Invalid cached context",
+						summary: "Must regenerate",
+						keyTopics: [],
+						notableLinks: [],
+						people: [],
+						actionItems: [],
+						sourceTweetIds: ["missing_cached_tweet"],
+					},
+					markdown: "# Invalid cached context",
+					model: "gpt-5.5",
+					reasoningEffort: "medium",
+					serviceTier: "priority",
+					parseStatus: "structured",
+					updatedAt: new Date().toISOString(),
+				},
+			);
+
+			const result = await streamPeriodDigest(options);
+
+			expect(result.cached).toBe(false);
+			expect(result.markdown).toContain("# Fresh context");
+			expect(fetchMock).toHaveBeenCalledOnce();
+		},
+	);
+
 	it("rejects failed Responses streams instead of caching partial output", async () => {
 		const streamed = [
 			sseFrame({

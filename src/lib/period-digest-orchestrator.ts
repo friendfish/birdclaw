@@ -268,7 +268,21 @@ function parseRunState(value: unknown): PeriodDigestRunStateV1 | undefined {
 	) {
 		return undefined;
 	}
-	return state as PeriodDigestRunStateV1;
+	const sources = Object.fromEntries(
+		Object.entries(state.sources).map(([source, sourceState]) => {
+			if (
+				!sourceState ||
+				typeof sourceState !== "object" ||
+				Array.isArray(sourceState)
+			) {
+				return [source, sourceState];
+			}
+			const { diagnostics: untrustedDiagnostics, ...rest } = sourceState;
+			const diagnostics = sanitizeOpenAIStreamDiagnostics(untrustedDiagnostics);
+			return [source, { ...rest, ...(diagnostics ? { diagnostics } : {}) }];
+		}),
+	);
+	return { ...state, sources } as PeriodDigestRunStateV1;
 }
 
 async function readRunStateFile(statePath: string) {

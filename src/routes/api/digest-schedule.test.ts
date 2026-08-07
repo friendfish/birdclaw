@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
@@ -36,6 +36,7 @@ vi.mock("#/lib/period-digest-freshness", async () => {
 import { Route } from "./digest-schedule";
 import { resetBirdclawPathsForTests, writeBirdclawConfig } from "#/lib/config";
 import { getBirdCredentialsPath } from "#/lib/bird-credentials";
+import { periodDigestRunStatePath } from "#/lib/period-digest-orchestrator";
 
 const GET = getRouteHandler(Route, "GET");
 const POST = getRouteHandler(Route, "POST");
@@ -97,6 +98,60 @@ describe("api digest-schedule route", () => {
 				week: { hour: 2, minute: 0, weekday: 1 },
 			},
 		});
+	});
+
+	it("does not expose extra diagnostics from persisted digest runs", async () => {
+		const statePath = periodDigestRunStatePath("today");
+		mkdirSync(path.dirname(statePath), { recursive: true });
+		writeFileSync(
+			statePath,
+			JSON.stringify({
+				schemaVersion: 1,
+				runId: "legacy-route-run",
+				period: "today",
+				startedBy: { trigger: "scheduled", origin: "launchd" },
+				joinedBy: [],
+				sourceOrder: ["all", "following", "for_you"],
+				ownerId: "legacy-owner",
+				pid: 123,
+				host: "legacy-host",
+				startedAt: "2026-08-06T08:00:00.000Z",
+				heartbeatAt: "2026-08-06T08:05:00.000Z",
+				phase: "degraded",
+				sources: {
+					all: {
+						state: "completed",
+						attempts: 1,
+						diagnostics: {
+							responseId: "resp_route",
+							finishReason: "stop",
+							visibleTextLength: 50,
+							reasoningTextLength: 8,
+							rawText: "route raw text must not escape",
+							prompt: "route prompt must not escape",
+						},
+					},
+					following: { state: "pending", attempts: 0 },
+					for_you: { state: "pending", attempts: 0 },
+				},
+			}),
+			"utf8",
+		);
+
+		const response = await GET({
+			request: new Request("http://localhost/api/digest-schedule"),
+		});
+		const body = await response.json();
+		const serialized = JSON.stringify(body.runs);
+
+		expect(body.runs.today.sources.all.diagnostics).toEqual({
+			responseId: "resp_route",
+			finishReason: "stop",
+			visibleTextLength: 50,
+			reasoningTextLength: 8,
+		});
+		expect(serialized).not.toContain("route raw text");
+		expect(serialized).not.toContain("route prompt");
 	});
 
 	it("saves the schedule and archive dir, then reinstalls all 4 launchd agents", async () => {
