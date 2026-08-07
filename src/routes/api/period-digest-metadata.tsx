@@ -11,6 +11,7 @@ import {
 	type PeriodDigestContentSource,
 	type PeriodDigestRunResult,
 } from "#/lib/period-digest";
+import { isDisplayablePeriodDigest } from "#/lib/period-digest-integrity";
 import {
 	migrateLegacyPeriodDigests,
 	readCurrentPeriodDigest,
@@ -25,23 +26,23 @@ import {
 import { parsePeriodDigestRequestOptions } from "#/lib/period-digest-request";
 import { peekScheduledJobLockEffect } from "#/lib/scheduled-job";
 
-let legacyMigrationAttempted = false;
-let legacyMigrationResult: ReturnType<
-	typeof migrateLegacyPeriodDigests
-> | null = null;
+const legacyMigrationAttemptedKeys = new Set<string>();
 
-function migrateLegacyPeriodDigestsOnce() {
-	if (!legacyMigrationAttempted) {
-		legacyMigrationAttempted = true;
-		legacyMigrationResult = migrateLegacyPeriodDigests();
-	}
-	return legacyMigrationResult;
+function migrationKey(
+	period: "today" | "24h",
+	contentSource: PeriodDigestContentSource,
+) {
+	return `${period}:${contentSource}`;
+}
+
+export function resetPeriodDigestMetadataMigrationForTests() {
+	legacyMigrationAttemptedKeys.clear();
 }
 
 function resultFromCurrent(
 	current: CurrentPeriodDigestV1 | null,
 ): PeriodDigestRunResult | null {
-	if (!current) return null;
+	if (!current || !isDisplayablePeriodDigest(current)) return null;
 	return {
 		context: current.context,
 		digest: current.digest,
@@ -109,15 +110,21 @@ export const Route = createFileRoute("/api/period-digest-metadata")({
 							);
 						}
 						const contentSource = options.contentSource ?? "all";
+						const recoveryKey = migrationKey(period, contentSource);
 						let current = readCurrentPeriodDigest(period, contentSource);
+						let result = resultFromCurrent(current);
 						let migration = null;
-						if (!current) {
-							migration = migrateLegacyPeriodDigestsOnce();
+						if (result) {
+							legacyMigrationAttemptedKeys.delete(recoveryKey);
+						} else if (!legacyMigrationAttemptedKeys.has(recoveryKey)) {
+							legacyMigrationAttemptedKeys.add(recoveryKey);
+							migration = migrateLegacyPeriodDigests();
 							current = readCurrentPeriodDigest(period, contentSource);
+							result = resultFromCurrent(current);
+							if (result) legacyMigrationAttemptedKeys.delete(recoveryKey);
 						}
-						const result = resultFromCurrent(current);
-						const isStale = current
-							? !isFreshDigestCache(current.generatedAt, period)
+						const isStale = result
+							? !isFreshDigestCache(result.updatedAt, period)
 							: true;
 						const runState = yield* Effect.tryPromise({
 							try: () => readPeriodDigestRunState(period),
