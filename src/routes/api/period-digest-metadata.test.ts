@@ -46,6 +46,12 @@ import {
 } from "./period-digest-metadata";
 
 const GET = getRouteHandler(Route, "GET");
+const STREAM_DIAGNOSTICS = {
+	responseId: "resp-metadata",
+	finishReason: "stop",
+	visibleTextLength: 42,
+	reasoningTextLength: 7,
+};
 
 function requestFor(period = "today", contentSource = "all") {
 	return new Request(
@@ -185,6 +191,31 @@ describe("api period-digest-metadata route", () => {
 		});
 	});
 
+	it("preserves valid stream diagnostics", async () => {
+		readCurrentPeriodDigestMock.mockReturnValue(
+			currentDigest(undefined, { diagnostics: STREAM_DIAGNOSTICS }),
+		);
+
+		const validBody = await (await GET({ request: requestFor() })).json();
+
+		expect(validBody.result.diagnostics).toEqual(STREAM_DIAGNOSTICS);
+	});
+
+	it("omits invalid mocked stream diagnostics", async () => {
+		readCurrentPeriodDigestMock.mockReturnValue(
+			currentDigest(undefined, {
+				diagnostics: {
+					visibleTextLength: -1,
+					reasoningTextLength: 7,
+				} as never,
+			}),
+		);
+
+		const invalidBody = await (await GET({ request: requestFor() })).json();
+
+		expect(invalidBody.result).not.toHaveProperty("diagnostics");
+	});
+
 	it("returns null and stale when a mocked current digest has no displayable markdown", async () => {
 		readCurrentPeriodDigestMock.mockReturnValue(
 			currentDigest(undefined, { markdown: " \n\t" }),
@@ -219,6 +250,33 @@ describe("api period-digest-metadata route", () => {
 
 		expect(migrateLegacyPeriodDigestsMock).toHaveBeenCalledTimes(1);
 		expect(body.result).toMatchObject({
+			markdown: "# Existing Today",
+			updatedAt: "2026-08-06T07:00:00.000Z",
+		});
+	});
+
+	it("retries legacy recovery after a transient migration failure", async () => {
+		let current: CurrentPeriodDigestV1 | null = null;
+		readCurrentPeriodDigestMock.mockImplementation(() => current);
+		migrateLegacyPeriodDigestsMock
+			.mockImplementationOnce(() => {
+				throw new Error("transient SQLite error");
+			})
+			.mockImplementationOnce(() => {
+				current = currentDigest("2026-08-06T07:00:00.000Z");
+				return {
+					migrated: [{ period: "today", contentSource: "all" }],
+					diagnostics: [],
+				};
+			});
+
+		await expect(GET({ request: requestFor() })).rejects.toThrow(
+			"transient SQLite error",
+		);
+		const recovered = await (await GET({ request: requestFor() })).json();
+
+		expect(migrateLegacyPeriodDigestsMock).toHaveBeenCalledTimes(2);
+		expect(recovered.result).toMatchObject({
 			markdown: "# Existing Today",
 			updatedAt: "2026-08-06T07:00:00.000Z",
 		});

@@ -12,6 +12,7 @@ import {
 	type PeriodDigestRunResult,
 } from "#/lib/period-digest";
 import { isDisplayablePeriodDigest } from "#/lib/period-digest-integrity";
+import { isOpenAIStreamDiagnostics } from "#/lib/openai-response-runtime";
 import {
 	migrateLegacyPeriodDigests,
 	readCurrentPeriodDigest,
@@ -51,6 +52,9 @@ function resultFromCurrent(
 		reasoningEffort: current.reasoningEffort,
 		serviceTier: current.serviceTier,
 		parseStatus: current.parseStatus,
+		...(isOpenAIStreamDiagnostics(current.diagnostics)
+			? { diagnostics: current.diagnostics }
+			: {}),
 		cached: true,
 		updatedAt: current.generatedAt,
 	};
@@ -117,8 +121,8 @@ export const Route = createFileRoute("/api/period-digest-metadata")({
 						if (result) {
 							legacyMigrationAttemptedKeys.delete(recoveryKey);
 						} else if (!legacyMigrationAttemptedKeys.has(recoveryKey)) {
-							legacyMigrationAttemptedKeys.add(recoveryKey);
 							migration = migrateLegacyPeriodDigests();
+							legacyMigrationAttemptedKeys.add(recoveryKey);
 							current = readCurrentPeriodDigest(period, contentSource);
 							result = resultFromCurrent(current);
 							if (result) legacyMigrationAttemptedKeys.delete(recoveryKey);
