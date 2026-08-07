@@ -226,6 +226,45 @@ describe("api period-digest-metadata route", () => {
 		expect(invalidBody.result).not.toHaveProperty("diagnostics");
 	});
 
+	it("sanitizes diagnostics in legacy run state before returning metadata", async () => {
+		readPeriodDigestRunStateMock.mockResolvedValue({
+			runId: "legacy-run",
+			period: "today",
+			phase: "failed",
+			sourceOrder: ["all", "following", "for_you"],
+			sources: {
+				all: {
+					state: "failed",
+					attempts: 1,
+					diagnostics: {
+						...STREAM_DIAGNOSTICS,
+						rawText: "old raw stream must not leave the server",
+						prompt: "old prompt must not leave the server",
+					},
+				},
+				following: { state: "pending", attempts: 0 },
+				for_you: {
+					state: "failed",
+					attempts: 1,
+					diagnostics: {
+						visibleTextLength: -1,
+						reasoningTextLength: 0,
+						rawText: "invalid diagnostics must be removed",
+					},
+				},
+			},
+		});
+
+		const body = await (await GET({ request: requestFor() })).json();
+		const serialized = JSON.stringify(body);
+
+		expect(body.runState.sources.all.diagnostics).toEqual(STREAM_DIAGNOSTICS);
+		expect(body.runState.sources.for_you).not.toHaveProperty("diagnostics");
+		expect(serialized).not.toContain("old raw stream");
+		expect(serialized).not.toContain("old prompt");
+		expect(serialized).not.toContain("invalid diagnostics");
+	});
+
 	it("returns null and stale when a mocked current digest has no displayable markdown", async () => {
 		readCurrentPeriodDigestMock.mockReturnValue(
 			currentDigest(undefined, { markdown: " \n\t" }),

@@ -16,6 +16,7 @@ import {
 } from "./digest-archive-sync";
 import {
 	openAIStreamDiagnosticsFromError,
+	sanitizeOpenAIStreamDiagnostics,
 	type OpenAIStreamDiagnostics,
 } from "./openai-response-runtime";
 import {
@@ -793,6 +794,9 @@ async function runOwnedBatch({
 					dependencies.database,
 				);
 				completedSources += 1;
+				const diagnostics = sanitizeOpenAIStreamDiagnostics(
+					generated.diagnostics,
+				);
 				await updateOwnedRunState(
 					statePath,
 					ownerId,
@@ -805,9 +809,7 @@ async function runOwnedBatch({
 								attempts,
 								generatedAt: generated.updatedAt,
 								versionId,
-								...(generated.diagnostics
-									? { diagnostics: generated.diagnostics }
-									: {}),
+								...(diagnostics ? { diagnostics } : {}),
 							},
 						},
 					}),
@@ -815,7 +817,9 @@ async function runOwnedBatch({
 				);
 			} catch (error) {
 				throwIfOwnershipLost();
-				const diagnostics = openAIStreamDiagnosticsFromError(error);
+				const diagnostics = sanitizeOpenAIStreamDiagnostics(
+					openAIStreamDiagnosticsFromError(error),
+				);
 				await updateOwnedRunState(
 					statePath,
 					ownerId,

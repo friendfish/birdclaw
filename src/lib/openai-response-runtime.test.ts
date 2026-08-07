@@ -15,6 +15,7 @@ import {
 	readOpenAIResponseStreamEffect,
 	requestOpenAIResponseEffect,
 	resolveOpenAIBaseUrl,
+	sanitizeOpenAIStreamDiagnostics,
 } from "./openai-response-runtime";
 
 const originalBirdclawHome = process.env.BIRDCLAW_HOME;
@@ -105,6 +106,40 @@ async function expectStreamError(events: unknown[]) {
 }
 
 describe("OpenAI response runtime", () => {
+	it("projects valid diagnostics onto the canonical persistence whitelist", () => {
+		const input = {
+			responseId: "resp_safe",
+			finishReason: "stop",
+			visibleTextLength: 42,
+			reasoningTextLength: 7,
+			rawText: "must not persist",
+			prompt: "must not persist",
+			usage: { output_tokens: 49 },
+		};
+
+		const diagnostics = sanitizeOpenAIStreamDiagnostics(input);
+
+		expect(diagnostics).toEqual({
+			responseId: "resp_safe",
+			finishReason: "stop",
+			visibleTextLength: 42,
+			reasoningTextLength: 7,
+		});
+		expect(diagnostics).not.toBe(input);
+		expect(
+			sanitizeOpenAIStreamDiagnostics({
+				visibleTextLength: Number.POSITIVE_INFINITY,
+				reasoningTextLength: 0,
+			}),
+		).toBeUndefined();
+		expect(
+			sanitizeOpenAIStreamDiagnostics({
+				visibleTextLength: 1,
+				reasoningTextLength: -1,
+			}),
+		).toBeUndefined();
+	});
+
 	it("streams visible markdown while retaining hybrid output and metadata", async () => {
 		const visible: string[] = [];
 		const stream = new ReadableStream({
@@ -206,6 +241,25 @@ describe("OpenAI response runtime", () => {
 			},
 		]);
 		expect(error.message).toContain("quota exceeded");
+	});
+
+	it("retains top-level stream error messages without leaking the event", async () => {
+		const rawText = "raw event content must not enter diagnostics";
+		const error = await expectStreamError([
+			{
+				type: "error",
+				message: "quota exceeded",
+				code: "insufficient_quota",
+				rawText,
+			},
+		]);
+
+		expect(error.message).toContain("quota exceeded");
+		expect(error.diagnostics).toEqual({
+			visibleTextLength: 0,
+			reasoningTextLength: 0,
+		});
+		expect(JSON.stringify(error.diagnostics)).not.toContain(rawText);
 	});
 
 	it("reads chunked CRLF SSE frames", async () => {

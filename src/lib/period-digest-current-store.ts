@@ -15,7 +15,7 @@ import {
 	isDisplayablePeriodDigest,
 } from "./period-digest-integrity";
 import {
-	isOpenAIStreamDiagnostics,
+	sanitizeOpenAIStreamDiagnostics,
 	type OpenAIStreamDiagnostics,
 } from "./openai-response-runtime";
 import {
@@ -172,6 +172,10 @@ function isPeriodDigestContext(value: unknown): value is PeriodDigestContext {
 
 function parseCurrentPeriodDigest(
 	value: unknown,
+	expected?: {
+		period: CurrentPeriodDigestPeriod;
+		contentSource: PeriodDigestContentSource;
+	},
 ): CurrentPeriodDigestV1 | null {
 	if (
 		!isRecord(value) ||
@@ -192,20 +196,31 @@ function parseCurrentPeriodDigest(
 	) {
 		return null;
 	}
+	if (
+		expected &&
+		(value.period !== expected.period ||
+			value.contentSource !== expected.contentSource)
+	) {
+		return null;
+	}
 	const digest = periodDigestSchema.safeParse(value.digest);
 	if (!digest.success) return null;
+	const diagnostics = sanitizeOpenAIStreamDiagnostics(value.diagnostics);
 	if (
 		!isDisplayablePeriodDigest({
 			digest: digest.data,
 			markdown: value.markdown,
 			parseStatus: value.parseStatus,
 		}) ||
-		(value.diagnostics !== undefined &&
-			!isOpenAIStreamDiagnostics(value.diagnostics))
+		(value.diagnostics !== undefined && !diagnostics)
 	) {
 		return null;
 	}
-	return { ...value, digest: digest.data } as unknown as CurrentPeriodDigestV1;
+	return {
+		...value,
+		digest: digest.data,
+		...(diagnostics ? { diagnostics } : {}),
+	} as unknown as CurrentPeriodDigestV1;
 }
 
 export function publishCurrentPeriodDigest(
@@ -214,10 +229,8 @@ export function publishCurrentPeriodDigest(
 	runtime: ServerRuntimeServices = defaultServerRuntimeServices,
 ): CurrentPeriodDigestV1 {
 	assertDisplayablePeriodDigest(input.result);
-	if (
-		input.result.diagnostics !== undefined &&
-		!isOpenAIStreamDiagnostics(input.result.diagnostics)
-	) {
+	const diagnostics = sanitizeOpenAIStreamDiagnostics(input.result.diagnostics);
+	if (input.result.diagnostics !== undefined && !diagnostics) {
 		throw new Error("Period digest diagnostics were invalid");
 	}
 	const value: CurrentPeriodDigestV1 = {
@@ -236,9 +249,7 @@ export function publishCurrentPeriodDigest(
 		reasoningEffort: input.result.reasoningEffort,
 		serviceTier: input.result.serviceTier,
 		parseStatus: input.result.parseStatus,
-		...(input.result.diagnostics
-			? { diagnostics: input.result.diagnostics }
-			: {}),
+		...(diagnostics ? { diagnostics } : {}),
 		input: {
 			provenance: "generated",
 			maxTweets: input.maxTweets,
@@ -265,7 +276,9 @@ export function readCurrentPeriodDigest(
 		currentPeriodDigestKey(period, contentSource),
 		db,
 	);
-	return cached ? parseCurrentPeriodDigest(cached.value) : null;
+	return cached
+		? parseCurrentPeriodDigest(cached.value, { period, contentSource })
+		: null;
 }
 
 function parseLegacyCandidate(
@@ -295,6 +308,7 @@ function parseLegacyCandidate(
 	const period = LEGACY_PERIOD_LABELS[value.context.window.label];
 	if (!period) return { reason: "unknown-period-label" };
 	const digest = periodDigestSchema.safeParse(value.digest);
+	const diagnostics = sanitizeOpenAIStreamDiagnostics(value.diagnostics);
 	const generatedAt = isIsoTimestamp(value.updatedAt)
 		? value.updatedAt
 		: isIsoTimestamp(row.updated_at)
@@ -308,8 +322,7 @@ function parseLegacyCandidate(
 		typeof value.reasoningEffort !== "string" ||
 		typeof value.serviceTier !== "string" ||
 		(value.parseStatus !== "structured" && value.parseStatus !== "fallback") ||
-		(value.diagnostics !== undefined &&
-			!isOpenAIStreamDiagnostics(value.diagnostics))
+		(value.diagnostics !== undefined && !diagnostics)
 	) {
 		return { reason: "invalid-payload" };
 	}
@@ -336,9 +349,7 @@ function parseLegacyCandidate(
 				reasoningEffort: value.reasoningEffort,
 				serviceTier: value.serviceTier,
 				parseStatus: value.parseStatus,
-				...(isOpenAIStreamDiagnostics(value.diagnostics)
-					? { diagnostics: value.diagnostics }
-					: {}),
+				...(diagnostics ? { diagnostics } : {}),
 				cached: true,
 				updatedAt: generatedAt,
 			},

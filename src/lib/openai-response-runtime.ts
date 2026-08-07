@@ -16,6 +16,38 @@ export interface OpenAIStreamDiagnostics {
 	reasoningTextLength: number;
 }
 
+export function sanitizeOpenAIStreamDiagnostics(
+	value: unknown,
+): OpenAIStreamDiagnostics | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value))
+		return undefined;
+	const record = value as Record<string, unknown>;
+	if (
+		(record.responseId !== undefined &&
+			typeof record.responseId !== "string") ||
+		(record.finishReason !== undefined &&
+			typeof record.finishReason !== "string") ||
+		typeof record.visibleTextLength !== "number" ||
+		!Number.isFinite(record.visibleTextLength) ||
+		record.visibleTextLength < 0 ||
+		typeof record.reasoningTextLength !== "number" ||
+		!Number.isFinite(record.reasoningTextLength) ||
+		record.reasoningTextLength < 0
+	) {
+		return undefined;
+	}
+	return {
+		...(typeof record.responseId === "string"
+			? { responseId: record.responseId }
+			: {}),
+		...(typeof record.finishReason === "string"
+			? { finishReason: record.finishReason }
+			: {}),
+		visibleTextLength: record.visibleTextLength,
+		reasoningTextLength: record.reasoningTextLength,
+	};
+}
+
 export class OpenAIStreamError extends Error {
 	readonly diagnostics: OpenAIStreamDiagnostics;
 
@@ -32,33 +64,27 @@ export class OpenAIStreamError extends Error {
 		].filter((value): value is string => value !== undefined);
 		super(`${message} (${values.join(", ")})`);
 		this.name = "OpenAIStreamError";
-		this.diagnostics = Object.freeze({ ...diagnostics });
+		this.diagnostics = Object.freeze(
+			sanitizeOpenAIStreamDiagnostics(diagnostics) ?? {
+				visibleTextLength: 0,
+				reasoningTextLength: 0,
+			},
+		);
 	}
 }
 
 export function isOpenAIStreamDiagnostics(
 	value: unknown,
 ): value is OpenAIStreamDiagnostics {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-	const record = value as Record<string, unknown>;
-	return (
-		(record.responseId === undefined ||
-			typeof record.responseId === "string") &&
-		(record.finishReason === undefined ||
-			typeof record.finishReason === "string") &&
-		typeof record.visibleTextLength === "number" &&
-		Number.isFinite(record.visibleTextLength) &&
-		record.visibleTextLength >= 0 &&
-		typeof record.reasoningTextLength === "number" &&
-		Number.isFinite(record.reasoningTextLength) &&
-		record.reasoningTextLength >= 0
-	);
+	return sanitizeOpenAIStreamDiagnostics(value) !== undefined;
 }
 
 export function openAIStreamDiagnosticsFromError(
 	error: unknown,
 ): OpenAIStreamDiagnostics | undefined {
-	return error instanceof OpenAIStreamError ? error.diagnostics : undefined;
+	return error instanceof OpenAIStreamError
+		? sanitizeOpenAIStreamDiagnostics(error.diagnostics)
+		: undefined;
 }
 
 export interface OpenAIStreamState {
@@ -248,9 +274,11 @@ function handleOpenAIEvent(
 	if (type === "response.error" || type === "error") {
 		const error = event.error;
 		state.error =
-			error && typeof error === "object" && "message" in error
-				? String((error as { message?: unknown }).message)
-				: "OpenAI stream failed";
+			typeof event.message === "string"
+				? event.message
+				: error && typeof error === "object" && "message" in error
+					? String((error as { message?: unknown }).message)
+					: "OpenAI stream failed";
 		return;
 	}
 }

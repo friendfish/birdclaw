@@ -18,7 +18,7 @@ import {
 } from "./period-digest";
 import { getTweetsByIds } from "./queries";
 import { resolveEffectivePrompt } from "./prompt-templates";
-import { writeSyncCache } from "./sync-cache";
+import { readSyncCache, writeSyncCache } from "./sync-cache";
 
 const tempRoots: string[] = [];
 
@@ -100,7 +100,7 @@ afterEach(() => {
 
 describe("period digest", () => {
 	describe("latest digest reader", () => {
-		it("returns the exact latest cached result for the requested identity", async () => {
+		it("treats invalid diagnostics in the latest cache as a cache miss", async () => {
 			const options = {
 				period: "today",
 				contentSource: "following" as const,
@@ -142,13 +142,100 @@ describe("period digest", () => {
 				readLatestPeriodDigestEffect(options),
 			);
 
-			expect(result).toMatchObject({
-				context,
-				markdown: "# Latest Following",
-				cached: true,
-				updatedAt,
+			expect(result).toBeNull();
+		});
+
+		it("treats malformed latest-cache result fields as cache misses", async () => {
+			const options = { period: "today", contentSource: "following" as const };
+			const context = collectPeriodDigestContext({
+				...options,
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
 			});
-			expect(result?.diagnostics).toBeUndefined();
+			const valid = {
+				context,
+				digest: {
+					title: "Latest Following",
+					summary: "Exact cached summary",
+					keyTopics: [],
+					notableLinks: [],
+					people: [],
+					actionItems: [],
+					sourceTweetIds: [],
+				},
+				markdown: "# Latest Following",
+				model: "gpt-5.5",
+				reasoningEffort: "medium",
+				serviceTier: "priority",
+				parseStatus: "structured",
+				updatedAt: "2026-08-04T01:23:45.000Z",
+			};
+			const invalidValues = [
+				{ ...valid, context: { ...context, tweets: [null] } },
+				{ ...valid, digest: { title: "incomplete" } },
+				{ ...valid, markdown: 1 },
+				{ ...valid, model: 1 },
+				{ ...valid, reasoningEffort: null },
+				{ ...valid, serviceTier: [] },
+				{ ...valid, parseStatus: "unknown" },
+				{ ...valid, updatedAt: 123 },
+			];
+
+			for (const invalid of invalidValues) {
+				writeSyncCache(
+					__test__.latestDigestCacheKey(options, effectivePrompt().promptHash),
+					invalid,
+				);
+				await expect(
+					Effect.runPromise(readLatestPeriodDigestEffect(options)),
+				).resolves.toBeNull();
+			}
+		});
+
+		it("projects extra fields out of valid latest-cache diagnostics", async () => {
+			const options = { period: "today", contentSource: "following" as const };
+			const context = collectPeriodDigestContext({
+				...options,
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
+			});
+			writeSyncCache(
+				__test__.latestDigestCacheKey(options, effectivePrompt().promptHash),
+				{
+					context,
+					digest: {
+						title: "Latest Following",
+						summary: "Exact cached summary",
+						keyTopics: [],
+						notableLinks: [],
+						people: [],
+						actionItems: [],
+						sourceTweetIds: [],
+					},
+					markdown: "# Latest Following",
+					model: "gpt-5.5",
+					reasoningEffort: "medium",
+					serviceTier: "priority",
+					parseStatus: "structured",
+					diagnostics: {
+						responseId: "resp_latest",
+						visibleTextLength: 18,
+						reasoningTextLength: 4,
+						rawText: "must not escape the cache",
+					},
+					updatedAt: "2026-08-04T01:23:45.000Z",
+				},
+			);
+
+			const result = await Effect.runPromise(
+				readLatestPeriodDigestEffect(options),
+			);
+
+			expect(result?.diagnostics).toEqual({
+				responseId: "resp_latest",
+				visibleTextLength: 18,
+				reasoningTextLength: 4,
+			});
 		});
 
 		it("returns null when the latest cache lacks its original context", async () => {
@@ -1007,7 +1094,12 @@ describe("period digest", () => {
 			.prepare(
 				`
 				update sync_cache
-				set updated_at = '2020-01-01T00:00:00.000Z'
+				set updated_at = '2020-01-01T00:00:00.000Z',
+					value_json = json_set(
+						value_json,
+						'$.diagnostics.rawText',
+						'exact raw text must not be promoted'
+					)
 				where cache_key like 'period-digest:v2:%'
 				`,
 			)
@@ -1017,10 +1109,12 @@ describe("period digest", () => {
 		expect(exact.cached).toBe(true);
 		expect(first.diagnostics).toBeDefined();
 		expect(exact.diagnostics).toEqual(first.diagnostics);
+		expect(exact.diagnostics).not.toHaveProperty("rawText");
 		const promoted = await Effect.runPromise(
 			readLatestPeriodDigestEffect(options),
 		);
 		expect(promoted?.diagnostics).toEqual(first.diagnostics);
+		expect(promoted?.diagnostics).not.toHaveProperty("rawText");
 		getNativeDb()
 			.prepare("update profiles set bio = ? where id = ?")
 			.run("Changed after an old exact-cache hit.", profile?.id);
@@ -1046,7 +1140,7 @@ describe("period digest", () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it("rejects invalid cached digests through the Promise boundary", async () => {
+	it("regenerates instead of promoting an invalid exact cache entry", async () => {
 		const streamed = [
 			sseFrame({
 				type: "response.output_text.delta",
@@ -1055,7 +1149,9 @@ describe("period digest", () => {
 			}),
 			"data: [DONE]\n\n",
 		].join("");
-		const fetchMock = vi.fn().mockResolvedValue(streamResponse(streamed));
+		const fetchMock = vi
+			.fn()
+			.mockImplementation(() => Promise.resolve(streamResponse(streamed)));
 		vi.stubGlobal("fetch", fetchMock);
 		const options = {
 			since: "2026-01-01T00:00:00.000Z",
@@ -1065,34 +1161,106 @@ describe("period digest", () => {
 		await streamPeriodDigest({ ...options, refresh: true });
 		getNativeDb()
 			.prepare(
-				`
-				update sync_cache
-				set value_json = ?
-				where cache_key like 'period-digest:%'
-				`,
+				`update sync_cache
+				 set value_json = json_set(value_json, '$.markdown', '   ')
+				 where cache_key like 'period-digest:v2:%'`,
 			)
-			.run(
-				JSON.stringify({
-					digest: { title: "Invalid" },
-					markdown: "# Invalid",
-					model: "gpt-5.5",
-					reasoningEffort: "medium",
-					serviceTier: "priority",
-				}),
-			);
+			.run();
 		getNativeDb()
 			.prepare(
 				"delete from sync_cache where cache_key like 'period-digest-latest:%'",
 			)
 			.run();
 
-		let promise: Promise<unknown> | undefined;
-		expect(() => {
-			promise = streamPeriodDigest(options);
-		}).not.toThrow();
-		await expect(promise).rejects.toBeInstanceOf(Error);
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const latestKey = __test__.latestDigestCacheKey(
+			options,
+			effectivePrompt().promptHash,
+		);
+		expect(readSyncCache(latestKey)).toBeNull();
+
+		const regenerated = await streamPeriodDigest(options);
+		const latest = await Effect.runPromise(
+			readLatestPeriodDigestEffect(options),
+		);
+
+		expect(regenerated).toMatchObject({ cached: false });
+		expect(regenerated.markdown).toContain("# Cached");
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(latest).toMatchObject({ cached: true });
+		expect(latest?.markdown).toContain("# Cached");
+		expect(latest?.markdown.trim()).not.toBe("");
 	});
+
+	it.each([
+		[
+			"whitespace-only content",
+			{
+				title: "Invalid latest",
+				summary: "Whitespace content",
+				keyTopics: [],
+				notableLinks: [],
+				people: [],
+				actionItems: [],
+				sourceTweetIds: [],
+			},
+			" \n\t",
+			"structured" as const,
+		],
+		[
+			"placeholder-only content",
+			{
+				title: "[zh-CN]",
+				summary: "[zh-CN]",
+				keyTopics: [],
+				notableLinks: [],
+				people: [],
+				actionItems: [],
+				sourceTweetIds: [],
+			},
+			"# [zh-CN]\n\n[zh-CN]",
+			"fallback" as const,
+		],
+	])(
+		"regenerates when the latest cache contains %s",
+		async (_name, invalidDigest, invalidMarkdown, invalidParseStatus) => {
+			const streamed = [
+				sseFrame({
+					type: "response.output_text.delta",
+					delta:
+						'# Fresh\n\nGenerated again.\n\n---\n{"title":"Fresh","summary":"Generated again","keyTopics":[],"notableLinks":[],"people":[],"actionItems":[],"sourceTweetIds":[]}',
+				}),
+				"data: [DONE]\n\n",
+			].join("");
+			const fetchMock = vi.fn().mockResolvedValue(streamResponse(streamed));
+			vi.stubGlobal("fetch", fetchMock);
+			const options = {
+				period: "today",
+				contentSource: "all" as const,
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
+			};
+			const context = collectPeriodDigestContext(options);
+			writeSyncCache(
+				__test__.latestDigestCacheKey(options, effectivePrompt().promptHash),
+				{
+					context,
+					digest: invalidDigest,
+					markdown: invalidMarkdown,
+					model: "gpt-5.5",
+					reasoningEffort: "medium",
+					serviceTier: "priority",
+					parseStatus: invalidParseStatus,
+					updatedAt: new Date().toISOString(),
+				},
+			);
+
+			const result = await streamPeriodDigest(options);
+
+			expect(result).toMatchObject({ cached: false });
+			expect(result.markdown).toContain("# Fresh");
+			expect(fetchMock).toHaveBeenCalledOnce();
+		},
+	);
 
 	it("rejects failed Responses streams instead of caching partial output", async () => {
 		const streamed = [

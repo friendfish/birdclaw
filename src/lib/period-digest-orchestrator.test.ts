@@ -577,7 +577,15 @@ describe("period digest orchestrator", () => {
 	});
 
 	it("persists successful stream diagnostics in completed source state", async () => {
-		const diagnostics: OpenAIStreamDiagnostics = {
+		const diagnostics = {
+			responseId: "resp_success",
+			finishReason: "completed",
+			visibleTextLength: 72,
+			reasoningTextLength: 19,
+			rawText: "successful raw stream must not persist",
+			prompt: "successful prompt must not persist",
+		};
+		const expectedDiagnostics: OpenAIStreamDiagnostics = {
 			responseId: "resp_success",
 			finishReason: "completed",
 			visibleTextLength: 72,
@@ -605,12 +613,21 @@ describe("period digest orchestrator", () => {
 			(await fs.readFile(auditPath, "utf8")).trim(),
 		) as typeof finalState;
 
-		expect(finalState.sources.all.diagnostics).toEqual(diagnostics);
-		expect(persistedAudit.sources.all.diagnostics).toEqual(diagnostics);
+		expect(finalState.sources.all.diagnostics).toEqual(expectedDiagnostics);
+		expect(persistedAudit.sources.all.diagnostics).toEqual(expectedDiagnostics);
+		expect(JSON.stringify(finalState)).not.toContain(diagnostics.rawText);
+		expect(JSON.stringify(persistedAudit)).not.toContain(diagnostics.prompt);
 	});
 
 	it("persists failed stream diagnostics without raw stream or prompt data", async () => {
-		const diagnostics: OpenAIStreamDiagnostics = {
+		const diagnostics = {
+			responseId: "resp_failed",
+			finishReason: "length",
+			visibleTextLength: 0,
+			reasoningTextLength: 137,
+			usage: { output_tokens: 137 },
+		};
+		const expectedDiagnostics: OpenAIStreamDiagnostics = {
 			responseId: "resp_failed",
 			finishReason: "length",
 			visibleTextLength: 0,
@@ -652,10 +669,11 @@ describe("period digest orchestrator", () => {
 		expect(finalState.sources.all).toMatchObject({
 			state: "failed",
 			attempts: 1,
-			diagnostics,
+			diagnostics: expectedDiagnostics,
 		});
 		expect(finalState.sources.all.error).toContain("Bearer [REDACTED]");
-		expect(persistedAudit.sources.all.diagnostics).toEqual(diagnostics);
+		expect(persistedAudit.sources.all.diagnostics).toEqual(expectedDiagnostics);
+		expect(persistedText).not.toContain("output_tokens");
 		for (const secret of ["secret-model-token", rawStream, prompt]) {
 			expect(JSON.stringify(finalState)).not.toContain(secret);
 			expect(persistedText).not.toContain(secret);

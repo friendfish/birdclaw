@@ -12,10 +12,7 @@ import {
 	type PeriodDigestRunResult,
 } from "#/lib/period-digest";
 import { isDisplayablePeriodDigest } from "#/lib/period-digest-integrity";
-import {
-	isOpenAIStreamDiagnostics,
-	type OpenAIStreamDiagnostics,
-} from "#/lib/openai-response-runtime";
+import { sanitizeOpenAIStreamDiagnostics } from "#/lib/openai-response-runtime";
 import {
 	migrateLegacyPeriodDigests,
 	readCurrentPeriodDigest,
@@ -43,27 +40,11 @@ export function resetPeriodDigestMetadataMigrationForTests() {
 	legacyMigrationAttemptedKeys.clear();
 }
 
-function sanitizedDiagnostics(
-	value: unknown,
-): OpenAIStreamDiagnostics | undefined {
-	if (!isOpenAIStreamDiagnostics(value)) return undefined;
-	return {
-		...(typeof value.responseId === "string"
-			? { responseId: value.responseId }
-			: {}),
-		...(typeof value.finishReason === "string"
-			? { finishReason: value.finishReason }
-			: {}),
-		visibleTextLength: value.visibleTextLength,
-		reasoningTextLength: value.reasoningTextLength,
-	};
-}
-
 function resultFromCurrent(
 	current: CurrentPeriodDigestV1 | null,
 ): PeriodDigestRunResult | null {
 	if (!current || !isDisplayablePeriodDigest(current)) return null;
-	const diagnostics = sanitizedDiagnostics(current.diagnostics);
+	const diagnostics = sanitizeOpenAIStreamDiagnostics(current.diagnostics);
 	return {
 		context: current.context,
 		digest: current.digest,
@@ -75,6 +56,21 @@ function resultFromCurrent(
 		...(diagnostics ? { diagnostics } : {}),
 		cached: true,
 		updatedAt: current.generatedAt,
+	};
+}
+
+function sanitizedRunState(state: PeriodDigestRunStateV1 | undefined) {
+	if (!state) return undefined;
+	return {
+		...state,
+		sources: Object.fromEntries(
+			Object.entries(state.sources).map(([source, sourceState]) => {
+				const { diagnostics: untrustedDiagnostics, ...rest } = sourceState;
+				const diagnostics =
+					sanitizeOpenAIStreamDiagnostics(untrustedDiagnostics);
+				return [source, { ...rest, ...(diagnostics ? { diagnostics } : {}) }];
+			}),
+		) as PeriodDigestRunStateV1["sources"],
 	};
 }
 
@@ -148,10 +144,12 @@ export const Route = createFileRoute("/api/period-digest-metadata")({
 						const isStale = result
 							? !isFreshDigestCache(result.updatedAt, period)
 							: true;
-						const runState = yield* Effect.tryPromise({
-							try: () => readPeriodDigestRunState(period),
-							catch: (error) => error,
-						});
+						const runState = sanitizedRunState(
+							yield* Effect.tryPromise({
+								try: () => readPeriodDigestRunState(period),
+								catch: (error) => error,
+							}),
+						);
 						const lockActive = yield* peekScheduledJobLockEffect(
 							periodDigestRunLockPath(period),
 							PERIOD_DIGEST_LOCK_STALE_MS,

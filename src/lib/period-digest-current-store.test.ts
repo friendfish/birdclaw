@@ -115,7 +115,11 @@ describe("current period digest store", () => {
 	it("atomically replaces a complete source version", () => {
 		const { db } = testHome();
 		const firstResult = result("Today", "following");
-		firstResult.diagnostics = STREAM_DIAGNOSTICS;
+		firstResult.diagnostics = {
+			...STREAM_DIAGNOSTICS,
+			rawText: "must not be persisted",
+			prompt: "must not be persisted",
+		} as never;
 		const first = publishCurrentPeriodDigest(
 			{
 				period: "today",
@@ -148,6 +152,7 @@ describe("current period digest store", () => {
 			},
 			diagnostics: STREAM_DIAGNOSTICS,
 		});
+		expect(first.diagnostics).toEqual(STREAM_DIAGNOSTICS);
 
 		publishCurrentPeriodDigest(
 			{
@@ -427,7 +432,10 @@ describe("current period digest store", () => {
 			{
 				...result("Today", "all", "2026-08-06T08:00:00.000Z"),
 				context: context("Today", "all"),
-				diagnostics: STREAM_DIAGNOSTICS,
+				diagnostics: {
+					...STREAM_DIAGNOSTICS,
+					rawText: "legacy raw text must be dropped",
+				},
 			},
 			db,
 			createServerRuntimeServices({
@@ -455,6 +463,51 @@ describe("current period digest store", () => {
 			markdown: "# Today all",
 			diagnostics: STREAM_DIAGNOSTICS,
 			migratedFromLegacy: true,
+		});
+		expect(readCurrentPeriodDigest("today", "all", db)?.diagnostics).toEqual(
+			STREAM_DIAGNOSTICS,
+		);
+	});
+
+	it("recovers when the stable key contains a valid payload for another identity", () => {
+		const { db } = testHome();
+		const misplaced = publishCurrentPeriodDigest(
+			{
+				period: "24h",
+				contentSource: "following",
+				runId: "misplaced-run",
+				versionId: "misplaced-version",
+				generatedAt: "2026-08-06T10:00:00.000Z",
+				result: result(
+					"Last 24 hours",
+					"following",
+					"2026-08-06T10:00:00.000Z",
+				),
+				maxTweets: 5_000,
+				maxLinks: 20,
+				sync: { status: "fresh", steps: [] },
+			},
+			db,
+		);
+		writeSyncCache(currentPeriodDigestKey("today", "all"), misplaced, db);
+		writeSyncCache(
+			"period-digest-latest:v1:identity-recovery",
+			{
+				...result("Today", "all", "2026-08-06T08:00:00.000Z"),
+				context: context("Today", "all"),
+			},
+			db,
+		);
+
+		expect(readCurrentPeriodDigest("today", "all", db)).toBeNull();
+		expect(migrateLegacyPeriodDigests(db).migrated).toContainEqual({
+			period: "today",
+			contentSource: "all",
+		});
+		expect(readCurrentPeriodDigest("today", "all", db)).toMatchObject({
+			period: "today",
+			contentSource: "all",
+			runId: "legacy-migration",
 		});
 	});
 
