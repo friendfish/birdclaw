@@ -15,7 +15,7 @@
 
 在本次覆盖范围内，类型检查、测试资产及关键并发原语显示出较高的工程质量；由于未采集覆盖率和外部基准，不作行业横向评级。类型检查零告警、1701 个测试全绿（评审方沙箱复测 1697/1701，4 个失败仅因沙箱无法监听 127.0.0.1，沙箱外重跑通过）、全目录 0 个 TODO/FIXME、0 个 `@ts-ignore`、仅 3 处 `any`（集中在 OpenAI 响应体的动态字段删除，可接受）。文件锁、原子写、敏感信息脱敏、心跳租约等并发原语的实现体现了对崩溃恢复和竞态的深入思考，且 join / lease loss / partial success / backfill 等关键场景已有特征测试覆盖。
 
-需要整改的事项按优先级为：**一处 API 输入边界缺口**（归档日期路径穿越 + 参数静默归并）、digest 子系统"双轨编排"的结构重复、归档读取的错误分类缺失、Effect/Promise 边界的一处取消传播语义缺口、若干超千行大文件。
+需要整改的事项按优先级为：API 输入边界缺口（归档日期路径穿越 + 参数静默归并）、归档读取的错误分类与数据完整性缺失、Effect/Promise 边界的取消传播语义缺口、digest-archive-job.ts 的职责集中；digest 子系统"双轨编排"作为后续架构 backlog 处理。
 
 ---
 
@@ -164,7 +164,7 @@
 - 归档部分失败：`digest-archive-job.test.ts:1054`（单 source 重试耗尽不阻塞其余两个）
 - backfill：`digest-archive-job.test.ts:1162`（显式 since/until + liveSync:false 转发）
 
-**真正缺失**（应在归档 store 拆分**之前**补齐）：路径逃逸与非法参数（4.1）、非法 schema 归档、非 ENOENT IO 错误、真实多进程竞争（当前锁测试均为同进程模拟）、可控崩溃注入（双文件 rename 中间、`kill -9` 后恢复）、launchd 取消传播。另：1701 个测试通过不能替代覆盖率数据，历次审查均未采集覆盖率。
+**真正缺失**：路径逃逸与非法参数（4.1）、非法 schema、非 ENOENT IO 错误、真实多进程竞争（当前锁测试均为同进程模拟）、双文件 rename 中间崩溃、`kill -9` 后恢复、launchd 取消传播。**其中与归档发布和恢复有关的测试必须作为 `digest-archive-job.ts` 拆分前的准入条件**；1701 个测试通过不能替代覆盖率数据，历次审查均未采集覆盖率。
 
 ### 4.7 低优先级一致性事项
 
@@ -184,7 +184,7 @@
 2. 全库一致的"临时文件 + 原子 rename"写入模式，含失败清理；`writeDigestArchivePair` 的 JSON 最后提交顺序符合"提交标志"惯例。
 3. 凭据处理：严格解析、权限收紧、不回读 secret、全链路脱敏。
 4. `archive/` 目录的 slice 化模块拆分。
-5. 测试资产：5 万行测试、180 个测试文件；join/lease-loss/partial-success/backfill 等故障语义已有特征测试，是高强度整改周期内仍保持全绿的根本原因。
+5. 测试资产：5 万行测试、180 个测试文件；join/lease-loss/partial-success/backfill 等故障语义已有特征测试，为高强度整改提供了重要的回归保障。
 6. 依赖注入面合理：`PeriodDigestOrchestratorDependencies` 把时钟、随机源、IO、sleep 全部注入，测试友好。
 7. API 层对"无归档"返回 200 + `result: null` 的客户端契约有显式注释说明，意图清晰。
 
@@ -194,13 +194,15 @@
 
 | 顺序 | 事项 | 性质 |
 |---|---|---|
-| 1 | **API 参数校验、路径 containment 及对应测试**：period/contentSource 非法即 400；date 仅接受 YYYY-MM-DD 真实日期；`resolveDigestArchivePaths` 增加基于 `path.relative` 的 containment 断言（实现要点见 4.1）；补路径逃逸与非法参数测试 | 边界缺口修复 |
-| 2 | **先补故障测试，再实现归档读取 schema 校验与错误分类**：先补损坏 JSON、非法 schema、非 ENOENT IO 错误的测试；然后实现 not-found / invalid-corrupt / io-failure 三分（仅 ENOENT 映射为正常空结果）及 V1/V2 → 当前模型的统一规范化 | 健壮性补强，保护历史归档兼容 |
-| 3 | **结构化解析后核对元数据**：在 schema 解析落地后，核对文件内 period / contentSource / runDate 与请求一致 | 依赖行动 2 |
-| 4 | **launchd 取消测试与串行化重构**：先补取消传播测试，再把 `serializeInstall` 的 Promise 队列改为 Effect 化队列或 keyed semaphore，消除嵌套 runtime | 语义缺口重构（测试先行） |
-| 5 | **文件拆分与共享 runner 设计**：不改行为拆分 `digest-archive-job.ts`（runner / store·codec / schedule / status）；随后设计共享 `DigestBatchRunner`（publishPolicy / failurePolicy / joinPolicy / statusStore） | 结构重构与架构收敛（backlog） |
-| 6 | 常规维护队列：日志抽象、JSONL 紧凑快照、凭据异步 IO、`__test__` 收口、路径常量收敛；其余故障测试（真实多进程竞争、双文件 rename 崩溃注入、kill -9 恢复）随拆分同步补齐 | 低优先级 |
-| 7 | **Node 版本治理**：CI/开发工具强制采用 `.node-version`（26.5.0） | 环境治理 |
+| 1 | **API 参数校验、路径 containment 及测试**：严格校验 period/contentSource/date；增加基于 `path.relative` 的 containment 断言（实现要点见 4.1）；补非法参数和路径逃逸测试 | 边界缺口修复 |
+| 2 | **归档读取测试与实现**：先补损坏 JSON、非法 schema、非 ENOENT IO 错误测试；再实现 not-found / invalid-corrupt / io-failure 三分及 V1/V2 规范化 | 健壮性补强 |
+| 3 | **归档元数据一致性**：结构化解析后核对 period/contentSource/runDate 与请求一致 | 依赖行动 2 |
+| 4 | **launchd 取消语义**：先补取消传播测试，再将 Promise 串行队列改为 Effect 化队列或 keyed semaphore | 语义重构 |
+| 5 | **结构拆分前的故障测试门禁**：补真实多进程竞争、双文件 rename 崩溃注入和 kill -9 恢复测试 | 重构准入条件 |
+| 6 | **纯结构拆分**：按 runner / store·codec / schedule / status 拆分 `digest-archive-job.ts`，不得改变公共接口、持久化格式和运行语义 | 纯结构重构 |
+| 7 | **DigestBatchRunner 独立设计**：单独提交 RFC，量化重复和收益；评审通过后再实施，不与行动 6 混合 | 架构 backlog |
+| 8 | 日志抽象、JSONL 紧凑快照、凭据异步 IO、`__test__` 收口、路径常量收敛 | 常规维护 |
+| 9 | CI/开发工具强制采用 `.node-version` 26.5.0 | 环境治理 |
 
 ---
 
@@ -213,7 +215,7 @@
 | v3 | 2026-08-07 | 未正式定稿 | 按评审修正：launchd 不能简单改 `yield*`（需 Effect 化串行化机制）、双文件顺序建议写反的纠正（JSON 最后提交本就正确）、归档错误三分细化、既有特征测试盘点、failurePolicy 理由改为状态归类差异、Effect 约定措辞、Node 问题重新定性 |
 | v4 | 2026-08-07 | 约 9/10 | 按评审新增 4.1 API 输入边界（路径穿越实测复现 + 参数静默归并）；"失败 source 保留旧结果"措辞修正；风险声明软化；故障测试提前至拆分之前；过程性内容移至本附录 |
 | v5 | 2026-08-07 | 暂缓归档 | 按评审修正证据精度：路径示例按真实默认目录重算（`/Users/x/outside/...`）、API 能力表述限定为映射字段而非原文读取、containment 建议改用 `path.relative` 实现（避免 `startsWith` 误放行兄弟路径）、"独立评审"措辞收敛、PoC 验证范围如实声明、源码基线描述精确化 |
-| v6 | 2026-08-07 | 正式定稿 | 按评审修正：代码规模统计纠错（v1–v5 的"约 9.6 万行"实为混入测试文件的错误口径；正确为非测试 55,479 / 测试 50,451，比 ≈ 0.91，口径与命令见文首）；正文轮次数字移除（统一"多轮复核"，过程细节仅留本附录）；行动顺序前置依赖修正（API 校验及测试 → 故障测试先于 schema 实现 → 元数据核对置于解析后 → launchd 测试先于队列重构 → 拆分与共享 runner）；"显著高于平均水平"比较性表述移除；版本基线双记录并随本版纳入 Git 跟踪 |
+| v6 | 2026-08-07 | 正式定稿 | 按评审修正：代码规模统计纠错（v1–v5 的"约 9.6 万行"实为混入测试文件的错误口径；正确为非测试 55,479 / 测试 50,451，比 ≈ 0.91，口径与命令见文首）；正文轮次数字移除（统一"多轮复核"，过程细节仅留本附录）；行动顺序前置依赖修正（API 校验及测试 → 故障测试先于 schema 实现 → 元数据核对置于解析后 → launchd 测试先于队列重构 → 拆分与共享 runner）；"显著高于平均水平"比较性表述移除；版本基线双记录并随本版纳入 Git 跟踪。**定稿前最终修订**：总体优先级与行动表统一（"双轨编排"降为架构 backlog）；明确与归档发布和恢复有关的故障测试为拆分前准入条件；纯结构拆分（行动 6）与 DigestBatchRunner 架构设计（行动 7，单独 RFC）拆为独立行动；测试价值的因果表述收敛为"为高强度整改提供了重要的回归保障" |
 
 评审反馈原文：`docs/reviews/report-feedback.txt`（第一轮）、`docs/reviews/report-feedback-v2.txt`（第二轮）；第三、四、五轮为会话内评审（2026-08-07）。
 
