@@ -13,6 +13,7 @@ import {
 	readCurrentPeriodDigest,
 } from "./period-digest-current-store";
 import { createServerRuntimeServices } from "./server-runtime-services";
+import NativeSqliteDatabase, { type Database } from "./sqlite";
 import { writeSyncCache } from "./sync-cache";
 
 const testHome = useTestHome({ prefix: "birdclaw-current-digest-" });
@@ -227,6 +228,51 @@ describe("current period digest store", () => {
 		});
 	});
 
+	it("rejects invalid diagnostics without replacing the valid current row", () => {
+		const { db } = testHome();
+		publishCurrentPeriodDigest(
+			{
+				period: "today",
+				contentSource: "all",
+				runId: "stable-run",
+				versionId: "stable-version",
+				generatedAt: "2026-08-06T08:30:00.000Z",
+				result: result("Today", "all"),
+				maxTweets: 5_000,
+				maxLinks: 20,
+				sync: { status: "fresh", steps: [] },
+			},
+			db,
+		);
+		const invalidResult = result("Today", "all", "2026-08-06T09:45:00.000Z");
+		invalidResult.diagnostics = {
+			...STREAM_DIAGNOSTICS,
+			reasoningTextLength: -1,
+		};
+
+		expect(() =>
+			publishCurrentPeriodDigest(
+				{
+					period: "today",
+					contentSource: "all",
+					runId: "invalid-run",
+					versionId: "invalid-version",
+					generatedAt: "2026-08-06T09:45:00.000Z",
+					result: invalidResult,
+					maxTweets: 5_000,
+					maxLinks: 20,
+					sync: { status: "fresh", steps: [] },
+				},
+				db,
+			),
+		).toThrow("Period digest diagnostics were invalid");
+		expect(readCurrentPeriodDigest("today", "all", db)).toMatchObject({
+			versionId: "stable-version",
+			generatedAt: "2026-08-06T08:30:00.000Z",
+			markdown: "# Today all",
+		});
+	});
+
 	it("migrates the newest valid no-DM legacy row for each logical page", () => {
 		const { db } = testHome();
 		const runtime = createServerRuntimeServices({
@@ -410,6 +456,116 @@ describe("current period digest store", () => {
 			diagnostics: STREAM_DIAGNOSTICS,
 			migratedFromLegacy: true,
 		});
+	});
+
+	it("keeps the stable check and legacy write atomic against concurrent publication", () => {
+		const { db, paths } = testHome();
+		writeSyncCache(
+			"period-digest-latest:v1:migration-race",
+			{
+				...result("Today", "all", "2026-08-06T08:00:00.000Z"),
+				context: context("Today", "all"),
+			},
+			db,
+		);
+		const concurrentDb = new NativeSqliteDatabase(paths.dbPath);
+		let transactionDepth = 0;
+		let queuedConcurrentPublication = false;
+		let legacyScanInsideTransaction: boolean | undefined;
+		let stableReadInsideTransaction: boolean | undefined;
+		let stableWriteInsideTransaction: boolean | undefined;
+		const publishConcurrentCurrent = () => {
+			publishCurrentPeriodDigest(
+				{
+					period: "today",
+					contentSource: "all",
+					runId: "concurrent-run",
+					versionId: "concurrent-version",
+					generatedAt: "2026-08-06T09:00:00.000Z",
+					result: result("Today", "all", "2026-08-06T09:00:00.000Z"),
+					maxTweets: 5_000,
+					maxLinks: 20,
+					sync: { status: "fresh", steps: [] },
+				},
+				concurrentDb,
+			);
+		};
+		const migrationDb = new Proxy(db, {
+			get(target, property) {
+				if (property === "transaction") {
+					return (run: () => unknown) => () => {
+						transactionDepth += 1;
+						try {
+							return target.transaction(run)();
+						} finally {
+							transactionDepth -= 1;
+							if (queuedConcurrentPublication) {
+								queuedConcurrentPublication = false;
+								publishConcurrentCurrent();
+							}
+						}
+					};
+				}
+				if (property === "prepare") {
+					return (sql: string) => {
+						const statement = target.prepare(sql);
+						if (sql.includes("cache_key like 'period-digest-latest:%'")) {
+							legacyScanInsideTransaction = transactionDepth > 0;
+						}
+						if (sql.includes("select value_json, updated_at")) {
+							return new Proxy(statement, {
+								get(statementTarget, statementProperty) {
+									if (statementProperty !== "get") {
+										const value = Reflect.get(
+											statementTarget,
+											statementProperty,
+											statementTarget,
+										);
+										return typeof value === "function"
+											? value.bind(statementTarget)
+											: value;
+									}
+									return (...parameters: unknown[]) => {
+										const cached = statementTarget.get(...parameters);
+										stableReadInsideTransaction = transactionDepth > 0;
+										if (transactionDepth > 0) {
+											queuedConcurrentPublication = true;
+										} else {
+											publishConcurrentCurrent();
+										}
+										return cached;
+									};
+								},
+							});
+						}
+						if (sql.includes("insert into sync_cache")) {
+							stableWriteInsideTransaction = transactionDepth > 0;
+						}
+						return statement;
+					};
+				}
+				const value = Reflect.get(target, property, target);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		}) as Database;
+
+		try {
+			const migration = migrateLegacyPeriodDigests(migrationDb);
+
+			expect(migration.migrated).toEqual([
+				{ period: "today", contentSource: "all" },
+			]);
+			expect(legacyScanInsideTransaction).toBe(false);
+			expect(stableReadInsideTransaction).toBe(true);
+			expect(stableWriteInsideTransaction).toBe(true);
+			expect(readCurrentPeriodDigest("today", "all", db)).toMatchObject({
+				runId: "concurrent-run",
+				versionId: "concurrent-version",
+				generatedAt: "2026-08-06T09:00:00.000Z",
+			});
+		} finally {
+			concurrentDb.close();
+		}
 	});
 
 	it("rejects incomplete or incompatible stable current rows", () => {

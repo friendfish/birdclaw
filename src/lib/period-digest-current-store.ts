@@ -214,6 +214,12 @@ export function publishCurrentPeriodDigest(
 	runtime: ServerRuntimeServices = defaultServerRuntimeServices,
 ): CurrentPeriodDigestV1 {
 	assertDisplayablePeriodDigest(input.result);
+	if (
+		input.result.diagnostics !== undefined &&
+		!isOpenAIStreamDiagnostics(input.result.diagnostics)
+	) {
+		throw new Error("Period digest diagnostics were invalid");
+	}
 	const value: CurrentPeriodDigestV1 = {
 		schemaVersion: 1,
 		period: input.period,
@@ -376,40 +382,46 @@ export function migrateLegacyPeriodDigests(
 
 	const migrated: LegacyDigestMigrationResult["migrated"] = [];
 	for (const [logicalKey, candidate] of newest) {
-		if (
-			readCurrentPeriodDigest(candidate.period, candidate.contentSource, db)
-		) {
+		const outcome = db.transaction(() => {
+			if (
+				readCurrentPeriodDigest(candidate.period, candidate.contentSource, db)
+			) {
+				return "stable-exists" as const;
+			}
+			const versionId = `legacy-${createHash("sha1")
+				.update(`${candidate.cacheKey}:${candidate.generatedAt}`)
+				.digest("hex")}`;
+			const value: CurrentPeriodDigestV1 = {
+				schemaVersion: 1,
+				period: candidate.period,
+				contentSource: candidate.contentSource,
+				runId: "legacy-migration",
+				versionId,
+				generatedAt: candidate.generatedAt,
+				context: candidate.result.context,
+				digest: candidate.result.digest,
+				markdown: candidate.result.markdown,
+				model: candidate.result.model,
+				reasoningEffort: candidate.result.reasoningEffort,
+				serviceTier: candidate.result.serviceTier,
+				parseStatus: candidate.result.parseStatus,
+				...(candidate.result.diagnostics
+					? { diagnostics: candidate.result.diagnostics }
+					: {}),
+				input: { provenance: "legacy-unknown" },
+				sync: { status: "skipped", steps: [] },
+				migratedFromLegacy: true,
+			};
+			writeSyncCache(logicalKey, value, db, runtime);
+			return "migrated" as const;
+		})();
+		if (outcome === "stable-exists") {
 			diagnostics.push({
 				cacheKey: candidate.cacheKey,
 				reason: "stable-result-exists",
 			});
 			continue;
 		}
-		const versionId = `legacy-${createHash("sha1")
-			.update(`${candidate.cacheKey}:${candidate.generatedAt}`)
-			.digest("hex")}`;
-		const value: CurrentPeriodDigestV1 = {
-			schemaVersion: 1,
-			period: candidate.period,
-			contentSource: candidate.contentSource,
-			runId: "legacy-migration",
-			versionId,
-			generatedAt: candidate.generatedAt,
-			context: candidate.result.context,
-			digest: candidate.result.digest,
-			markdown: candidate.result.markdown,
-			model: candidate.result.model,
-			reasoningEffort: candidate.result.reasoningEffort,
-			serviceTier: candidate.result.serviceTier,
-			parseStatus: candidate.result.parseStatus,
-			...(candidate.result.diagnostics
-				? { diagnostics: candidate.result.diagnostics }
-				: {}),
-			input: { provenance: "legacy-unknown" },
-			sync: { status: "skipped", steps: [] },
-			migratedFromLegacy: true,
-		};
-		writeSyncCache(logicalKey, value, db, runtime);
 		migrated.push({
 			period: candidate.period,
 			contentSource: candidate.contentSource,
