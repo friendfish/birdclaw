@@ -11,6 +11,14 @@ import type {
 	PeriodDigestRunResult,
 } from "./period-digest";
 import {
+	assertDisplayablePeriodDigest,
+	isDisplayablePeriodDigest,
+} from "./period-digest-integrity";
+import {
+	isOpenAIStreamDiagnostics,
+	type OpenAIStreamDiagnostics,
+} from "./openai-response-runtime";
+import {
 	defaultServerRuntimeServices,
 	type ServerRuntimeServices,
 } from "./server-runtime-services";
@@ -43,6 +51,7 @@ export interface CurrentPeriodDigestV1 {
 	reasoningEffort: string;
 	serviceTier: string;
 	parseStatus: "structured" | "fallback";
+	diagnostics?: OpenAIStreamDiagnostics;
 	input: CurrentPeriodDigestInput;
 	sync: DigestArchiveSyncResult;
 	migratedFromLegacy?: boolean;
@@ -185,6 +194,17 @@ function parseCurrentPeriodDigest(
 	}
 	const digest = periodDigestSchema.safeParse(value.digest);
 	if (!digest.success) return null;
+	if (
+		!isDisplayablePeriodDigest({
+			digest: digest.data,
+			markdown: value.markdown,
+			parseStatus: value.parseStatus,
+		}) ||
+		(value.diagnostics !== undefined &&
+			!isOpenAIStreamDiagnostics(value.diagnostics))
+	) {
+		return null;
+	}
 	return { ...value, digest: digest.data } as unknown as CurrentPeriodDigestV1;
 }
 
@@ -193,6 +213,7 @@ export function publishCurrentPeriodDigest(
 	db: Database = getNativeDb(),
 	runtime: ServerRuntimeServices = defaultServerRuntimeServices,
 ): CurrentPeriodDigestV1 {
+	assertDisplayablePeriodDigest(input.result);
 	const value: CurrentPeriodDigestV1 = {
 		schemaVersion: 1,
 		period: input.period,
@@ -209,6 +230,9 @@ export function publishCurrentPeriodDigest(
 		reasoningEffort: input.result.reasoningEffort,
 		serviceTier: input.result.serviceTier,
 		parseStatus: input.result.parseStatus,
+		...(input.result.diagnostics
+			? { diagnostics: input.result.diagnostics }
+			: {}),
 		input: {
 			provenance: "generated",
 			maxTweets: input.maxTweets,
@@ -277,7 +301,18 @@ function parseLegacyCandidate(
 		typeof value.model !== "string" ||
 		typeof value.reasoningEffort !== "string" ||
 		typeof value.serviceTier !== "string" ||
-		(value.parseStatus !== "structured" && value.parseStatus !== "fallback")
+		(value.parseStatus !== "structured" && value.parseStatus !== "fallback") ||
+		(value.diagnostics !== undefined &&
+			!isOpenAIStreamDiagnostics(value.diagnostics))
+	) {
+		return { reason: "invalid-payload" };
+	}
+	if (
+		!isDisplayablePeriodDigest({
+			digest: digest.data,
+			markdown: value.markdown,
+			parseStatus: value.parseStatus,
+		})
 	) {
 		return { reason: "invalid-payload" };
 	}
@@ -295,6 +330,9 @@ function parseLegacyCandidate(
 				reasoningEffort: value.reasoningEffort,
 				serviceTier: value.serviceTier,
 				parseStatus: value.parseStatus,
+				...(isOpenAIStreamDiagnostics(value.diagnostics)
+					? { diagnostics: value.diagnostics }
+					: {}),
 				cached: true,
 				updatedAt: generatedAt,
 			},
@@ -338,7 +376,9 @@ export function migrateLegacyPeriodDigests(
 
 	const migrated: LegacyDigestMigrationResult["migrated"] = [];
 	for (const [logicalKey, candidate] of newest) {
-		if (readSyncCache(logicalKey, db)) {
+		if (
+			readCurrentPeriodDigest(candidate.period, candidate.contentSource, db)
+		) {
 			diagnostics.push({
 				cacheKey: candidate.cacheKey,
 				reason: "stable-result-exists",
@@ -362,6 +402,9 @@ export function migrateLegacyPeriodDigests(
 			reasoningEffort: candidate.result.reasoningEffort,
 			serviceTier: candidate.result.serviceTier,
 			parseStatus: candidate.result.parseStatus,
+			...(candidate.result.diagnostics
+				? { diagnostics: candidate.result.diagnostics }
+				: {}),
 			input: { provenance: "legacy-unknown" },
 			sync: { status: "skipped", steps: [] },
 			migratedFromLegacy: true,
