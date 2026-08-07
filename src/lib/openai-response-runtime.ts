@@ -9,12 +9,66 @@ import {
 const DEFAULT_DELIMITER_PATTERN = /\n---\s*\n/;
 const DEFAULT_DELIMITER_HOLD = 8;
 
+export interface OpenAIStreamDiagnostics {
+	responseId?: string;
+	finishReason?: string;
+	visibleTextLength: number;
+	reasoningTextLength: number;
+}
+
+export class OpenAIStreamError extends Error {
+	readonly diagnostics: OpenAIStreamDiagnostics;
+
+	constructor(message: string, diagnostics: OpenAIStreamDiagnostics) {
+		const values = [
+			diagnostics.finishReason !== undefined
+				? `finishReason=${diagnostics.finishReason}`
+				: undefined,
+			`visibleTextLength=${diagnostics.visibleTextLength}`,
+			`reasoningTextLength=${diagnostics.reasoningTextLength}`,
+			diagnostics.responseId !== undefined
+				? `responseId=${diagnostics.responseId}`
+				: undefined,
+		].filter((value): value is string => value !== undefined);
+		super(`${message} (${values.join(", ")})`);
+		this.name = "OpenAIStreamError";
+		this.diagnostics = Object.freeze({ ...diagnostics });
+	}
+}
+
+export function isOpenAIStreamDiagnostics(
+	value: unknown,
+): value is OpenAIStreamDiagnostics {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const record = value as Record<string, unknown>;
+	return (
+		(record.responseId === undefined ||
+			typeof record.responseId === "string") &&
+		(record.finishReason === undefined ||
+			typeof record.finishReason === "string") &&
+		typeof record.visibleTextLength === "number" &&
+		Number.isFinite(record.visibleTextLength) &&
+		record.visibleTextLength >= 0 &&
+		typeof record.reasoningTextLength === "number" &&
+		Number.isFinite(record.reasoningTextLength) &&
+		record.reasoningTextLength >= 0
+	);
+}
+
+export function openAIStreamDiagnosticsFromError(
+	error: unknown,
+): OpenAIStreamDiagnostics | undefined {
+	return error instanceof OpenAIStreamError ? error.diagnostics : undefined;
+}
+
 export interface OpenAIStreamState {
 	eventBuffer: string;
 	rawText: string;
 	pendingVisible: string;
 	jsonMode: boolean;
 	responseId?: string;
+	finishReason?: string;
+	reasoningTextLength?: number;
 	usage?: unknown;
 	error?: string;
 }
@@ -23,6 +77,7 @@ export interface OpenAIStreamResult {
 	rawText: string;
 	responseId?: string;
 	usage?: unknown;
+	diagnostics: OpenAIStreamDiagnostics;
 }
 
 function toError(error: unknown) {
@@ -66,6 +121,25 @@ export function createOpenAIStreamState(): OpenAIStreamState {
 		rawText: "",
 		pendingVisible: "",
 		jsonMode: false,
+		reasoningTextLength: 0,
+	};
+}
+
+function captureResponseMetadata(state: OpenAIStreamState, response: unknown) {
+	if (!response || typeof response !== "object") return;
+	const record = response as Record<string, unknown>;
+	if (typeof record.id === "string") state.responseId = record.id;
+	if (record.usage !== undefined) state.usage = record.usage;
+}
+
+function buildDiagnostics(state: OpenAIStreamState): OpenAIStreamDiagnostics {
+	return {
+		...(state.responseId !== undefined ? { responseId: state.responseId } : {}),
+		...(state.finishReason !== undefined
+			? { finishReason: state.finishReason }
+			: {}),
+		visibleTextLength: state.rawText.length,
+		reasoningTextLength: state.reasoningTextLength ?? 0,
 	};
 }
 
@@ -120,13 +194,43 @@ function handleOpenAIEvent(
 		);
 		return;
 	}
-	if (type === "response.completed") {
-		const response = event.response;
-		if (response && typeof response === "object") {
-			const record = response as Record<string, unknown>;
-			state.responseId = typeof record.id === "string" ? record.id : undefined;
-			state.usage = record.usage;
+	if (
+		(type === "response.reasoning_text.delta" ||
+			type === "response.reasoning_summary_text.delta") &&
+		typeof event.delta === "string"
+	) {
+		state.reasoningTextLength =
+			(state.reasoningTextLength ?? 0) + event.delta.length;
+		return;
+	}
+	if (
+		type === "response.completed" ||
+		type === "response.failed" ||
+		type === "response.incomplete"
+	) {
+		captureResponseMetadata(state, event.response);
+		if (type === "response.completed") return;
+
+		const record =
+			event.response && typeof event.response === "object"
+				? (event.response as Record<string, unknown>)
+				: {};
+		const incomplete = record.incomplete_details;
+		if (
+			type === "response.incomplete" &&
+			incomplete &&
+			typeof incomplete === "object" &&
+			typeof (incomplete as Record<string, unknown>).reason === "string"
+		) {
+			state.finishReason = (incomplete as Record<string, string>).reason;
 		}
+		const error = record.error;
+		state.error =
+			error && typeof error === "object" && "message" in error
+				? String((error as { message?: unknown }).message)
+				: incomplete && typeof incomplete === "object" && "reason" in incomplete
+					? `OpenAI response incomplete: ${String((incomplete as { reason?: unknown }).reason)}`
+					: "OpenAI stream failed";
 		return;
 	}
 	if (type === "response.error" || type === "error") {
@@ -137,20 +241,43 @@ function handleOpenAIEvent(
 				: "OpenAI stream failed";
 		return;
 	}
-	if (type === "response.failed" || type === "response.incomplete") {
-		const response = event.response;
-		const record =
-			response && typeof response === "object"
-				? (response as Record<string, unknown>)
-				: {};
-		const error = record.error;
-		const incomplete = record.incomplete_details;
-		state.error =
-			error && typeof error === "object" && "message" in error
-				? String((error as { message?: unknown }).message)
-				: incomplete && typeof incomplete === "object" && "reason" in incomplete
-					? `OpenAI response incomplete: ${String((incomplete as { reason?: unknown }).reason)}`
-					: "OpenAI stream failed";
+}
+
+function handleChatCompletionsEvent(
+	state: OpenAIStreamState,
+	event: Record<string, unknown>,
+	onDelta: ((delta: string) => void) | undefined,
+	delimiterPattern: RegExp,
+	delimiterHold: number,
+) {
+	if (typeof event.id === "string") state.responseId = event.id;
+	if (event.usage !== undefined) state.usage = event.usage;
+	const choices = event.choices;
+	if (!Array.isArray(choices)) return;
+	for (const choice of choices) {
+		if (!choice || typeof choice !== "object") continue;
+		const record = choice as Record<string, unknown>;
+		if (typeof record.finish_reason === "string") {
+			state.finishReason = record.finish_reason;
+		}
+		const delta = record.delta;
+		if (!delta || typeof delta !== "object") continue;
+		const deltaRecord = delta as Record<string, unknown>;
+		if (typeof deltaRecord.content === "string") {
+			emitVisibleDelta(
+				state,
+				deltaRecord.content,
+				onDelta,
+				delimiterPattern,
+				delimiterHold,
+			);
+		}
+		for (const key of ["reasoning_content", "reasoning"]) {
+			if (typeof deltaRecord[key] === "string") {
+				state.reasoningTextLength =
+					(state.reasoningTextLength ?? 0) + deltaRecord[key].length;
+			}
+		}
 	}
 }
 
@@ -179,33 +306,16 @@ export function processOpenAIResponseSseChunk(
 			.join("\n");
 		if (data && data !== "[DONE]") {
 			try {
-				let parsed = JSON.parse(data) as Record<string, unknown>;
-				let shouldHandle = true;
+				const parsed = JSON.parse(data) as Record<string, unknown>;
 				if (Array.isArray(parsed.choices)) {
-					const choice = parsed.choices[0] as
-						| Record<string, unknown>
-						| undefined;
-					if (choice) {
-						const delta = choice.delta as Record<string, unknown> | undefined;
-						if (delta && typeof delta.content === "string") {
-							parsed = {
-								type: "response.output_text.delta",
-								delta: delta.content,
-							};
-						} else if (choice.finish_reason || parsed.usage) {
-							parsed = {
-								type: "response.completed",
-								response: {
-									id: typeof parsed.id === "string" ? parsed.id : "chatcmpl",
-									usage: parsed.usage,
-								},
-							};
-						} else {
-							shouldHandle = false;
-						}
-					}
-				}
-				if (shouldHandle) {
+					handleChatCompletionsEvent(
+						state,
+						parsed,
+						onDelta,
+						delimiterPattern,
+						delimiterHold,
+					);
+				} else {
 					handleOpenAIEvent(
 						state,
 						parsed,
@@ -253,13 +363,25 @@ export function readOpenAIResponseStreamEffect(
 			if (!state.jsonMode && state.pendingVisible) {
 				options.onDelta?.(state.pendingVisible);
 			}
+			const diagnostics = buildDiagnostics(state);
 			if (state.error) {
-				return yield* Effect.fail(new Error(state.error));
+				return yield* Effect.fail(
+					new OpenAIStreamError("OpenAI stream failed", diagnostics),
+				);
+			}
+			if (!state.rawText.trim()) {
+				return yield* Effect.fail(
+					new OpenAIStreamError(
+						"OpenAI stream returned no visible output",
+						diagnostics,
+					),
+				);
 			}
 			return {
 				rawText: state.rawText,
 				...(state.responseId ? { responseId: state.responseId } : {}),
 				...(state.usage === undefined ? {} : { usage: state.usage }),
+				diagnostics,
 			};
 		}
 	}).pipe(
