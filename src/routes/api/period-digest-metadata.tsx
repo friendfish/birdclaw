@@ -12,7 +12,10 @@ import {
 	type PeriodDigestRunResult,
 } from "#/lib/period-digest";
 import { isDisplayablePeriodDigest } from "#/lib/period-digest-integrity";
-import { isOpenAIStreamDiagnostics } from "#/lib/openai-response-runtime";
+import {
+	isOpenAIStreamDiagnostics,
+	type OpenAIStreamDiagnostics,
+} from "#/lib/openai-response-runtime";
 import {
 	migrateLegacyPeriodDigests,
 	readCurrentPeriodDigest,
@@ -40,10 +43,27 @@ export function resetPeriodDigestMetadataMigrationForTests() {
 	legacyMigrationAttemptedKeys.clear();
 }
 
+function sanitizedDiagnostics(
+	value: unknown,
+): OpenAIStreamDiagnostics | undefined {
+	if (!isOpenAIStreamDiagnostics(value)) return undefined;
+	return {
+		...(typeof value.responseId === "string"
+			? { responseId: value.responseId }
+			: {}),
+		...(typeof value.finishReason === "string"
+			? { finishReason: value.finishReason }
+			: {}),
+		visibleTextLength: value.visibleTextLength,
+		reasoningTextLength: value.reasoningTextLength,
+	};
+}
+
 function resultFromCurrent(
 	current: CurrentPeriodDigestV1 | null,
 ): PeriodDigestRunResult | null {
 	if (!current || !isDisplayablePeriodDigest(current)) return null;
+	const diagnostics = sanitizedDiagnostics(current.diagnostics);
 	return {
 		context: current.context,
 		digest: current.digest,
@@ -52,9 +72,7 @@ function resultFromCurrent(
 		reasoningEffort: current.reasoningEffort,
 		serviceTier: current.serviceTier,
 		parseStatus: current.parseStatus,
-		...(isOpenAIStreamDiagnostics(current.diagnostics)
-			? { diagnostics: current.diagnostics }
-			: {}),
+		...(diagnostics ? { diagnostics } : {}),
 		cached: true,
 		updatedAt: current.generatedAt,
 	};

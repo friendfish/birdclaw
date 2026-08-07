@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { periodDigestMetadataResponseSchema } from "#/components/usePeriodDigestMetadata";
 import { getRouteHandler } from "#/test/route-handlers";
 import type { CurrentPeriodDigestV1 } from "#/lib/period-digest-current-store";
 
@@ -191,14 +192,23 @@ describe("api period-digest-metadata route", () => {
 		});
 	});
 
-	it("preserves valid stream diagnostics", async () => {
+	it("sanitizes valid stream diagnostics for the client contract", async () => {
 		readCurrentPeriodDigestMock.mockReturnValue(
-			currentDigest(undefined, { diagnostics: STREAM_DIAGNOSTICS }),
+			currentDigest(undefined, {
+				diagnostics: {
+					...STREAM_DIAGNOSTICS,
+					rawText: "sensitive model output",
+					unapprovedField: "must not leave the server",
+				} as never,
+			}),
 		);
 
 		const validBody = await (await GET({ request: requestFor() })).json();
+		const parsed = periodDigestMetadataResponseSchema.parse(validBody);
 
 		expect(validBody.result.diagnostics).toEqual(STREAM_DIAGNOSTICS);
+		expect(JSON.stringify(validBody)).not.toContain("sensitive model output");
+		expect(parsed.result?.diagnostics).toEqual(STREAM_DIAGNOSTICS);
 	});
 
 	it("omits invalid mocked stream diagnostics", async () => {
