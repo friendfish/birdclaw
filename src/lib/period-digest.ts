@@ -22,6 +22,7 @@ import { syncMentionsEffect } from "./mentions-live";
 import { listDmConversations } from "./dm-read-model";
 import { getTweetsByIds, listTimelineItems } from "./timeline-read-model";
 import {
+	isOpenAIStreamDiagnostics,
 	type OpenAIStreamDiagnostics,
 	type OpenAIStreamState,
 	processOpenAIResponseSseChunk,
@@ -1051,7 +1052,9 @@ function cachedDigestResult(
 		reasoningEffort: cached.value.reasoningEffort,
 		serviceTier: cached.value.serviceTier,
 		parseStatus: cached.value.parseStatus,
-		diagnostics: cached.value.diagnostics,
+		...(isOpenAIStreamDiagnostics(cached.value.diagnostics)
+			? { diagnostics: cached.value.diagnostics }
+			: {}),
 		cached: true,
 		updatedAt: cached.value.updatedAt ?? cached.updatedAt,
 	};

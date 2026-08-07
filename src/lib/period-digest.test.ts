@@ -130,6 +130,10 @@ describe("period digest", () => {
 					reasoningEffort: "medium",
 					serviceTier: "priority",
 					parseStatus: "structured",
+					diagnostics: {
+						visibleTextLength: "not a number",
+						reasoningTextLength: 0,
+					},
 					updatedAt,
 				},
 			);
@@ -144,6 +148,7 @@ describe("period digest", () => {
 				cached: true,
 				updatedAt,
 			});
+			expect(result?.diagnostics).toBeUndefined();
 		});
 
 		it("returns null when the latest cache lacks its original context", async () => {
@@ -577,20 +582,67 @@ describe("period digest", () => {
 		expect(body.stream).toBe(true);
 	});
 
-	it("does not cache a structured placeholder digest with visible Markdown", async () => {
+	it.each([
+		[
+			"whitespace-padded language markers",
+			{
+				title: "[zh-CN] ",
+				summary: "[zh-CN]\n",
+				keyTopics: [],
+				notableLinks: [],
+				people: [],
+				actionItems: [],
+				sourceTweetIds: [],
+			},
+		],
+		[
+			"a whitespace-padded no-model-summary sentinel",
+			{
+				title: "Today digest",
+				summary: "No model summary was returned. ",
+				keyTopics: [],
+				notableLinks: [],
+				people: [],
+				actionItems: [],
+				sourceTweetIds: [],
+			},
+		],
+		[
+			"a whitespace-only topic row",
+			{
+				title: "[zh-CN]",
+				summary: "[zh-CN]",
+				keyTopics: [
+					{
+						title: " \t",
+						summary: "\n",
+						tweetIds: ["tweet_1"],
+						handles: ["birdclaw"],
+					},
+				],
+				notableLinks: [],
+				people: [],
+				actionItems: [],
+				sourceTweetIds: [],
+			},
+		],
+	])("does not cache %s with visible Markdown", async (_label, digest) => {
 		const streamed = [
 			sseFrame({
 				type: "response.output_text.delta",
-				delta:
-					'# Placeholder shell\n\n---\n{"title":"[zh-CN]","summary":"[zh-CN]","keyTopics":[],"notableLinks":[],"people":[],"actionItems":[],"sourceTweetIds":[]}',
+				delta: `# Placeholder shell\n\n---\n${JSON.stringify(digest)}`,
 			}),
 			"data: [DONE]\n\n",
 		].join("");
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamResponse(streamed)));
 		const db = getNativeDb();
-		const before = db
-			.prepare("select count(*) as count from sync_cache")
-			.get() as { count: number };
+		const cacheKeys = () =>
+			db
+				.prepare(
+					"select cache_key from sync_cache where cache_key like 'period-digest:v2:%' or cache_key like 'period-digest-latest:%' order by cache_key",
+				)
+				.all() as Array<{ cache_key: string }>;
+		const before = cacheKeys();
 
 		await expect(
 			streamPeriodDigest({
@@ -601,10 +653,7 @@ describe("period digest", () => {
 			}),
 		).rejects.toThrow("displayable content");
 
-		const after = db
-			.prepare("select count(*) as count from sync_cache")
-			.get() as { count: number };
-		expect(after.count).toBe(before.count);
+		expect(cacheKeys()).toEqual(before);
 	});
 
 	it("runs playground drafts locally without writing digest caches", async () => {
@@ -900,6 +949,8 @@ describe("period digest", () => {
 
 		expect(recent.cached).toBe(true);
 		expect(recent.context.hash).toBe(first.context.hash);
+		expect(first.diagnostics).toBeDefined();
+		expect(recent.diagnostics).toEqual(first.diagnostics);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 
 		getNativeDb()
@@ -964,6 +1015,12 @@ describe("period digest", () => {
 
 		const exact = await streamPeriodDigest(options);
 		expect(exact.cached).toBe(true);
+		expect(first.diagnostics).toBeDefined();
+		expect(exact.diagnostics).toEqual(first.diagnostics);
+		const promoted = await Effect.runPromise(
+			readLatestPeriodDigestEffect(options),
+		);
+		expect(promoted?.diagnostics).toEqual(first.diagnostics);
 		getNativeDb()
 			.prepare("update profiles set bio = ? where id = ?")
 			.run("Changed after an old exact-cache hit.", profile?.id);

@@ -69,6 +69,25 @@ describe("period digest displayability", () => {
 		).toBe(false);
 	});
 
+	test.each([
+		[
+			"language markers with trailing whitespace",
+			digest({ title: "[zh-CN] ", summary: "[zh-CN]\n" }),
+		],
+		[
+			"the no-model-summary sentinel with trailing whitespace",
+			digest({ summary: "No model summary was returned. " }),
+		],
+	])("rejects %s", (_label, value) => {
+		expect(
+			isDisplayablePeriodDigest({
+				digest: value,
+				markdown: "# Placeholder shell",
+				parseStatus: "structured",
+			}),
+		).toBe(false);
+	});
+
 	test("rejects the no-model-summary fallback sentinel", () => {
 		expect(
 			isDisplayablePeriodDigest({
@@ -92,6 +111,66 @@ describe("period digest displayability", () => {
 			}),
 		).toBe(false);
 	});
+
+	test.each([
+		[
+			"a key topic",
+			digest({
+				title: "[zh-CN]",
+				summary: "[zh-CN]",
+				keyTopics: [
+					{
+						title: " \t",
+						summary: "\n",
+						tweetIds: ["tweet_1"],
+						handles: ["a"],
+					},
+				],
+			}),
+		],
+		[
+			"a notable link",
+			digest({
+				title: "[zh-CN]",
+				summary: "[zh-CN]",
+				notableLinks: [
+					{
+						title: " ",
+						url: "\t",
+						why: "\n",
+						sourceTweetIds: ["tweet_1"],
+					},
+				],
+			}),
+		],
+		[
+			"a person",
+			digest({
+				title: "[zh-CN]",
+				summary: "[zh-CN]",
+				people: [{ handle: " \t", why: "\n" }],
+			}),
+		],
+		[
+			"an action item",
+			digest({
+				title: "[zh-CN]",
+				summary: "[zh-CN]",
+				actionItems: [{ kind: "read", label: " \n" }],
+			}),
+		],
+	])(
+		"rejects a placeholder digest with only whitespace in %s",
+		(_label, value) => {
+			expect(
+				isDisplayablePeriodDigest({
+					digest: value,
+					markdown: "# Placeholder shell",
+					parseStatus: "structured",
+				}),
+			).toBe(false);
+		},
+	);
 
 	test("accepts placeholder text when structured details are present and Markdown is nonblank", () => {
 		const digests = [
