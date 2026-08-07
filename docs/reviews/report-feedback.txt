@@ -1,0 +1,39 @@
+总体判断：这份报告基础数据可靠、架构方向基本正确，但严重度偏高，部分建议过于“一步到位”。适合作为重构 backlog，不足以证明存在需要立即处理的 P1 生产风险。我的评价约为 7.5/10。
+结论可靠的部分
+digest 的确存在两套锁、心跳、状态、重试、逐 source 生成和审计机制。[报告 (line 71)](/Users/friendfish/Repo/birdclaw/docs/reviews/2026-08-06-src-lib-review.md:71) 对结构重复的判断成立。
+digest-archive-job.ts 同时承担运行、归档、launchd、状态查询，最值得先拆。[源码 (line 590)](/Users/friendfish/Repo/birdclaw/src/lib/digest-archive-job.ts:590)
+[launchd.ts (line 230)](/Users/friendfish/Repo/birdclaw/src/lib/launchd.ts:230) 在 Effect 内启动独立 Effect.runPromise，确实切断了父 Effect 的取消传播。这是报告中最具体、最容易单独修复的问题。
+大文件行数、8 处 console.*、JSONL 全量读取等数据都与当前源码吻合。
+锁的 owner 校验、reclaim 仲裁和相关并发测试确实做得扎实。
+需要修正或降级的地方
+“以现有 orchestrator 为内核，只替换 publisher”过于简单。
+当前态编排支持请求合并、freshness、优先 source 和 DB 发布；历史归档支持 backfill、按日期存储、部分 source 失败后继续。CLI 也明确只把 today/24h 转给新编排器，[`yesterday/week` 才进入旧归档流程 (line 334)](/Users/friendfish/Repo/birdclaw/src/cli/register-jobs.ts:334)。应提取共享 batch runner 和策略接口，而不是直接让旧流程套用当前 orchestrator。
+
+“读取侧分别处理 V1/V2/V3”并不准确。
+[readDigestArchiveEntryAsync (line 1180)](/Users/friendfish/Repo/birdclaw/src/lib/digest-archive-job.ts:1180) 只是 JSON.parse(...) as PeriodDigestArchiveFile，没有版本分支，也没有运行时 schema 校验。真正优先事项应是读取时校验和统一规范化；之后再考虑幂等迁移。直接下线 V1/V2 可能损害用户历史归档兼容性。
+
+~2000 行可删除没有证据支撑。
+两条路径存在真实业务差异，大部分状态、回填和发布代码仍需保留。可以减少重复，但不宜把预估删行数当作项目收益指标。
+
+console.error 不一定“污染 JSON 输出”。
+stderr 与 JSON stdout 正常情况下是分开的。统一日志有利于结构化观测和测试，但这是低优先级一致性问题，不是当前可靠性缺陷。
+
+同步凭据 IO 的影响被放大。
+它读取的是两行小文件，主要出现在配置页状态请求，[当前路径 (line 108)](/Users/friendfish/Repo/birdclaw/src/lib/bird-credentials.ts:108) 看不出高频轮询证据。改异步可以做，但应排在最后。
+
+JSONL 问题是长期容量问题。
+[readLatestDigestArchiveRuns (line 1349)](/Users/friendfish/Repo/birdclaw/src/lib/digest-archive-job.ts:1349) 有 size/mtime 缓存，只在文件变化后重读。更好的长期方案可能是维护紧凑状态快照，而不只是 tail 读取。
+
+报告遗漏的风险
+[writeDigestArchivePair (line 234)](/Users/friendfish/Repo/birdclaw/src/lib/digest-archive-job.ts:234) 只能保证两个文件分别原子 rename，不能保证 .md 和 .json 作为一对事务提交。进程在两次 rename 之间崩溃时，两者可能版本不一致。
+历史归档 JSON 缺少运行时 schema 校验，损坏或手工编辑后的文件可能被当作合法结构返回。
+1701 个测试不能替代覆盖率数据。锁测试主要模拟同进程并发，未覆盖真实多进程、kill -9、两次 rename 中间崩溃等场景。
+“未发现 SQL 注入”只覆盖一个风险类别。这份报告更接近工程质量审查，不应被视为完整安全审计。
+B+ 没有评分基准，适合表达印象，不适合做跨版本质量趋势指标。
+建议的实际顺序
+先修 launchd.ts 的嵌套 runPromise，并给归档读取增加 schema 校验和 V1/V2 → 当前模型规范化。
+在不改行为的前提下拆分 digest-archive-job.ts：runner、store/codec、schedule、status。
+增加 join、partial success、backfill、lease loss、双文件崩溃窗口的特征测试。
+再设计共享 DigestBatchRunner，通过 publishPolicy、failurePolicy、joinPolicy、statusStore 保留两类业务差异。
+日志抽象、JSONL 轮转、凭据异步 IO 放到常规维护队列。
+验证方面，当前 b1a3b4f 上类型检查通过。测试在沙箱中有 1697/1701 通过，剩余 4 个仅因无法监听 127.0.0.1 报 EPERM；在沙箱外单独重跑这 4 个均通过。当前 Node 为 26.4.0，低于项目声明的 >=26.5.0，运行时有 engine 警告。

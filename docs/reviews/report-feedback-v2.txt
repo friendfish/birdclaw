@@ -1,0 +1,32 @@
+这版比 v1 扎实很多，已经可以作为重构 backlog 的基础。我会从原来的约 7.5/10 调到 8.5/10；正式定稿前仍建议修正以下几处。
+必须修正
+launchd.ts 不能简单“改成 yield*”。
+[报告 (line 105)](/Users/friendfish/Repo/birdclaw/docs/reviews/2026-08-06-src-lib-review.md:105) 忽略了子 Effect 位于 Promise 队列 serializeInstall(..., async () => ...) 内部。[现有结构 (line 51)](/Users/friendfish/Repo/birdclaw/src/lib/launchd.ts:51) 中无法直接使用 yield*；还必须把整个串行化临界区改为 Effect 化队列或 keyed semaphore，否则会破坏同一 plist 安装的串行语义。
+这确实是取消传播缺口，但目前没有调用方主动中断安装，也没有取消测试，因此不宜称为“最易单独修复”“小而确定的缺陷”。应改为“语义缺口，需要连同串行化机制一起重构并补测试”。
+
+双文件写入顺序建议写反了。
+[报告第 111 行 (line 111)](/Users/friendfish/Repo/birdclaw/docs/reviews/2026-08-06-src-lib-review.md:111) 建议“先 JSON 再 md，并以 JSON 为准”。如果 JSON 是提交标志，应该让 JSON 最后发布。当前实现恰好就是先 rename md、再 rename JSON，[顺序见这里 (line 269)](/Users/friendfish/Repo/birdclaw/src/lib/digest-archive-job.ts:269)。
+更准确的建议是：保留 JSON 最后提交并明确其权威地位；严格要求二者一致时，再引入 manifest/version directory 或从 JSON 修复 md。
+
+归档读取问题还应细分错误类型。
+[当前实现 (line 1197)](/Users/friendfish/Repo/birdclaw/src/lib/digest-archive-job.ts:1197) 的实际行为是：
+文件不存在、权限错误及其他读取错误：全部返回 null
+JSON 语法错误：返回 null
+JSON 语法合法但结构错误：被类型断言接受
+所以不仅缺 schema 校验，还把“不可读/损坏”伪装成“没有归档”，API 随后返回正常的 result: null。[API 路径 (line 57)](/Users/friendfish/Repo/birdclaw/src/routes/api/digest-archive-entry.tsx:57)
+建议定义三种结果：not-found、invalid/corrupt、io-failure，只有 ENOENT 映射成正常空结果。
+
+“待补特征测试”中多数场景已经覆盖。
+当前已有：
+join：[period-digest-orchestrator.test.ts (line 122)](/Users/friendfish/Repo/birdclaw/src/lib/period-digest-orchestrator.test.ts:122)
+lease loss：[period-digest-orchestrator.test.ts (line 416)](/Users/friendfish/Repo/birdclaw/src/lib/period-digest-orchestrator.test.ts:416)
+partial success：[period-digest-orchestrator.test.ts (line 504)](/Users/friendfish/Repo/birdclaw/src/lib/period-digest-orchestrator.test.ts:504)
+archive partial failure：[digest-archive-job.test.ts (line 1054)](/Users/friendfish/Repo/birdclaw/src/lib/digest-archive-job.test.ts:1054)
+backfill：[digest-archive-job.test.ts (line 1162)](/Users/friendfish/Repo/birdclaw/src/lib/digest-archive-job.test.ts:1162)
+[行动项 4 (line 149)](/Users/friendfish/Repo/birdclaw/docs/reviews/2026-08-06-src-lib-review.md:149) 应改为“保留现有特征测试，新增真实多进程竞争、可控崩溃注入和 launchd 取消传播测试”。
+
+建议微调
+“历史归档支持部分 source 失败后继续”不是独有差异，当前态编排同样继续后续 source。真正差异是最终状态：当前态部分成功为 degraded，归档任一生成失败即为 failed。因此 failurePolicy 仍值得抽象，但理由应写成“状态归类不同”。
+“内部全 Effect”过于绝对。更合适的约定是：禁止在活跃 Effect 内启动嵌套 runtime；Promise/Effect 只在明确适配边界转换，并要求长任务传播取消信号。
+Node 信息属于审查环境，不是源码缺陷。仓库已经通过 [.node-version (line 1)](/Users/friendfish/Repo/birdclaw/.node-version:1) 固定 26.5.0；当前终端实际是 v24.18.0，而报告记录的是 26.4.0，说明运行环境没有稳定遵循版本文件。行动项应改成“让 CI/开发工具强制采用 .node-version”，而不是泛化为“升级 Node”。
+修正后，行动顺序建议调整为：归档 schema 与错误分类 → launchd 串行化/取消设计 → 无行为拆分 → 补真正缺失的故障测试 → 共享 batch runner。这样这份报告就可以作为后续重构的正式基线。
