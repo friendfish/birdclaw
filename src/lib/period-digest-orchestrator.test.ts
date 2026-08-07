@@ -5,6 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { useTestHome } from "../test/test-home";
+import {
+	type OpenAIStreamDiagnostics,
+	OpenAIStreamError,
+} from "./openai-response-runtime";
 import type {
 	PeriodDigestContentSource,
 	PeriodDigestContext,
@@ -21,6 +25,7 @@ import {
 	periodDigestRunStatePath,
 	type PeriodDigestOrchestratorDependencies,
 } from "./period-digest-orchestrator";
+import { appendScheduledJobAudit } from "./scheduled-job";
 
 const testHome = useTestHome({ prefix: "birdclaw-period-orchestrator-" });
 
@@ -501,28 +506,35 @@ describe("period digest orchestrator", () => {
 		expect(finalState.phase).toBe("degraded");
 	});
 
-	it("keeps a failed source's old result and publishes later successes", async () => {
+	it("retries invalid results without replacing old current or blocking later sources", async () => {
 		const { db } = testHome();
+		const oldGeneratedAt = "2026-08-06T06:00:00.000Z";
+		const oldResult = result("today", "all", oldGeneratedAt);
 		publishCurrentPeriodDigest(
 			{
 				period: "today",
 				contentSource: "all",
 				runId: "old-run",
 				versionId: "old-version",
-				generatedAt: "2026-08-06T06:00:00.000Z",
-				result: result("today", "all", "2026-08-06T06:00:00.000Z"),
+				generatedAt: oldGeneratedAt,
+				result: oldResult,
 				maxTweets: 2_500,
 				maxLinks: 12,
 				sync: { status: "fresh", steps: [] },
 			},
 			db,
 		);
+		const generate = vi.fn(async ({ period, contentSource }) => {
+			const generated = result(period, contentSource);
+			return contentSource === "all"
+				? { ...generated, markdown: " \n\t" }
+				: generated;
+		});
 		const deps = dependencies({
-			generate: vi.fn(async ({ period, contentSource }) => {
-				if (contentSource === "all") throw new Error("model timeout");
-				return result(period, contentSource, "2026-08-06T08:30:00.000Z");
-			}),
+			generate,
 			database: db,
+			maxGenerateAttempts: 2,
+			sleep: vi.fn(async () => undefined),
 		});
 
 		const run = await requestPeriodDigestRun(
@@ -534,11 +546,20 @@ describe("period digest orchestrator", () => {
 		expect(finalState.phase).toBe("degraded");
 		expect(finalState.sources.all).toMatchObject({
 			state: "failed",
-			error: "model timeout",
+			attempts: 2,
+			error: "Period digest did not contain displayable content",
 		});
+		expect(generate).toHaveBeenCalledTimes(4);
+		expect(generate.mock.calls.map(([input]) => input.contentSource)).toEqual([
+			"all",
+			"all",
+			"following",
+			"for_you",
+		]);
 		expect(readCurrentPeriodDigest("today", "all", db)).toMatchObject({
 			versionId: "old-version",
-			generatedAt: "2026-08-06T06:00:00.000Z",
+			generatedAt: oldGeneratedAt,
+			markdown: oldResult.markdown,
 		});
 		expect(readCurrentPeriodDigest("today", "following", db)).toMatchObject({
 			generatedAt: "2026-08-06T08:30:00.000Z",
@@ -548,9 +569,97 @@ describe("period digest orchestrator", () => {
 			generatedAt: "2026-08-06T08:30:00.000Z",
 			contentSource: "for_you",
 		});
+		expect(finalState.sources.following.state).toBe("completed");
+		expect(finalState.sources.for_you.state).toBe("completed");
 		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
 			suppressSources: ["all"],
 		});
+	});
+
+	it("persists successful stream diagnostics in completed source state", async () => {
+		const diagnostics: OpenAIStreamDiagnostics = {
+			responseId: "resp_success",
+			finishReason: "completed",
+			visibleTextLength: 72,
+			reasoningTextLength: 19,
+		};
+		const auditPath = path.join(
+			testHome().paths.rootDir,
+			"logs",
+			"success.jsonl",
+		);
+		const deps = dependencies({
+			generate: vi.fn(async ({ period, contentSource }) => ({
+				...result(period, contentSource),
+				...(contentSource === "all" ? { diagnostics } : {}),
+			})),
+			audit: (state) => appendScheduledJobAudit(auditPath, state),
+		});
+
+		const run = await requestPeriodDigestRun(
+			{ period: "today", trigger: "scheduled", origin: "launchd" },
+			deps,
+		);
+		const finalState = await run.completion;
+		const persistedAudit = JSON.parse(
+			(await fs.readFile(auditPath, "utf8")).trim(),
+		) as typeof finalState;
+
+		expect(finalState.sources.all.diagnostics).toEqual(diagnostics);
+		expect(persistedAudit.sources.all.diagnostics).toEqual(diagnostics);
+	});
+
+	it("persists failed stream diagnostics without raw stream or prompt data", async () => {
+		const diagnostics: OpenAIStreamDiagnostics = {
+			responseId: "resp_failed",
+			finishReason: "length",
+			visibleTextLength: 0,
+			reasoningTextLength: 137,
+		};
+		const rawStream = "raw-stream-must-not-be-persisted";
+		const prompt = "prompt-must-not-be-persisted";
+		const streamError = Object.assign(
+			new OpenAIStreamError(
+				"OpenAI stream failed with Bearer secret-model-token",
+				diagnostics,
+			),
+			{ rawStream, prompt },
+		);
+		const auditPath = path.join(
+			testHome().paths.rootDir,
+			"logs",
+			"failure.jsonl",
+		);
+		const deps = dependencies({
+			generate: vi.fn(async ({ period, contentSource }) => {
+				if (contentSource === "all") throw streamError;
+				return result(period, contentSource);
+			}),
+			audit: (state) => appendScheduledJobAudit(auditPath, state),
+		});
+
+		const run = await requestPeriodDigestRun(
+			{ period: "24h", trigger: "scheduled", origin: "launchd" },
+			deps,
+		);
+		const finalState = await run.completion;
+		const persistedText = await fs.readFile(auditPath, "utf8");
+		const persistedAudit = JSON.parse(
+			persistedText.trim(),
+		) as typeof finalState;
+
+		expect(finalState.phase).toBe("degraded");
+		expect(finalState.sources.all).toMatchObject({
+			state: "failed",
+			attempts: 1,
+			diagnostics,
+		});
+		expect(finalState.sources.all.error).toContain("Bearer [REDACTED]");
+		expect(persistedAudit.sources.all.diagnostics).toEqual(diagnostics);
+		for (const secret of ["secret-model-token", rawStream, prompt]) {
+			expect(JSON.stringify(finalState)).not.toContain(secret);
+			expect(persistedText).not.toContain(secret);
+		}
 	});
 
 	it("retries a source within the same batch and records the successful attempt", async () => {

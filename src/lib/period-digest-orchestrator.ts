@@ -15,6 +15,10 @@ import {
 	type DigestArchiveSyncResult,
 } from "./digest-archive-sync";
 import {
+	openAIStreamDiagnosticsFromError,
+	type OpenAIStreamDiagnostics,
+} from "./openai-response-runtime";
+import {
 	collectPeriodDigestContext,
 	generatePeriodDigestFromContextEffect,
 	resolvePeriodDigestWindow,
@@ -23,6 +27,7 @@ import {
 	type PeriodDigestContext,
 	type PeriodDigestRunResult,
 } from "./period-digest";
+import { assertDisplayablePeriodDigest } from "./period-digest-integrity";
 import {
 	publishCurrentPeriodDigest,
 	type CurrentPeriodDigestPeriod,
@@ -64,6 +69,7 @@ export interface PeriodDigestSourceRunState {
 	generatedAt?: string;
 	versionId?: string;
 	error?: string;
+	diagnostics?: OpenAIStreamDiagnostics;
 }
 
 export interface PeriodDigestRunStateV1 {
@@ -731,7 +737,7 @@ async function runOwnedBatch({
 					if (!context) {
 						throw new Error(`Missing frozen ${contentSource} context`);
 					}
-					generated = await dependencies.generate({
+					const candidate = await dependencies.generate({
 						period: request.period,
 						contentSource,
 						context,
@@ -746,6 +752,8 @@ async function runOwnedBatch({
 							),
 						]),
 					});
+					assertDisplayablePeriodDigest(candidate);
+					generated = candidate;
 					generationError = undefined;
 					break;
 				} catch (error) {
@@ -797,6 +805,9 @@ async function runOwnedBatch({
 								attempts,
 								generatedAt: generated.updatedAt,
 								versionId,
+								...(generated.diagnostics
+									? { diagnostics: generated.diagnostics }
+									: {}),
 							},
 						},
 					}),
@@ -804,6 +815,7 @@ async function runOwnedBatch({
 				);
 			} catch (error) {
 				throwIfOwnershipLost();
+				const diagnostics = openAIStreamDiagnosticsFromError(error);
 				await updateOwnedRunState(
 					statePath,
 					ownerId,
@@ -815,6 +827,7 @@ async function runOwnedBatch({
 								state: "failed",
 								attempts,
 								error: sensitiveErrorMessage(error),
+								...(diagnostics ? { diagnostics } : {}),
 							},
 						},
 					}),
