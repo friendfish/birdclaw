@@ -188,3 +188,28 @@ Add failing tests before implementation for:
 
 Run targeted tests through the red-green cycle, then run `pnpm check`, the full
 `pnpm test` suite, and `pnpm build` before completion.
+
+## Review Follow-Up
+
+The PR review identified one malformed-state bug and two maintainability risks
+inside the integrity contract. The follow-up keeps the scope within period
+digests:
+
+- `parseRunState` owns source-state normalization. Non-object source entries are
+  discarded before any API consumer receives the state, so metadata does not
+  destructure `null`, arrays, or primitives.
+- Placeholder sentinel matching applies only to `parseStatus: "fallback"`.
+  Structured model output continues to require non-empty Markdown, but a valid
+  structured digest is not rejected merely because its title and summary happen
+  to match the fallback sentinel strings.
+- The period-digest fallback title format and no-summary text are exported from
+  the integrity module and reused by `fallbackDigest`, keeping generation and
+  rejection on one source of truth.
+- Stream diagnostics are sanitized once per completed digest and reused for the
+  exact cache and returned result.
+
+The exported diagnostics type guard remains because it is a useful public
+runtime predicate and removing it is unrelated API churn. Search discussion and
+profile analysis keep their domain-specific fallback copy, and the prompt
+playground remains unguarded because it neither publishes nor caches results and
+is intended to expose raw prompt behavior.

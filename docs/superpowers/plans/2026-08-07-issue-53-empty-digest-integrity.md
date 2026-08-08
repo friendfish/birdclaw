@@ -936,3 +936,94 @@ git log --oneline main..HEAD
 
 Expected: no whitespace errors, a clean worktree, and only issue #53 design,
 plan, tests, and implementation commits.
+
+### Task 8: Address PR Review Feedback
+
+**Files:**
+- Modify: `src/lib/period-digest-orchestrator.test.ts`
+- Modify: `src/lib/period-digest-orchestrator.ts`
+- Modify: `src/lib/period-digest-integrity.test.ts`
+- Modify: `src/lib/period-digest-integrity.ts`
+- Modify: `src/lib/period-digest.test.ts`
+- Modify: `src/lib/period-digest.ts`
+
+- [ ] **Step 1: Reproduce malformed run-state handling**
+
+Add a run-state read test whose `sources` object contains a valid source and
+non-object entries such as `null`, an array, and a string. Assert that the valid
+source remains, diagnostics are canonicalized, and invalid entries are absent.
+
+Run:
+
+```bash
+pnpm test src/lib/period-digest-orchestrator.test.ts
+```
+
+Expected: FAIL because `parseRunState` currently preserves the malformed source
+entries.
+
+- [ ] **Step 2: Normalize source entries in `parseRunState`**
+
+Filter `Object.entries(state.sources)` before diagnostics projection:
+
+```ts
+.flatMap(([source, sourceState]) => {
+	if (!sourceState || typeof sourceState !== "object" || Array.isArray(sourceState)) {
+		return [];
+	}
+	const { diagnostics: untrustedDiagnostics, ...rest } = sourceState;
+	const diagnostics = sanitizeOpenAIStreamDiagnostics(untrustedDiagnostics);
+	return [[source, { ...rest, ...(diagnostics ? { diagnostics } : {}) }]];
+})
+```
+
+Run the orchestrator test again. Expected: PASS.
+
+- [ ] **Step 3: Reproduce structured sentinel misclassification**
+
+Add integrity tests proving that the same sentinel-only digest is rejected for
+`parseStatus: "fallback"` but accepted for `parseStatus: "structured"` when its
+Markdown is non-empty.
+
+Run:
+
+```bash
+pnpm test src/lib/period-digest-integrity.test.ts
+```
+
+Expected: FAIL because placeholder matching currently ignores `parseStatus`.
+
+- [ ] **Step 4: Make placeholder matching fallback-specific**
+
+Use `parseStatus` in `isPlaceholderOnlyDigest` and export the period-digest
+fallback sentinel values from the same module. Update `fallbackDigest` to build
+its title and summary from those exports rather than duplicate string literals.
+
+Run:
+
+```bash
+pnpm test src/lib/period-digest-integrity.test.ts src/lib/period-digest.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Reuse canonical diagnostics**
+
+In `completeOpenAIStreamEffect`, sanitize `stream.diagnostics` once before the
+exact-cache write and reuse the value in the returned result and latest-cache
+write.
+
+- [ ] **Step 6: Verify and commit the review fixes**
+
+Run:
+
+```bash
+pnpm test src/lib/period-digest-orchestrator.test.ts src/lib/period-digest-integrity.test.ts src/lib/period-digest.test.ts src/routes/api/period-digest-metadata.test.ts
+pnpm check
+pnpm test
+pnpm build
+git diff --check
+```
+
+Expected: all tests and checks pass. Then commit the focused source and test
+changes and push the branch so PR #55 reruns CI.
