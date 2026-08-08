@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { Effect } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBirdclawPathsForTests } from "./config";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -8,10 +8,14 @@ import * as os from "node:os";
 import {
 	createOpenAIStreamState,
 	debugLog,
+	isOpenAIStreamDiagnostics,
+	openAIStreamDiagnosticsFromError,
+	OpenAIStreamError,
 	processOpenAIResponseSseChunk,
 	readOpenAIResponseStreamEffect,
 	requestOpenAIResponseEffect,
 	resolveOpenAIBaseUrl,
+	sanitizeOpenAIStreamDiagnostics,
 } from "./openai-response-runtime";
 
 const originalBirdclawHome = process.env.BIRDCLAW_HOME;
@@ -68,7 +72,74 @@ describe("resolveOpenAIBaseUrl", () => {
 	});
 });
 
+async function readStreamEvents(events: unknown[]) {
+	const stream = new ReadableStream({
+		start(controller) {
+			for (const event of events) {
+				controller.enqueue(
+					new TextEncoder().encode(
+						`data: ${event === "[DONE]" ? event : JSON.stringify(event)}\n\n`,
+					),
+				);
+			}
+			controller.close();
+		},
+	});
+	return Effect.runPromiseExit(
+		readOpenAIResponseStreamEffect(new Response(stream)),
+	);
+}
+
+async function expectStreamError(events: unknown[]) {
+	const exit = await readStreamEvents(events);
+	expect(Exit.isFailure(exit)).toBe(true);
+	if (!Exit.isFailure(exit))
+		throw new Error("Expected the OpenAI stream to fail");
+	const error = Option.getOrUndefined(Cause.failureOption(exit.cause));
+	if (!(error instanceof OpenAIStreamError))
+		throw new Error("Expected an OpenAIStreamError");
+	expect(error).toBeInstanceOf(OpenAIStreamError);
+	expect(
+		isOpenAIStreamDiagnostics(openAIStreamDiagnosticsFromError(error)),
+	).toBe(true);
+	return error;
+}
+
 describe("OpenAI response runtime", () => {
+	it("projects valid diagnostics onto the canonical persistence whitelist", () => {
+		const input = {
+			responseId: "resp_safe",
+			finishReason: "stop",
+			visibleTextLength: 42,
+			reasoningTextLength: 7,
+			rawText: "must not persist",
+			prompt: "must not persist",
+			usage: { output_tokens: 49 },
+		};
+
+		const diagnostics = sanitizeOpenAIStreamDiagnostics(input);
+
+		expect(diagnostics).toEqual({
+			responseId: "resp_safe",
+			finishReason: "stop",
+			visibleTextLength: 42,
+			reasoningTextLength: 7,
+		});
+		expect(diagnostics).not.toBe(input);
+		expect(
+			sanitizeOpenAIStreamDiagnostics({
+				visibleTextLength: Number.POSITIVE_INFINITY,
+				reasoningTextLength: 0,
+			}),
+		).toBeUndefined();
+		expect(
+			sanitizeOpenAIStreamDiagnostics({
+				visibleTextLength: 1,
+				reasoningTextLength: -1,
+			}),
+		).toBeUndefined();
+	});
+
 	it("streams visible markdown while retaining hybrid output and metadata", async () => {
 		const visible: string[] = [];
 		const stream = new ReadableStream({
@@ -99,6 +170,145 @@ describe("OpenAI response runtime", () => {
 			rawText: 'Hello\n---\n{"ok":true}',
 			responseId: "resp_1",
 			usage: { output_tokens: 2 },
+			diagnostics: {
+				responseId: "resp_1",
+				visibleTextLength: 5,
+				reasoningTextLength: 0,
+			},
+		});
+	});
+
+	it("rejects hybrid JSON with no pre-delimiter visible text", async () => {
+		const error = await expectStreamError([
+			{
+				type: "response.output_text.delta",
+				delta: '\n---\n{"ok":true}',
+			},
+		]);
+		expect(openAIStreamDiagnosticsFromError(error)).toEqual({
+			visibleTextLength: 0,
+			reasoningTextLength: 0,
+		});
+	});
+
+	it("rejects a [DONE]-only stream with structured blank-output diagnostics", async () => {
+		const error = await expectStreamError(["[DONE]"]);
+		expect(openAIStreamDiagnosticsFromError(error)).toEqual({
+			visibleTextLength: 0,
+			reasoningTextLength: 0,
+		});
+	});
+
+	it("rejects whitespace-only response output with its visible length", async () => {
+		const error = await expectStreamError([
+			{ type: "response.output_text.delta", delta: "  \n\t" },
+		]);
+		expect(openAIStreamDiagnosticsFromError(error)).toEqual({
+			visibleTextLength: 4,
+			reasoningTextLength: 0,
+		});
+	});
+
+	it("rejects reasoning-only Chat Completions output with diagnostics", async () => {
+		const event = {
+			id: "chat_reasoning",
+			choices: [
+				{
+					delta: { reasoning_content: "thinking", reasoning: "analysis" },
+					finish_reason: "stop",
+				},
+			],
+		};
+		const state = createOpenAIStreamState();
+		processOpenAIResponseSseChunk(state, `data: ${JSON.stringify(event)}\n\n`);
+		expect(state.rawText).toBe("");
+		expect(state.reasoningTextLength).toBe(16);
+
+		const error = await expectStreamError([event]);
+		expect(openAIStreamDiagnosticsFromError(error)).toEqual({
+			responseId: "chat_reasoning",
+			finishReason: "stop",
+			visibleTextLength: 0,
+			reasoningTextLength: 16,
+		});
+	});
+
+	it("retains explicit stream error messages at EOF", async () => {
+		const error = await expectStreamError([
+			{
+				type: "response.error",
+				error: { message: "quota exceeded" },
+			},
+		]);
+		expect(error.message).toContain("quota exceeded");
+	});
+
+	it("retains top-level stream error messages without leaking the event", async () => {
+		const rawText = "raw event content must not enter diagnostics";
+		const error = await expectStreamError([
+			{
+				type: "error",
+				message: "quota exceeded",
+				code: "insufficient_quota",
+				rawText,
+			},
+		]);
+
+		expect(error.message).toContain("quota exceeded");
+		expect(error.diagnostics).toEqual({
+			visibleTextLength: 0,
+			reasoningTextLength: 0,
+		});
+		expect(JSON.stringify(error.diagnostics)).not.toContain(rawText);
+	});
+
+	it("reads chunked CRLF SSE frames", async () => {
+		const payload = `data: ${JSON.stringify({
+			type: "response.output_text.delta",
+			delta: "CRLF",
+		})}\r\n\r\ndata: ${JSON.stringify({
+			type: "response.completed",
+			response: { id: "resp_crlf" },
+		})}\r\n\r\n`;
+		const stream = new ReadableStream({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode(payload.slice(0, 7)));
+				controller.enqueue(new TextEncoder().encode(payload.slice(7, -3)));
+				controller.enqueue(new TextEncoder().encode(payload.slice(-3)));
+				controller.close();
+			},
+		});
+		const visible: string[] = [];
+		const result = await Effect.runPromise(
+			readOpenAIResponseStreamEffect(new Response(stream), {
+				onDelta: (delta) => visible.push(delta),
+			}),
+		);
+
+		expect(visible).toEqual(["CRLF"]);
+		expect(result).toEqual({
+			rawText: "CRLF",
+			responseId: "resp_crlf",
+			diagnostics: {
+				responseId: "resp_crlf",
+				visibleTextLength: 4,
+				reasoningTextLength: 0,
+			},
+		});
+	});
+
+	it("rejects a Chat Completions length terminal without visible output", async () => {
+		const error = await expectStreamError([
+			{
+				id: "chat_length",
+				choices: [{ finish_reason: "length" }],
+			},
+		]);
+		expect(openAIStreamDiagnosticsFromError(error)).toEqual({
+			responseId: "chat_length",
+			finishReason: "length",
+			visibleTextLength: 0,
+			reasoningTextLength: 0,
 		});
 	});
 
@@ -117,7 +327,7 @@ describe("OpenAI response runtime", () => {
 		expect(state.rawText).toBe("ok");
 	});
 
-	it("normalizes Chat Completions events and ignores empty choices", () => {
+	it("normalizes Chat Completions events without inventing response IDs", () => {
 		const state = createOpenAIStreamState();
 		processOpenAIResponseSseChunk(
 			state,
@@ -141,6 +351,18 @@ describe("OpenAI response runtime", () => {
 		expect(state.rawText).toBe("Hello");
 		expect(state.responseId).toBe("chat_1");
 		expect(state.usage).toEqual({ completion_tokens: 1 });
+		expect(state.finishReason).toBe("stop");
+
+		const noId = createOpenAIStreamState();
+		processOpenAIResponseSseChunk(
+			noId,
+			`data: ${JSON.stringify({
+				choices: [],
+				usage: { completion_tokens: 0 },
+			})}\n\n`,
+		);
+		expect(noId.responseId).toBeUndefined();
+		expect(noId.usage).toEqual({ completion_tokens: 0 });
 	});
 
 	it("captures explicit, incomplete, and generic stream errors", () => {
@@ -188,7 +410,7 @@ describe("OpenAI response runtime", () => {
 				`data: ${JSON.stringify(event)}\n\n`,
 			);
 		}
-		expect(state.responseId).toBe("chatcmpl");
+		expect(state.responseId).toBeUndefined();
 		expect(state.error).toBe("OpenAI stream failed");
 
 		const delimited = createOpenAIStreamState();
@@ -247,7 +469,10 @@ describe("OpenAI response runtime", () => {
 		);
 
 		expect(visible).toEqual(["short"]);
-		expect(result).toEqual({ rawText: "short" });
+		expect(result).toEqual({
+			rawText: "short",
+			diagnostics: { visibleTextLength: 5, reasoningTextLength: 0 },
+		});
 	});
 
 	it("checks credentials and HTTP failures centrally", async () => {

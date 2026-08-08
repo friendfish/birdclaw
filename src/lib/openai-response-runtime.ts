@@ -9,12 +9,93 @@ import {
 const DEFAULT_DELIMITER_PATTERN = /\n---\s*\n/;
 const DEFAULT_DELIMITER_HOLD = 8;
 
+export interface OpenAIStreamDiagnostics {
+	responseId?: string;
+	finishReason?: string;
+	visibleTextLength: number;
+	reasoningTextLength: number;
+}
+
+export function sanitizeOpenAIStreamDiagnostics(
+	value: unknown,
+): OpenAIStreamDiagnostics | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value))
+		return undefined;
+	const record = value as Record<string, unknown>;
+	if (
+		(record.responseId !== undefined &&
+			typeof record.responseId !== "string") ||
+		(record.finishReason !== undefined &&
+			typeof record.finishReason !== "string") ||
+		typeof record.visibleTextLength !== "number" ||
+		!Number.isFinite(record.visibleTextLength) ||
+		record.visibleTextLength < 0 ||
+		typeof record.reasoningTextLength !== "number" ||
+		!Number.isFinite(record.reasoningTextLength) ||
+		record.reasoningTextLength < 0
+	) {
+		return undefined;
+	}
+	return {
+		...(typeof record.responseId === "string"
+			? { responseId: record.responseId }
+			: {}),
+		...(typeof record.finishReason === "string"
+			? { finishReason: record.finishReason }
+			: {}),
+		visibleTextLength: record.visibleTextLength,
+		reasoningTextLength: record.reasoningTextLength,
+	};
+}
+
+export class OpenAIStreamError extends Error {
+	readonly diagnostics: OpenAIStreamDiagnostics;
+
+	constructor(message: string, diagnostics: OpenAIStreamDiagnostics) {
+		const values = [
+			diagnostics.finishReason !== undefined
+				? `finishReason=${diagnostics.finishReason}`
+				: undefined,
+			`visibleTextLength=${diagnostics.visibleTextLength}`,
+			`reasoningTextLength=${diagnostics.reasoningTextLength}`,
+			diagnostics.responseId !== undefined
+				? `responseId=${diagnostics.responseId}`
+				: undefined,
+		].filter((value): value is string => value !== undefined);
+		super(`${message} (${values.join(", ")})`);
+		this.name = "OpenAIStreamError";
+		this.diagnostics = Object.freeze(
+			sanitizeOpenAIStreamDiagnostics(diagnostics) ?? {
+				visibleTextLength: 0,
+				reasoningTextLength: 0,
+			},
+		);
+	}
+}
+
+export function isOpenAIStreamDiagnostics(
+	value: unknown,
+): value is OpenAIStreamDiagnostics {
+	return sanitizeOpenAIStreamDiagnostics(value) !== undefined;
+}
+
+export function openAIStreamDiagnosticsFromError(
+	error: unknown,
+): OpenAIStreamDiagnostics | undefined {
+	return error instanceof OpenAIStreamError
+		? sanitizeOpenAIStreamDiagnostics(error.diagnostics)
+		: undefined;
+}
+
 export interface OpenAIStreamState {
 	eventBuffer: string;
 	rawText: string;
+	visibleText?: string;
 	pendingVisible: string;
 	jsonMode: boolean;
 	responseId?: string;
+	finishReason?: string;
+	reasoningTextLength?: number;
 	usage?: unknown;
 	error?: string;
 }
@@ -23,6 +104,7 @@ export interface OpenAIStreamResult {
 	rawText: string;
 	responseId?: string;
 	usage?: unknown;
+	diagnostics: OpenAIStreamDiagnostics;
 }
 
 function toError(error: unknown) {
@@ -64,9 +146,39 @@ export function createOpenAIStreamState(): OpenAIStreamState {
 	return {
 		eventBuffer: "",
 		rawText: "",
+		visibleText: "",
 		pendingVisible: "",
 		jsonMode: false,
+		reasoningTextLength: 0,
 	};
+}
+
+function captureResponseMetadata(state: OpenAIStreamState, response: unknown) {
+	if (!response || typeof response !== "object") return;
+	const record = response as Record<string, unknown>;
+	if (typeof record.id === "string") state.responseId = record.id;
+	if (record.usage !== undefined) state.usage = record.usage;
+}
+
+function buildDiagnostics(state: OpenAIStreamState): OpenAIStreamDiagnostics {
+	return {
+		...(state.responseId !== undefined ? { responseId: state.responseId } : {}),
+		...(state.finishReason !== undefined
+			? { finishReason: state.finishReason }
+			: {}),
+		visibleTextLength: (state.visibleText ?? "").length,
+		reasoningTextLength: state.reasoningTextLength ?? 0,
+	};
+}
+
+function emitTrackedVisibleDelta(
+	state: OpenAIStreamState,
+	delta: string,
+	onDelta: ((delta: string) => void) | undefined,
+) {
+	if (!delta) return;
+	state.visibleText = (state.visibleText ?? "") + delta;
+	onDelta?.(delta);
 }
 
 function emitVisibleDelta(
@@ -83,7 +195,7 @@ function emitVisibleDelta(
 	const delimiterIndex = combined.search(delimiterPattern);
 	if (delimiterIndex >= 0) {
 		const visible = combined.slice(0, delimiterIndex);
-		if (visible) onDelta?.(visible);
+		emitTrackedVisibleDelta(state, visible, onDelta);
 		state.pendingVisible = "";
 		state.jsonMode = true;
 		return;
@@ -96,7 +208,7 @@ function emitVisibleDelta(
 
 	const visible = combined.slice(0, -delimiterHold);
 	state.pendingVisible = combined.slice(-delimiterHold);
-	if (visible) onDelta?.(visible);
+	emitTrackedVisibleDelta(state, visible, onDelta);
 }
 
 function handleOpenAIEvent(
@@ -120,37 +232,92 @@ function handleOpenAIEvent(
 		);
 		return;
 	}
-	if (type === "response.completed") {
-		const response = event.response;
-		if (response && typeof response === "object") {
-			const record = response as Record<string, unknown>;
-			state.responseId = typeof record.id === "string" ? record.id : undefined;
-			state.usage = record.usage;
-		}
+	if (
+		(type === "response.reasoning_text.delta" ||
+			type === "response.reasoning_summary_text.delta") &&
+		typeof event.delta === "string"
+	) {
+		state.reasoningTextLength =
+			(state.reasoningTextLength ?? 0) + event.delta.length;
 		return;
 	}
-	if (type === "response.error" || type === "error") {
-		const error = event.error;
-		state.error =
-			error && typeof error === "object" && "message" in error
-				? String((error as { message?: unknown }).message)
-				: "OpenAI stream failed";
-		return;
-	}
-	if (type === "response.failed" || type === "response.incomplete") {
-		const response = event.response;
+	if (
+		type === "response.completed" ||
+		type === "response.failed" ||
+		type === "response.incomplete"
+	) {
+		captureResponseMetadata(state, event.response);
+		if (type === "response.completed") return;
+
 		const record =
-			response && typeof response === "object"
-				? (response as Record<string, unknown>)
+			event.response && typeof event.response === "object"
+				? (event.response as Record<string, unknown>)
 				: {};
-		const error = record.error;
 		const incomplete = record.incomplete_details;
+		if (
+			type === "response.incomplete" &&
+			incomplete &&
+			typeof incomplete === "object" &&
+			typeof (incomplete as Record<string, unknown>).reason === "string"
+		) {
+			state.finishReason = (incomplete as Record<string, string>).reason;
+		}
+		const error = record.error;
 		state.error =
 			error && typeof error === "object" && "message" in error
 				? String((error as { message?: unknown }).message)
 				: incomplete && typeof incomplete === "object" && "reason" in incomplete
 					? `OpenAI response incomplete: ${String((incomplete as { reason?: unknown }).reason)}`
 					: "OpenAI stream failed";
+		return;
+	}
+	if (type === "response.error" || type === "error") {
+		const error = event.error;
+		state.error =
+			typeof event.message === "string"
+				? event.message
+				: error && typeof error === "object" && "message" in error
+					? String((error as { message?: unknown }).message)
+					: "OpenAI stream failed";
+		return;
+	}
+}
+
+function handleChatCompletionsEvent(
+	state: OpenAIStreamState,
+	event: Record<string, unknown>,
+	onDelta: ((delta: string) => void) | undefined,
+	delimiterPattern: RegExp,
+	delimiterHold: number,
+) {
+	if (typeof event.id === "string") state.responseId = event.id;
+	if (event.usage !== undefined) state.usage = event.usage;
+	const choices = event.choices;
+	if (!Array.isArray(choices)) return;
+	for (const choice of choices) {
+		if (!choice || typeof choice !== "object") continue;
+		const record = choice as Record<string, unknown>;
+		if (typeof record.finish_reason === "string") {
+			state.finishReason = record.finish_reason;
+		}
+		const delta = record.delta;
+		if (!delta || typeof delta !== "object") continue;
+		const deltaRecord = delta as Record<string, unknown>;
+		if (typeof deltaRecord.content === "string") {
+			emitVisibleDelta(
+				state,
+				deltaRecord.content,
+				onDelta,
+				delimiterPattern,
+				delimiterHold,
+			);
+		}
+		for (const key of ["reasoning_content", "reasoning"]) {
+			if (typeof deltaRecord[key] === "string") {
+				state.reasoningTextLength =
+					(state.reasoningTextLength ?? 0) + deltaRecord[key].length;
+			}
+		}
 	}
 }
 
@@ -168,44 +335,29 @@ export function processOpenAIResponseSseChunk(
 	} = {},
 ) {
 	state.eventBuffer += chunk;
-	let boundary = state.eventBuffer.indexOf("\n\n");
-	while (boundary >= 0) {
-		const block = state.eventBuffer.slice(0, boundary);
-		state.eventBuffer = state.eventBuffer.slice(boundary + 2);
+	let separator = /\r?\n\r?\n/.exec(state.eventBuffer);
+	while (separator?.index !== undefined) {
+		const block = state.eventBuffer.slice(0, separator.index);
+		state.eventBuffer = state.eventBuffer.slice(
+			separator.index + separator[0].length,
+		);
 		const data = block
-			.split("\n")
+			.split(/\r?\n/)
 			.filter((line) => line.startsWith("data:"))
 			.map((line) => line.slice(5).trimStart())
 			.join("\n");
 		if (data && data !== "[DONE]") {
 			try {
-				let parsed = JSON.parse(data) as Record<string, unknown>;
-				let shouldHandle = true;
+				const parsed = JSON.parse(data) as Record<string, unknown>;
 				if (Array.isArray(parsed.choices)) {
-					const choice = parsed.choices[0] as
-						| Record<string, unknown>
-						| undefined;
-					if (choice) {
-						const delta = choice.delta as Record<string, unknown> | undefined;
-						if (delta && typeof delta.content === "string") {
-							parsed = {
-								type: "response.output_text.delta",
-								delta: delta.content,
-							};
-						} else if (choice.finish_reason || parsed.usage) {
-							parsed = {
-								type: "response.completed",
-								response: {
-									id: typeof parsed.id === "string" ? parsed.id : "chatcmpl",
-									usage: parsed.usage,
-								},
-							};
-						} else {
-							shouldHandle = false;
-						}
-					}
-				}
-				if (shouldHandle) {
+					handleChatCompletionsEvent(
+						state,
+						parsed,
+						onDelta,
+						delimiterPattern,
+						delimiterHold,
+					);
+				} else {
 					handleOpenAIEvent(
 						state,
 						parsed,
@@ -218,7 +370,7 @@ export function processOpenAIResponseSseChunk(
 				// The feature parser decides whether partial output remains usable.
 			}
 		}
-		boundary = state.eventBuffer.indexOf("\n\n");
+		separator = /\r?\n\r?\n/.exec(state.eventBuffer);
 	}
 }
 
@@ -251,15 +403,28 @@ export function readOpenAIResponseStreamEffect(
 				continue;
 			}
 			if (!state.jsonMode && state.pendingVisible) {
-				options.onDelta?.(state.pendingVisible);
+				emitTrackedVisibleDelta(state, state.pendingVisible, options.onDelta);
+				state.pendingVisible = "";
 			}
+			const diagnostics = buildDiagnostics(state);
 			if (state.error) {
-				return yield* Effect.fail(new Error(state.error));
+				return yield* Effect.fail(
+					new OpenAIStreamError(state.error, diagnostics),
+				);
+			}
+			if (!(state.visibleText ?? "").trim()) {
+				return yield* Effect.fail(
+					new OpenAIStreamError(
+						"OpenAI stream returned no visible output",
+						diagnostics,
+					),
+				);
 			}
 			return {
 				rawText: state.rawText,
 				...(state.responseId ? { responseId: state.responseId } : {}),
 				...(state.usage === undefined ? {} : { usage: state.usage }),
+				diagnostics,
 			};
 		}
 	}).pipe(

@@ -4,6 +4,7 @@ import { getBirdclawConfig } from "./config";
 import {
 	readOpenAIResponseStreamEffect,
 	requestOpenAIResponseEffect,
+	type OpenAIStreamDiagnostics,
 } from "./openai-response-runtime";
 import {
 	defaultRuntimeServices,
@@ -38,6 +39,7 @@ export interface HybridAnalysisResult<T> {
 	fallbackReason?: string;
 	responseId?: string;
 	usage?: unknown;
+	diagnostics?: OpenAIStreamDiagnostics;
 }
 
 function toError(error: unknown) {
@@ -200,6 +202,7 @@ export function readHybridAnalysisStreamEffect<T>(
 		return {
 			...parsed,
 			rawText: stream.rawText,
+			diagnostics: stream.diagnostics,
 			...(stream.responseId ? { responseId: stream.responseId } : {}),
 			...(stream.usage === undefined ? {} : { usage: stream.usage }),
 		};
@@ -263,7 +266,7 @@ export function requestHybridAnalysisEffect<T>({
 			Effect.mapError(toError),
 		)) as Record<string, unknown>;
 		const rawText = extractOpenAIResponseText(payload);
-		if (!rawText) {
+		if (!rawText.trim()) {
 			return yield* Effect.fail(new Error("OpenAI returned no output text"));
 		}
 		const parsed = parseHybridAnalysis({

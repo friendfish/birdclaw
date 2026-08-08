@@ -11,6 +11,8 @@ import {
 	type PeriodDigestContentSource,
 	type PeriodDigestRunResult,
 } from "#/lib/period-digest";
+import { isDisplayablePeriodDigest } from "#/lib/period-digest-integrity";
+import { sanitizeOpenAIStreamDiagnostics } from "#/lib/openai-response-runtime";
 import {
 	migrateLegacyPeriodDigests,
 	readCurrentPeriodDigest,
@@ -25,23 +27,24 @@ import {
 import { parsePeriodDigestRequestOptions } from "#/lib/period-digest-request";
 import { peekScheduledJobLockEffect } from "#/lib/scheduled-job";
 
-let legacyMigrationAttempted = false;
-let legacyMigrationResult: ReturnType<
-	typeof migrateLegacyPeriodDigests
-> | null = null;
+const legacyMigrationAttemptedKeys = new Set<string>();
 
-function migrateLegacyPeriodDigestsOnce() {
-	if (!legacyMigrationAttempted) {
-		legacyMigrationAttempted = true;
-		legacyMigrationResult = migrateLegacyPeriodDigests();
-	}
-	return legacyMigrationResult;
+function migrationKey(
+	period: "today" | "24h",
+	contentSource: PeriodDigestContentSource,
+) {
+	return `${period}:${contentSource}`;
+}
+
+export function resetPeriodDigestMetadataMigrationForTests() {
+	legacyMigrationAttemptedKeys.clear();
 }
 
 function resultFromCurrent(
 	current: CurrentPeriodDigestV1 | null,
 ): PeriodDigestRunResult | null {
-	if (!current) return null;
+	if (!current || !isDisplayablePeriodDigest(current)) return null;
+	const diagnostics = sanitizeOpenAIStreamDiagnostics(current.diagnostics);
 	return {
 		context: current.context,
 		digest: current.digest,
@@ -50,8 +53,24 @@ function resultFromCurrent(
 		reasoningEffort: current.reasoningEffort,
 		serviceTier: current.serviceTier,
 		parseStatus: current.parseStatus,
+		...(diagnostics ? { diagnostics } : {}),
 		cached: true,
 		updatedAt: current.generatedAt,
+	};
+}
+
+function sanitizedRunState(state: PeriodDigestRunStateV1 | undefined) {
+	if (!state) return undefined;
+	return {
+		...state,
+		sources: Object.fromEntries(
+			Object.entries(state.sources).map(([source, sourceState]) => {
+				const { diagnostics: untrustedDiagnostics, ...rest } = sourceState;
+				const diagnostics =
+					sanitizeOpenAIStreamDiagnostics(untrustedDiagnostics);
+				return [source, { ...rest, ...(diagnostics ? { diagnostics } : {}) }];
+			}),
+		) as PeriodDigestRunStateV1["sources"],
 	};
 }
 
@@ -109,20 +128,28 @@ export const Route = createFileRoute("/api/period-digest-metadata")({
 							);
 						}
 						const contentSource = options.contentSource ?? "all";
+						const recoveryKey = migrationKey(period, contentSource);
 						let current = readCurrentPeriodDigest(period, contentSource);
+						let result = resultFromCurrent(current);
 						let migration = null;
-						if (!current) {
-							migration = migrateLegacyPeriodDigestsOnce();
+						if (result) {
+							legacyMigrationAttemptedKeys.delete(recoveryKey);
+						} else if (!legacyMigrationAttemptedKeys.has(recoveryKey)) {
+							migration = migrateLegacyPeriodDigests();
+							legacyMigrationAttemptedKeys.add(recoveryKey);
 							current = readCurrentPeriodDigest(period, contentSource);
+							result = resultFromCurrent(current);
+							if (result) legacyMigrationAttemptedKeys.delete(recoveryKey);
 						}
-						const result = resultFromCurrent(current);
-						const isStale = current
-							? !isFreshDigestCache(current.generatedAt, period)
+						const isStale = result
+							? !isFreshDigestCache(result.updatedAt, period)
 							: true;
-						const runState = yield* Effect.tryPromise({
-							try: () => readPeriodDigestRunState(period),
-							catch: (error) => error,
-						});
+						const runState = sanitizedRunState(
+							yield* Effect.tryPromise({
+								try: () => readPeriodDigestRunState(period),
+								catch: (error) => error,
+							}),
+						);
 						const lockActive = yield* peekScheduledJobLockEffect(
 							periodDigestRunLockPath(period),
 							PERIOD_DIGEST_LOCK_STALE_MS,

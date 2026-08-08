@@ -15,6 +15,11 @@ import {
 	type DigestArchiveSyncResult,
 } from "./digest-archive-sync";
 import {
+	openAIStreamDiagnosticsFromError,
+	sanitizeOpenAIStreamDiagnostics,
+	type OpenAIStreamDiagnostics,
+} from "./openai-response-runtime";
+import {
 	collectPeriodDigestContext,
 	generatePeriodDigestFromContextEffect,
 	resolvePeriodDigestWindow,
@@ -23,6 +28,7 @@ import {
 	type PeriodDigestContext,
 	type PeriodDigestRunResult,
 } from "./period-digest";
+import { assertDisplayablePeriodDigest } from "./period-digest-integrity";
 import {
 	publishCurrentPeriodDigest,
 	type CurrentPeriodDigestPeriod,
@@ -64,6 +70,7 @@ export interface PeriodDigestSourceRunState {
 	generatedAt?: string;
 	versionId?: string;
 	error?: string;
+	diagnostics?: OpenAIStreamDiagnostics;
 }
 
 export interface PeriodDigestRunStateV1 {
@@ -261,7 +268,21 @@ function parseRunState(value: unknown): PeriodDigestRunStateV1 | undefined {
 	) {
 		return undefined;
 	}
-	return state as PeriodDigestRunStateV1;
+	const sources = Object.fromEntries(
+		Object.entries(state.sources).flatMap(([source, sourceState]) => {
+			if (
+				!sourceState ||
+				typeof sourceState !== "object" ||
+				Array.isArray(sourceState)
+			) {
+				return [];
+			}
+			const { diagnostics: untrustedDiagnostics, ...rest } = sourceState;
+			const diagnostics = sanitizeOpenAIStreamDiagnostics(untrustedDiagnostics);
+			return [[source, { ...rest, ...(diagnostics ? { diagnostics } : {}) }]];
+		}),
+	);
+	return { ...state, sources } as PeriodDigestRunStateV1;
 }
 
 async function readRunStateFile(statePath: string) {
@@ -731,7 +752,7 @@ async function runOwnedBatch({
 					if (!context) {
 						throw new Error(`Missing frozen ${contentSource} context`);
 					}
-					generated = await dependencies.generate({
+					const candidate = await dependencies.generate({
 						period: request.period,
 						contentSource,
 						context,
@@ -746,6 +767,8 @@ async function runOwnedBatch({
 							),
 						]),
 					});
+					assertDisplayablePeriodDigest(candidate);
+					generated = candidate;
 					generationError = undefined;
 					break;
 				} catch (error) {
@@ -785,6 +808,9 @@ async function runOwnedBatch({
 					dependencies.database,
 				);
 				completedSources += 1;
+				const diagnostics = sanitizeOpenAIStreamDiagnostics(
+					generated.diagnostics,
+				);
 				await updateOwnedRunState(
 					statePath,
 					ownerId,
@@ -797,6 +823,7 @@ async function runOwnedBatch({
 								attempts,
 								generatedAt: generated.updatedAt,
 								versionId,
+								...(diagnostics ? { diagnostics } : {}),
 							},
 						},
 					}),
@@ -804,6 +831,9 @@ async function runOwnedBatch({
 				);
 			} catch (error) {
 				throwIfOwnershipLost();
+				const diagnostics = sanitizeOpenAIStreamDiagnostics(
+					openAIStreamDiagnosticsFromError(error),
+				);
 				await updateOwnedRunState(
 					statePath,
 					ownerId,
@@ -815,6 +845,7 @@ async function runOwnedBatch({
 								state: "failed",
 								attempts,
 								error: sensitiveErrorMessage(error),
+								...(diagnostics ? { diagnostics } : {}),
 							},
 						},
 					}),

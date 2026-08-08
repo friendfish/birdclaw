@@ -16,7 +16,14 @@ export function periodDigestMetadataPollInterval(isGenerating: boolean) {
 	return isGenerating ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS;
 }
 
-const periodDigestMetadataResponseSchema = z.object({
+const openAIStreamDiagnosticsSchema = z.strictObject({
+	responseId: z.string().optional(),
+	finishReason: z.string().optional(),
+	visibleTextLength: z.number().finite().nonnegative(),
+	reasoningTextLength: z.number().finite().nonnegative(),
+});
+
+export const periodDigestMetadataResponseSchema = z.object({
 	ok: z.boolean(),
 	isGenerating: z.boolean(),
 	isStale: z.boolean(),
@@ -32,6 +39,7 @@ const periodDigestMetadataResponseSchema = z.object({
 			reasoningEffort: z.string(),
 			serviceTier: z.string(),
 			parseStatus: z.enum(["structured", "fallback"]),
+			diagnostics: openAIStreamDiagnosticsSchema.optional(),
 			cached: z.boolean(),
 			updatedAt: z.string(),
 		})

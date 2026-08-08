@@ -322,6 +322,37 @@ describe("today route", () => {
 		).toBeNull();
 	});
 
+	it("treats whitespace-only metadata content as waiting", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse(dataSourcesResponse());
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({ ok: true, runningPeriods: [] });
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return jsonResponse(
+						metadataResponse({
+							result: digestResult("Today", " \n\t"),
+						}),
+					);
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			}),
+		);
+
+		const { container } = render(<TodayRoute searchState={currentSearch()} />);
+
+		expect(await screen.findByText("Waiting")).toBeVisible();
+		expect(screen.getByText("Waiting for the first tokens...")).toBeVisible();
+		expect(screen.queryByText(/Cached/)).toBeNull();
+		expect(screen.queryByLabelText("Generated at")).toBeNull();
+		expect(container.querySelector("article")).toBeNull();
+	});
+
 	it("keeps Yesterday on the archive read path", async () => {
 		const entryDates: Array<string | null> = [];
 		vi.stubGlobal(

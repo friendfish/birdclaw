@@ -1,7 +1,9 @@
 // @vitest-environment node
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { periodDigestMetadataResponseSchema } from "#/components/usePeriodDigestMetadata";
 import { getRouteHandler } from "#/test/route-handlers";
+import type { CurrentPeriodDigestV1 } from "#/lib/period-digest-current-store";
 
 vi.mock("#/lib/live-transport-policy", () => ({
 	resolveLiveReadMode: () => "bird",
@@ -39,9 +41,18 @@ vi.mock("#/lib/period-digest", () => ({
 	isFreshDigestCache: (...args: unknown[]) => isFreshDigestCacheMock(...args),
 }));
 
-import { Route } from "./period-digest-metadata";
+import {
+	resetPeriodDigestMetadataMigrationForTests,
+	Route,
+} from "./period-digest-metadata";
 
 const GET = getRouteHandler(Route, "GET");
+const STREAM_DIAGNOSTICS = {
+	responseId: "resp-metadata",
+	finishReason: "stop",
+	visibleTextLength: 42,
+	reasoningTextLength: 7,
+};
 
 function requestFor(period = "today", contentSource = "all") {
 	return new Request(
@@ -49,7 +60,10 @@ function requestFor(period = "today", contentSource = "all") {
 	);
 }
 
-function currentDigest(generatedAt = "2026-08-06T08:00:00.000Z") {
+function currentDigest(
+	generatedAt = "2026-08-06T08:00:00.000Z",
+	overrides: Partial<CurrentPeriodDigestV1> = {},
+): CurrentPeriodDigestV1 {
 	return {
 		schemaVersion: 1,
 		period: "today",
@@ -58,16 +72,36 @@ function currentDigest(generatedAt = "2026-08-06T08:00:00.000Z") {
 		versionId: "version-old",
 		generatedAt,
 		context: {
-			window: { label: "Today", since: "s", until: "u" },
+			window: {
+				label: "Today",
+				since: "2026-08-06T00:00:00.000Z",
+				until: "2026-08-06T08:00:00.000Z",
+			},
 			includeDms: false,
 			contentSource: "all",
-			counts: {},
+			counts: {
+				home: 0,
+				mentions: 0,
+				authored: 0,
+				likes: 0,
+				bookmarks: 0,
+				dms: 0,
+				links: 0,
+			},
 			tweets: [],
 			dms: [],
 			links: [],
 			hash: "hash",
 		},
-		digest: { actionItems: [] },
+		digest: {
+			title: "Existing Today",
+			summary: "A complete current digest",
+			keyTopics: [],
+			notableLinks: [],
+			people: [],
+			actionItems: [],
+			sourceTweetIds: [],
+		},
 		markdown: "# Existing Today",
 		model: "gpt-5.5",
 		reasoningEffort: "medium",
@@ -75,11 +109,13 @@ function currentDigest(generatedAt = "2026-08-06T08:00:00.000Z") {
 		parseStatus: "structured",
 		input: { maxTweets: 5_000, maxLinks: 20 },
 		sync: { status: "fresh", steps: [] },
+		...overrides,
 	};
 }
 
 describe("api period-digest-metadata route", () => {
 	beforeEach(() => {
+		resetPeriodDigestMetadataMigrationForTests();
 		readCurrentPeriodDigestMock.mockReset();
 		migrateLegacyPeriodDigestsMock.mockReset();
 		readPeriodDigestRunStateMock.mockReset();
@@ -156,29 +192,177 @@ describe("api period-digest-metadata route", () => {
 		});
 	});
 
-	it("runs the one-time legacy migration before returning an empty first-use state", async () => {
-		readCurrentPeriodDigestMock
-			.mockReturnValueOnce(null)
-			.mockReturnValueOnce(currentDigest("2026-08-06T07:00:00.000Z"))
-			.mockReturnValueOnce(null)
-			.mockReturnValueOnce(currentDigest("2026-08-06T07:00:00.000Z"));
+	it("sanitizes valid stream diagnostics for the client contract", async () => {
+		readCurrentPeriodDigestMock.mockReturnValue(
+			currentDigest(undefined, {
+				diagnostics: {
+					...STREAM_DIAGNOSTICS,
+					rawText: "sensitive model output",
+					unapprovedField: "must not leave the server",
+				} as never,
+			}),
+		);
+
+		const validBody = await (await GET({ request: requestFor() })).json();
+		const parsed = periodDigestMetadataResponseSchema.parse(validBody);
+
+		expect(validBody.result.diagnostics).toEqual(STREAM_DIAGNOSTICS);
+		expect(JSON.stringify(validBody)).not.toContain("sensitive model output");
+		expect(parsed.result?.diagnostics).toEqual(STREAM_DIAGNOSTICS);
+	});
+
+	it("omits invalid mocked stream diagnostics", async () => {
+		readCurrentPeriodDigestMock.mockReturnValue(
+			currentDigest(undefined, {
+				diagnostics: {
+					visibleTextLength: -1,
+					reasoningTextLength: 7,
+				} as never,
+			}),
+		);
+
+		const invalidBody = await (await GET({ request: requestFor() })).json();
+
+		expect(invalidBody.result).not.toHaveProperty("diagnostics");
+	});
+
+	it("sanitizes diagnostics in legacy run state before returning metadata", async () => {
+		readPeriodDigestRunStateMock.mockResolvedValue({
+			runId: "legacy-run",
+			period: "today",
+			phase: "failed",
+			sourceOrder: ["all", "following", "for_you"],
+			sources: {
+				all: {
+					state: "failed",
+					attempts: 1,
+					diagnostics: {
+						...STREAM_DIAGNOSTICS,
+						rawText: "old raw stream must not leave the server",
+						prompt: "old prompt must not leave the server",
+					},
+				},
+				following: { state: "pending", attempts: 0 },
+				for_you: {
+					state: "failed",
+					attempts: 1,
+					diagnostics: {
+						visibleTextLength: -1,
+						reasoningTextLength: 0,
+						rawText: "invalid diagnostics must be removed",
+					},
+				},
+			},
+		});
+
+		const body = await (await GET({ request: requestFor() })).json();
+		const serialized = JSON.stringify(body);
+
+		expect(body.runState.sources.all.diagnostics).toEqual(STREAM_DIAGNOSTICS);
+		expect(body.runState.sources.for_you).not.toHaveProperty("diagnostics");
+		expect(serialized).not.toContain("old raw stream");
+		expect(serialized).not.toContain("old prompt");
+		expect(serialized).not.toContain("invalid diagnostics");
+	});
+
+	it("returns null and stale when a mocked current digest has no displayable markdown", async () => {
+		readCurrentPeriodDigestMock.mockReturnValue(
+			currentDigest(undefined, { markdown: " \n\t" }),
+		);
 		migrateLegacyPeriodDigestsMock.mockReturnValue({
-			migrated: [{ period: "today", contentSource: "all" }],
+			migrated: [],
 			diagnostics: [],
 		});
 
 		const body = await (await GET({ request: requestFor() })).json();
-		const second = await (await GET({ request: requestFor() })).json();
+
+		expect(body).toMatchObject({
+			result: null,
+			isStale: true,
+		});
+		expect(migrateLegacyPeriodDigestsMock).toHaveBeenCalledTimes(1);
+		expect(isFreshDigestCacheMock).not.toHaveBeenCalled();
+	});
+
+	it("returns a valid digest recovered by legacy migration", async () => {
+		let current: CurrentPeriodDigestV1 | null = null;
+		readCurrentPeriodDigestMock.mockImplementation(() => current);
+		migrateLegacyPeriodDigestsMock.mockImplementation(() => {
+			current = currentDigest("2026-08-06T07:00:00.000Z");
+			return {
+				migrated: [{ period: "today", contentSource: "all" }],
+				diagnostics: [],
+			};
+		});
+
+		const body = await (await GET({ request: requestFor() })).json();
 
 		expect(migrateLegacyPeriodDigestsMock).toHaveBeenCalledTimes(1);
-		expect(readCurrentPeriodDigestMock).toHaveBeenCalledTimes(4);
 		expect(body.result).toMatchObject({
 			markdown: "# Existing Today",
 			updatedAt: "2026-08-06T07:00:00.000Z",
 		});
-		expect(second.result).toMatchObject({
+	});
+
+	it("retries legacy recovery after a transient migration failure", async () => {
+		let current: CurrentPeriodDigestV1 | null = null;
+		readCurrentPeriodDigestMock.mockImplementation(() => current);
+		migrateLegacyPeriodDigestsMock
+			.mockImplementationOnce(() => {
+				throw new Error("transient SQLite error");
+			})
+			.mockImplementationOnce(() => {
+				current = currentDigest("2026-08-06T07:00:00.000Z");
+				return {
+					migrated: [{ period: "today", contentSource: "all" }],
+					diagnostics: [],
+				};
+			});
+
+		await expect(GET({ request: requestFor() })).rejects.toThrow(
+			"transient SQLite error",
+		);
+		const recovered = await (await GET({ request: requestFor() })).json();
+
+		expect(migrateLegacyPeriodDigestsMock).toHaveBeenCalledTimes(2);
+		expect(recovered.result).toMatchObject({
 			markdown: "# Existing Today",
 			updatedAt: "2026-08-06T07:00:00.000Z",
 		});
+	});
+
+	it("runs legacy recovery once per invalid episode and retries after valid content", async () => {
+		let current: CurrentPeriodDigestV1 | null = null;
+		readCurrentPeriodDigestMock.mockImplementation(() => current);
+		migrateLegacyPeriodDigestsMock.mockReturnValue({
+			migrated: [],
+			diagnostics: [],
+		});
+
+		await GET({ request: requestFor() });
+		await GET({ request: requestFor() });
+		expect(migrateLegacyPeriodDigestsMock).toHaveBeenCalledTimes(1);
+
+		current = currentDigest();
+		await GET({ request: requestFor() });
+		current = null;
+		await GET({ request: requestFor() });
+
+		expect(migrateLegacyPeriodDigestsMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("throttles legacy recovery independently per period and content source", async () => {
+		readCurrentPeriodDigestMock.mockReturnValue(null);
+		migrateLegacyPeriodDigestsMock.mockReturnValue({
+			migrated: [],
+			diagnostics: [],
+		});
+
+		await GET({ request: requestFor("today", "all") });
+		await GET({ request: requestFor("today", "all") });
+		await GET({ request: requestFor("24h", "following") });
+		await GET({ request: requestFor("24h", "following") });
+
+		expect(migrateLegacyPeriodDigestsMock).toHaveBeenCalledTimes(2);
 	});
 });

@@ -22,9 +22,17 @@ import { syncMentionsEffect } from "./mentions-live";
 import { listDmConversations } from "./dm-read-model";
 import { getTweetsByIds, listTimelineItems } from "./timeline-read-model";
 import {
+	sanitizeOpenAIStreamDiagnostics,
+	type OpenAIStreamDiagnostics,
 	type OpenAIStreamState,
 	processOpenAIResponseSseChunk,
 } from "./openai-response-runtime";
+import {
+	assertDisplayablePeriodDigest,
+	formatPeriodDigestFallbackTitle,
+	isDisplayablePeriodDigest,
+	PERIOD_DIGEST_NO_SUMMARY,
+} from "./period-digest-integrity";
 import {
 	type EffectivePrompt,
 	materializeEffectivePrompt,
@@ -93,6 +101,7 @@ export interface PeriodDigestRunResult {
 	reasoningEffort: string;
 	serviceTier: string;
 	parseStatus: "structured" | "fallback";
+	diagnostics?: OpenAIStreamDiagnostics;
 	cached: boolean;
 	updatedAt: string;
 }
@@ -1032,23 +1041,97 @@ export interface CachedPeriodDigestValue {
 	updatedAt?: string;
 	usage?: unknown;
 	responseId?: string;
+	diagnostics?: OpenAIStreamDiagnostics;
 }
 
 function cachedDigestResult(
-	cached: { value: CachedPeriodDigestValue; updatedAt: string },
-	context: PeriodDigestContext,
-): PeriodDigestRunResult {
-	const digest = PeriodDigestSchema.parse(cached.value.digest);
+	cached: { value: unknown; updatedAt: string },
+	context: unknown,
+): PeriodDigestRunResult | null {
+	if (
+		!cached.value ||
+		typeof cached.value !== "object" ||
+		Array.isArray(cached.value)
+	) {
+		return null;
+	}
+	if (!context || typeof context !== "object" || Array.isArray(context)) {
+		return null;
+	}
+	const value = cached.value as Record<string, unknown>;
+	const cachedContext = context as Partial<PeriodDigestContext>;
+	if (
+		!cachedContext.window ||
+		typeof cachedContext.window !== "object" ||
+		typeof cachedContext.window.label !== "string" ||
+		typeof cachedContext.window.since !== "string" ||
+		typeof cachedContext.window.until !== "string" ||
+		(cachedContext.account !== undefined &&
+			typeof cachedContext.account !== "string") ||
+		typeof cachedContext.includeDms !== "boolean" ||
+		(cachedContext.contentSource !== undefined &&
+			cachedContext.contentSource !== "all" &&
+			cachedContext.contentSource !== "following" &&
+			cachedContext.contentSource !== "for_you") ||
+		!cachedContext.counts ||
+		typeof cachedContext.counts !== "object" ||
+		!Array.isArray(cachedContext.tweets) ||
+		!cachedContext.tweets.every(
+			(tweet) =>
+				Boolean(tweet) &&
+				typeof tweet === "object" &&
+				!Array.isArray(tweet) &&
+				typeof (tweet as { id?: unknown }).id === "string",
+		) ||
+		!Array.isArray(cachedContext.dms) ||
+		!Array.isArray(cachedContext.links) ||
+		typeof cachedContext.hash !== "string"
+	) {
+		return null;
+	}
+	const digest = PeriodDigestSchema.safeParse(value.digest);
+	if (!digest.success) return null;
+	if (
+		typeof value.markdown !== "string" ||
+		typeof value.model !== "string" ||
+		typeof value.reasoningEffort !== "string" ||
+		typeof value.serviceTier !== "string" ||
+		(value.parseStatus !== "structured" && value.parseStatus !== "fallback")
+	) {
+		return null;
+	}
+	const updatedAt = value.updatedAt ?? cached.updatedAt;
+	if (
+		typeof updatedAt !== "string" ||
+		!Number.isFinite(Date.parse(updatedAt))
+	) {
+		return null;
+	}
+	if (
+		!isDisplayablePeriodDigest({
+			digest: digest.data,
+			markdown: value.markdown,
+			parseStatus: value.parseStatus,
+		})
+	) {
+		return null;
+	}
+	const diagnostics = sanitizeOpenAIStreamDiagnostics(value.diagnostics);
+	if (value.diagnostics !== undefined && !diagnostics) return null;
 	return {
-		context: enrichContextWithCitedTweets(context, digest),
-		digest,
-		markdown: cached.value.markdown,
-		model: cached.value.model,
-		reasoningEffort: cached.value.reasoningEffort,
-		serviceTier: cached.value.serviceTier,
-		parseStatus: cached.value.parseStatus,
+		context: enrichContextWithCitedTweets(
+			cachedContext as PeriodDigestContext,
+			digest.data,
+		),
+		digest: digest.data,
+		markdown: value.markdown,
+		model: value.model,
+		reasoningEffort: value.reasoningEffort,
+		serviceTier: value.serviceTier,
+		parseStatus: value.parseStatus,
+		...(diagnostics ? { diagnostics } : {}),
 		cached: true,
-		updatedAt: cached.value.updatedAt ?? cached.updatedAt,
+		updatedAt,
 	};
 }
 
@@ -1057,11 +1140,15 @@ export function readLatestPeriodDigestEffect(
 ): Effect.Effect<PeriodDigestRunResult | null, Error> {
 	return tryDigestSync(() => {
 		const effectivePrompt = resolveEffectivePrompt("period-digest");
-		const cached = readSyncCache<CachedPeriodDigestValue>(
+		const cached = readSyncCache<unknown>(
 			latestDigestCacheKey(options, effectivePrompt.promptHash),
 		);
-		if (!cached?.value.context) return null;
-		return cachedDigestResult(cached, cached.value.context);
+		if (!cached || !cached.value || typeof cached.value !== "object")
+			return null;
+		return cachedDigestResult(
+			cached,
+			(cached.value as Record<string, unknown>).context,
+		);
 	});
 }
 
@@ -1235,16 +1322,16 @@ function fallbackDigest(
 		.split("\n")
 		.map((line) => line.match(/^#{1,6}\s+(.+)$/)?.[1]?.trim())
 		.find(Boolean);
-	const neutralFallback = language ? `[${language}]` : undefined;
+	const neutralFallback = language
+		? formatPeriodDigestFallbackTitle(language)
+		: undefined;
 	return {
 		title:
 			heading?.slice(0, 160) ??
 			neutralFallback ??
 			`${context.window.label} digest`,
 		summary:
-			normalized.slice(0, 280) ||
-			neutralFallback ||
-			"No model summary was returned.",
+			normalized.slice(0, 280) || neutralFallback || PERIOD_DIGEST_NO_SUMMARY,
 		keyTopics: [],
 		notableLinks: [],
 		people: [],
@@ -1319,6 +1406,13 @@ function completeOpenAIStreamEffect(
 	handlers: PeriodDigestStreamHandlers,
 ): Effect.Effect<PeriodDigestRunResult, Error> {
 	return Effect.gen(function* () {
+		yield* tryDigestSync(() =>
+			assertDisplayablePeriodDigest({
+				digest: stream.value,
+				markdown: stream.markdown,
+				parseStatus: stream.parseStatus,
+			}),
+		);
 		const enrichedContext = yield* tryDigestSync(() =>
 			enrichContextWithCitedTweets(context, stream.value),
 		);
@@ -1327,6 +1421,7 @@ function completeOpenAIStreamEffect(
 			options,
 			effectivePrompt.promptHash,
 		);
+		const diagnostics = sanitizeOpenAIStreamDiagnostics(stream.diagnostics);
 		const updatedAt = yield* tryDigestSync(() =>
 			writeSyncCache(cacheKey, {
 				digest: stream.value,
@@ -1337,6 +1432,7 @@ function completeOpenAIStreamEffect(
 				parseStatus: stream.parseStatus,
 				usage: stream.usage,
 				responseId: stream.responseId,
+				...(diagnostics ? { diagnostics } : {}),
 			} satisfies CachedPeriodDigestValue),
 		);
 		const result: PeriodDigestRunResult = {
@@ -1347,6 +1443,7 @@ function completeOpenAIStreamEffect(
 			reasoningEffort: reasoningEffortFromOptions(options),
 			serviceTier: serviceTierFromOptions(options),
 			parseStatus: stream.parseStatus,
+			...(diagnostics ? { diagnostics } : {}),
 			cached: false,
 			updatedAt,
 		};
@@ -1361,6 +1458,7 @@ function completeOpenAIStreamEffect(
 					reasoningEffort: result.reasoningEffort,
 					serviceTier: result.serviceTier,
 					parseStatus: result.parseStatus,
+					...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
 					updatedAt: result.updatedAt,
 				} satisfies CachedPeriodDigestValue,
 			),
@@ -1469,25 +1567,26 @@ export function streamPeriodDigestEffect(
 			? null
 			: !resolvedOptions.liveSync
 				? yield* tryDigestSync(() =>
-						readSyncCache<CachedPeriodDigestValue>(
+						readSyncCache<unknown>(
 							latestDigestCacheKey(resolvedOptions, effectivePrompt.promptHash),
 						),
 					)
 				: null;
-		const latestContext = latestCached?.value.context;
+		const latestContext =
+			latestCached?.value && typeof latestCached.value === "object"
+				? (latestCached.value as Record<string, unknown>).context
+				: undefined;
+		const latestResult = latestCached
+			? yield* tryDigestSync(() =>
+					cachedDigestResult(latestCached, latestContext),
+				)
+			: null;
 		if (
-			latestCached &&
-			latestContext &&
-			isFreshDigestCache(
-				latestCached.value.updatedAt ?? latestCached.updatedAt,
-				resolvedOptions.period,
-			)
+			latestResult &&
+			isFreshDigestCache(latestResult.updatedAt, resolvedOptions.period)
 		) {
-			const result = yield* tryDigestSync(() =>
-				cachedDigestResult(latestCached, latestContext),
-			);
-			emitCachedDigest(result, handlers);
-			return result;
+			emitCachedDigest(latestResult, handlers);
+			return latestResult;
 		}
 
 		yield* refreshPeriodDigestInputsEffect(
@@ -1505,31 +1604,34 @@ export function streamPeriodDigestEffect(
 		);
 		const cached = resolvedOptions.refresh
 			? null
-			: yield* tryDigestSync(() =>
-					readSyncCache<CachedPeriodDigestValue>(cacheKey),
-				);
+			: yield* tryDigestSync(() => readSyncCache<unknown>(cacheKey));
 
 		if (cached) {
 			const result = yield* tryDigestSync(() =>
 				cachedDigestResult(cached, context),
 			);
-			yield* tryDigestSync(() =>
-				writeSyncCache(
-					latestDigestCacheKey(resolvedOptions, effectivePrompt.promptHash),
-					{
-						context: result.context,
-						digest: result.digest,
-						markdown: result.markdown,
-						model: result.model,
-						reasoningEffort: result.reasoningEffort,
-						serviceTier: result.serviceTier,
-						parseStatus: result.parseStatus,
-						updatedAt: result.updatedAt,
-					} satisfies CachedPeriodDigestValue,
-				),
-			);
-			emitCachedDigest(result, handlers);
-			return result;
+			if (result) {
+				yield* tryDigestSync(() =>
+					writeSyncCache(
+						latestDigestCacheKey(resolvedOptions, effectivePrompt.promptHash),
+						{
+							context: result.context,
+							digest: result.digest,
+							markdown: result.markdown,
+							model: result.model,
+							reasoningEffort: result.reasoningEffort,
+							serviceTier: result.serviceTier,
+							parseStatus: result.parseStatus,
+							...(result.diagnostics
+								? { diagnostics: result.diagnostics }
+								: {}),
+							updatedAt: result.updatedAt,
+						} satisfies CachedPeriodDigestValue,
+					),
+				);
+				emitCachedDigest(result, handlers);
+				return result;
+			}
 		}
 
 		yield* refreshPeriodDigestInputsEffect(

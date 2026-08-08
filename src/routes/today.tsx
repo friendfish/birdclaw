@@ -341,6 +341,7 @@ export function TodayRouteView({
 		: (current.result?.context ?? null);
 	const markdown = useArchivedResult ? archived.markdown : current.markdown;
 	const result = useArchivedResult ? archived.result : current.result;
+	const hasDisplayableMarkdown = Boolean(markdown.trim());
 	const loading = useArchivedResult ? archived.loading : current.loading;
 	const digestError = useArchivedResult
 		? archived.error
@@ -385,14 +386,15 @@ export function TodayRouteView({
 		result?.context.window.label ??
 		context?.window.label ??
 		periodLabel(period);
-	const canExportPdf = Boolean(result?.markdown.trim());
+	const canExportPdf = hasDisplayableMarkdown;
 	const exportTitle = `BirdClaw ${digestLabel} digest`;
-	const exportUpdatedAt = result
-		? new Date(result.updatedAt).toLocaleString(undefined, {
-				dateStyle: "medium",
-				timeStyle: "short",
-			})
-		: null;
+	const exportUpdatedAt =
+		result && hasDisplayableMarkdown
+			? new Date(result.updatedAt).toLocaleString(undefined, {
+					dateStyle: "medium",
+					timeStyle: "short",
+				})
+			: null;
 	const displayError = digestError;
 	const retry = isArchivedPeriod ? archived.retry : current.refresh;
 	const handleExportPdf = useCallback(() => {
@@ -544,7 +546,7 @@ export function TodayRouteView({
 				<span className="inline-flex items-center gap-1">
 					{loading || archiveBusy || current.isGenerating ? (
 						<Loader2 className="size-4 animate-spin" aria-hidden="true" />
-					) : markdown ? (
+					) : hasDisplayableMarkdown ? (
 						<CheckCircle2 className="size-4" aria-hidden="true" />
 					) : (
 						<Sparkles className="size-4" aria-hidden="true" />
@@ -555,11 +557,11 @@ export function TodayRouteView({
 							? current.status
 							: loading
 								? status
-								: result
+								: result && hasDisplayableMarkdown
 									? `${result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
 									: digestError
 										? "Digest failed"
-										: "Ready"}
+										: "Waiting"}
 				</span>
 				{result && exportUpdatedAt ? (
 					<time aria-label="Generated at" dateTime={result.updatedAt}>
@@ -568,7 +570,7 @@ export function TodayRouteView({
 				) : null}
 			</div>
 
-			{markdown ? (
+			{hasDisplayableMarkdown ? (
 				<MarkdownViewer
 					context={result?.context ?? context}
 					markdown={markdown}

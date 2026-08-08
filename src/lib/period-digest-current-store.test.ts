@@ -13,9 +13,17 @@ import {
 	readCurrentPeriodDigest,
 } from "./period-digest-current-store";
 import { createServerRuntimeServices } from "./server-runtime-services";
+import NativeSqliteDatabase, { type Database } from "./sqlite";
 import { writeSyncCache } from "./sync-cache";
 
 const testHome = useTestHome({ prefix: "birdclaw-current-digest-" });
+
+const STREAM_DIAGNOSTICS = {
+	responseId: "resp-current-store",
+	finishReason: "stop",
+	visibleTextLength: 42,
+	reasoningTextLength: 7,
+};
 
 function context(
 	label: string,
@@ -73,6 +81,27 @@ function result(
 	};
 }
 
+function placeholderResult(
+	label: string,
+	contentSource: PeriodDigestContentSource,
+	updatedAt = "2026-08-06T08:30:00.000Z",
+): PeriodDigestRunResult {
+	return {
+		...result(label, contentSource, updatedAt),
+		digest: {
+			title: "[zh-CN]",
+			summary: "[zh-CN]",
+			keyTopics: [],
+			notableLinks: [],
+			people: [],
+			actionItems: [],
+			sourceTweetIds: [],
+		},
+		markdown: "# [zh-CN]\n\n[zh-CN]",
+		parseStatus: "fallback",
+	};
+}
+
 describe("current period digest store", () => {
 	it("uses only period and content source as the current-view identity", () => {
 		expect(currentPeriodDigestKey("today", "all")).toBe(
@@ -85,6 +114,12 @@ describe("current period digest store", () => {
 
 	it("atomically replaces a complete source version", () => {
 		const { db } = testHome();
+		const firstResult = result("Today", "following");
+		firstResult.diagnostics = {
+			...STREAM_DIAGNOSTICS,
+			rawText: "must not be persisted",
+			prompt: "must not be persisted",
+		} as never;
 		const first = publishCurrentPeriodDigest(
 			{
 				period: "today",
@@ -92,7 +127,7 @@ describe("current period digest store", () => {
 				runId: "run-1",
 				versionId: "version-1",
 				generatedAt: "2026-08-06T08:30:00.000Z",
-				result: result("Today", "following"),
+				result: firstResult,
 				language: "zh-CN",
 				promptHash: "prompt-1",
 				maxTweets: 5_000,
@@ -115,7 +150,9 @@ describe("current period digest store", () => {
 				maxTweets: 5_000,
 				maxLinks: 20,
 			},
+			diagnostics: STREAM_DIAGNOSTICS,
 		});
+		expect(first.diagnostics).toEqual(STREAM_DIAGNOSTICS);
 
 		publishCurrentPeriodDigest(
 			{
@@ -141,6 +178,103 @@ describe("current period digest store", () => {
 			runId: "run-2",
 			markdown: "# Replacement",
 			sync: { status: "degraded" },
+		});
+	});
+
+	it.each([
+		["blank markdown", { markdown: "" }],
+		["whitespace markdown", { markdown: " \n\t" }],
+		[
+			"placeholder-only digest",
+			{
+				digest: placeholderResult("Today", "all").digest,
+				markdown: placeholderResult("Today", "all").markdown,
+				parseStatus: "fallback" as const,
+			},
+		],
+	])("rejects %s without replacing the valid current row", (_name, invalid) => {
+		const { db } = testHome();
+		publishCurrentPeriodDigest(
+			{
+				period: "today",
+				contentSource: "all",
+				runId: "stable-run",
+				versionId: "stable-version",
+				generatedAt: "2026-08-06T08:30:00.000Z",
+				result: result("Today", "all"),
+				maxTweets: 5_000,
+				maxLinks: 20,
+				sync: { status: "fresh", steps: [] },
+			},
+			db,
+		);
+		const replacement = result("Today", "all", "2026-08-06T09:45:00.000Z");
+
+		expect(() =>
+			publishCurrentPeriodDigest(
+				{
+					period: "today",
+					contentSource: "all",
+					runId: "invalid-run",
+					versionId: "invalid-version",
+					generatedAt: "2026-08-06T09:45:00.000Z",
+					result: { ...replacement, ...invalid },
+					maxTweets: 5_000,
+					maxLinks: 20,
+					sync: { status: "fresh", steps: [] },
+				},
+				db,
+			),
+		).toThrow("Period digest did not contain displayable content");
+		expect(readCurrentPeriodDigest("today", "all", db)).toMatchObject({
+			versionId: "stable-version",
+			generatedAt: "2026-08-06T08:30:00.000Z",
+			markdown: "# Today all",
+		});
+	});
+
+	it("rejects invalid diagnostics without replacing the valid current row", () => {
+		const { db } = testHome();
+		publishCurrentPeriodDigest(
+			{
+				period: "today",
+				contentSource: "all",
+				runId: "stable-run",
+				versionId: "stable-version",
+				generatedAt: "2026-08-06T08:30:00.000Z",
+				result: result("Today", "all"),
+				maxTweets: 5_000,
+				maxLinks: 20,
+				sync: { status: "fresh", steps: [] },
+			},
+			db,
+		);
+		const invalidResult = result("Today", "all", "2026-08-06T09:45:00.000Z");
+		invalidResult.diagnostics = {
+			...STREAM_DIAGNOSTICS,
+			reasoningTextLength: -1,
+		};
+
+		expect(() =>
+			publishCurrentPeriodDigest(
+				{
+					period: "today",
+					contentSource: "all",
+					runId: "invalid-run",
+					versionId: "invalid-version",
+					generatedAt: "2026-08-06T09:45:00.000Z",
+					result: invalidResult,
+					maxTweets: 5_000,
+					maxLinks: 20,
+					sync: { status: "fresh", steps: [] },
+				},
+				db,
+			),
+		).toThrow("Period digest diagnostics were invalid");
+		expect(readCurrentPeriodDigest("today", "all", db)).toMatchObject({
+			versionId: "stable-version",
+			generatedAt: "2026-08-06T08:30:00.000Z",
+			markdown: "# Today all",
 		});
 	});
 
@@ -261,6 +395,232 @@ describe("current period digest store", () => {
 		});
 	});
 
+	it("recovers an invalid stable row from the newest displayable legacy row", () => {
+		const { db } = testHome();
+		const stable = publishCurrentPeriodDigest(
+			{
+				period: "today",
+				contentSource: "all",
+				runId: "invalid-stable-run",
+				versionId: "invalid-stable-version",
+				generatedAt: "2026-08-06T10:00:00.000Z",
+				result: result("Today", "all", "2026-08-06T10:00:00.000Z"),
+				maxTweets: 5_000,
+				maxLinks: 20,
+				sync: { status: "fresh", steps: [] },
+			},
+			db,
+		);
+		writeSyncCache(
+			currentPeriodDigestKey("today", "all"),
+			{ ...stable, markdown: " \n\t" },
+			db,
+		);
+		writeSyncCache(
+			"period-digest-latest:v1:newer-invalid",
+			{
+				...placeholderResult("Today", "all", "2026-08-06T09:00:00.000Z"),
+				context: context("Today", "all"),
+			},
+			db,
+			createServerRuntimeServices({
+				now: () => new Date("2026-08-06T09:00:01.000Z"),
+			}),
+		);
+		writeSyncCache(
+			"period-digest-latest:v1:older-valid",
+			{
+				...result("Today", "all", "2026-08-06T08:00:00.000Z"),
+				context: context("Today", "all"),
+				diagnostics: {
+					...STREAM_DIAGNOSTICS,
+					rawText: "legacy raw text must be dropped",
+				},
+			},
+			db,
+			createServerRuntimeServices({
+				now: () => new Date("2026-08-06T08:00:01.000Z"),
+			}),
+		);
+
+		expect(readCurrentPeriodDigest("today", "all", db)).toBeNull();
+		const migration = migrateLegacyPeriodDigests(db);
+
+		expect(migration.migrated).toEqual([
+			{ period: "today", contentSource: "all" },
+		]);
+		expect(migration.diagnostics).toEqual(
+			expect.arrayContaining([
+				{
+					cacheKey: "period-digest-latest:v1:newer-invalid",
+					reason: "invalid-payload",
+				},
+			]),
+		);
+		expect(readCurrentPeriodDigest("today", "all", db)).toMatchObject({
+			runId: "legacy-migration",
+			generatedAt: "2026-08-06T08:00:00.000Z",
+			markdown: "# Today all",
+			diagnostics: STREAM_DIAGNOSTICS,
+			migratedFromLegacy: true,
+		});
+		expect(readCurrentPeriodDigest("today", "all", db)?.diagnostics).toEqual(
+			STREAM_DIAGNOSTICS,
+		);
+	});
+
+	it("recovers when the stable key contains a valid payload for another identity", () => {
+		const { db } = testHome();
+		const misplaced = publishCurrentPeriodDigest(
+			{
+				period: "24h",
+				contentSource: "following",
+				runId: "misplaced-run",
+				versionId: "misplaced-version",
+				generatedAt: "2026-08-06T10:00:00.000Z",
+				result: result(
+					"Last 24 hours",
+					"following",
+					"2026-08-06T10:00:00.000Z",
+				),
+				maxTweets: 5_000,
+				maxLinks: 20,
+				sync: { status: "fresh", steps: [] },
+			},
+			db,
+		);
+		writeSyncCache(currentPeriodDigestKey("today", "all"), misplaced, db);
+		writeSyncCache(
+			"period-digest-latest:v1:identity-recovery",
+			{
+				...result("Today", "all", "2026-08-06T08:00:00.000Z"),
+				context: context("Today", "all"),
+			},
+			db,
+		);
+
+		expect(readCurrentPeriodDigest("today", "all", db)).toBeNull();
+		expect(migrateLegacyPeriodDigests(db).migrated).toContainEqual({
+			period: "today",
+			contentSource: "all",
+		});
+		expect(readCurrentPeriodDigest("today", "all", db)).toMatchObject({
+			period: "today",
+			contentSource: "all",
+			runId: "legacy-migration",
+		});
+	});
+
+	it("keeps the stable check and legacy write atomic against concurrent publication", () => {
+		const { db, paths } = testHome();
+		writeSyncCache(
+			"period-digest-latest:v1:migration-race",
+			{
+				...result("Today", "all", "2026-08-06T08:00:00.000Z"),
+				context: context("Today", "all"),
+			},
+			db,
+		);
+		const concurrentDb = new NativeSqliteDatabase(paths.dbPath);
+		let transactionDepth = 0;
+		let queuedConcurrentPublication = false;
+		let legacyScanInsideTransaction: boolean | undefined;
+		let stableReadInsideTransaction: boolean | undefined;
+		let stableWriteInsideTransaction: boolean | undefined;
+		const publishConcurrentCurrent = () => {
+			publishCurrentPeriodDigest(
+				{
+					period: "today",
+					contentSource: "all",
+					runId: "concurrent-run",
+					versionId: "concurrent-version",
+					generatedAt: "2026-08-06T09:00:00.000Z",
+					result: result("Today", "all", "2026-08-06T09:00:00.000Z"),
+					maxTweets: 5_000,
+					maxLinks: 20,
+					sync: { status: "fresh", steps: [] },
+				},
+				concurrentDb,
+			);
+		};
+		const migrationDb = new Proxy(db, {
+			get(target, property) {
+				if (property === "transaction") {
+					return (run: () => unknown) => () => {
+						transactionDepth += 1;
+						try {
+							return target.transaction(run)();
+						} finally {
+							transactionDepth -= 1;
+							if (queuedConcurrentPublication) {
+								queuedConcurrentPublication = false;
+								publishConcurrentCurrent();
+							}
+						}
+					};
+				}
+				if (property === "prepare") {
+					return (sql: string) => {
+						const statement = target.prepare(sql);
+						if (sql.includes("cache_key like 'period-digest-latest:%'")) {
+							legacyScanInsideTransaction = transactionDepth > 0;
+						}
+						if (sql.includes("select value_json, updated_at")) {
+							return new Proxy(statement, {
+								get(statementTarget, statementProperty) {
+									if (statementProperty !== "get") {
+										const value = Reflect.get(
+											statementTarget,
+											statementProperty,
+											statementTarget,
+										);
+										return typeof value === "function"
+											? value.bind(statementTarget)
+											: value;
+									}
+									return (...parameters: unknown[]) => {
+										const cached = statementTarget.get(...parameters);
+										stableReadInsideTransaction = transactionDepth > 0;
+										if (transactionDepth > 0) {
+											queuedConcurrentPublication = true;
+										} else {
+											publishConcurrentCurrent();
+										}
+										return cached;
+									};
+								},
+							});
+						}
+						if (sql.includes("insert into sync_cache")) {
+							stableWriteInsideTransaction = transactionDepth > 0;
+						}
+						return statement;
+					};
+				}
+				const value = Reflect.get(target, property, target);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		}) as Database;
+
+		try {
+			const migration = migrateLegacyPeriodDigests(migrationDb);
+
+			expect(migration.migrated).toEqual([
+				{ period: "today", contentSource: "all" },
+			]);
+			expect(legacyScanInsideTransaction).toBe(false);
+			expect(stableReadInsideTransaction).toBe(true);
+			expect(stableWriteInsideTransaction).toBe(true);
+			expect(readCurrentPeriodDigest("today", "all", db)).toMatchObject({
+				runId: "concurrent-run",
+				versionId: "concurrent-version",
+				generatedAt: "2026-08-06T09:00:00.000Z",
+			});
+		} finally {
+			concurrentDb.close();
+		}
+	});
+
 	it("rejects incomplete or incompatible stable current rows", () => {
 		const { db } = testHome();
 		const valid = publishCurrentPeriodDigest(
@@ -290,6 +650,14 @@ describe("current period digest store", () => {
 			{ ...valid, context: null },
 			{ ...valid, context: { ...valid.context, window: null } },
 			{ ...valid, markdown: 1 },
+			{ ...valid, markdown: "" },
+			{ ...valid, markdown: " \n\t" },
+			{
+				...valid,
+				digest: placeholderResult("Today", "all").digest,
+				markdown: placeholderResult("Today", "all").markdown,
+				parseStatus: "fallback",
+			},
 			{ ...valid, model: 1 },
 			{ ...valid, reasoningEffort: 1 },
 			{ ...valid, serviceTier: 1 },
@@ -298,6 +666,13 @@ describe("current period digest store", () => {
 			{ ...valid, input: { ...valid.input, maxTweets: "5000" } },
 			{ ...valid, input: { ...valid.input, maxLinks: "20" } },
 			{ ...valid, sync: null },
+			{
+				...valid,
+				diagnostics: {
+					visibleTextLength: "42",
+					reasoningTextLength: 7,
+				},
+			},
 			{ ...valid, digest: { title: "missing required fields" } },
 		];
 

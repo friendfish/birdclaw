@@ -11,6 +11,14 @@ import type {
 	PeriodDigestRunResult,
 } from "./period-digest";
 import {
+	assertDisplayablePeriodDigest,
+	isDisplayablePeriodDigest,
+} from "./period-digest-integrity";
+import {
+	sanitizeOpenAIStreamDiagnostics,
+	type OpenAIStreamDiagnostics,
+} from "./openai-response-runtime";
+import {
 	defaultServerRuntimeServices,
 	type ServerRuntimeServices,
 } from "./server-runtime-services";
@@ -43,6 +51,7 @@ export interface CurrentPeriodDigestV1 {
 	reasoningEffort: string;
 	serviceTier: string;
 	parseStatus: "structured" | "fallback";
+	diagnostics?: OpenAIStreamDiagnostics;
 	input: CurrentPeriodDigestInput;
 	sync: DigestArchiveSyncResult;
 	migratedFromLegacy?: boolean;
@@ -163,6 +172,10 @@ function isPeriodDigestContext(value: unknown): value is PeriodDigestContext {
 
 function parseCurrentPeriodDigest(
 	value: unknown,
+	expected?: {
+		period: CurrentPeriodDigestPeriod;
+		contentSource: PeriodDigestContentSource;
+	},
 ): CurrentPeriodDigestV1 | null {
 	if (
 		!isRecord(value) ||
@@ -183,9 +196,31 @@ function parseCurrentPeriodDigest(
 	) {
 		return null;
 	}
+	if (
+		expected &&
+		(value.period !== expected.period ||
+			value.contentSource !== expected.contentSource)
+	) {
+		return null;
+	}
 	const digest = periodDigestSchema.safeParse(value.digest);
 	if (!digest.success) return null;
-	return { ...value, digest: digest.data } as unknown as CurrentPeriodDigestV1;
+	const diagnostics = sanitizeOpenAIStreamDiagnostics(value.diagnostics);
+	if (
+		!isDisplayablePeriodDigest({
+			digest: digest.data,
+			markdown: value.markdown,
+			parseStatus: value.parseStatus,
+		}) ||
+		(value.diagnostics !== undefined && !diagnostics)
+	) {
+		return null;
+	}
+	return {
+		...value,
+		digest: digest.data,
+		...(diagnostics ? { diagnostics } : {}),
+	} as unknown as CurrentPeriodDigestV1;
 }
 
 export function publishCurrentPeriodDigest(
@@ -193,6 +228,11 @@ export function publishCurrentPeriodDigest(
 	db: Database = getNativeDb(),
 	runtime: ServerRuntimeServices = defaultServerRuntimeServices,
 ): CurrentPeriodDigestV1 {
+	assertDisplayablePeriodDigest(input.result);
+	const diagnostics = sanitizeOpenAIStreamDiagnostics(input.result.diagnostics);
+	if (input.result.diagnostics !== undefined && !diagnostics) {
+		throw new Error("Period digest diagnostics were invalid");
+	}
 	const value: CurrentPeriodDigestV1 = {
 		schemaVersion: 1,
 		period: input.period,
@@ -209,6 +249,7 @@ export function publishCurrentPeriodDigest(
 		reasoningEffort: input.result.reasoningEffort,
 		serviceTier: input.result.serviceTier,
 		parseStatus: input.result.parseStatus,
+		...(diagnostics ? { diagnostics } : {}),
 		input: {
 			provenance: "generated",
 			maxTweets: input.maxTweets,
@@ -235,7 +276,9 @@ export function readCurrentPeriodDigest(
 		currentPeriodDigestKey(period, contentSource),
 		db,
 	);
-	return cached ? parseCurrentPeriodDigest(cached.value) : null;
+	return cached
+		? parseCurrentPeriodDigest(cached.value, { period, contentSource })
+		: null;
 }
 
 function parseLegacyCandidate(
@@ -265,6 +308,7 @@ function parseLegacyCandidate(
 	const period = LEGACY_PERIOD_LABELS[value.context.window.label];
 	if (!period) return { reason: "unknown-period-label" };
 	const digest = periodDigestSchema.safeParse(value.digest);
+	const diagnostics = sanitizeOpenAIStreamDiagnostics(value.diagnostics);
 	const generatedAt = isIsoTimestamp(value.updatedAt)
 		? value.updatedAt
 		: isIsoTimestamp(row.updated_at)
@@ -277,7 +321,17 @@ function parseLegacyCandidate(
 		typeof value.model !== "string" ||
 		typeof value.reasoningEffort !== "string" ||
 		typeof value.serviceTier !== "string" ||
-		(value.parseStatus !== "structured" && value.parseStatus !== "fallback")
+		(value.parseStatus !== "structured" && value.parseStatus !== "fallback") ||
+		(value.diagnostics !== undefined && !diagnostics)
+	) {
+		return { reason: "invalid-payload" };
+	}
+	if (
+		!isDisplayablePeriodDigest({
+			digest: digest.data,
+			markdown: value.markdown,
+			parseStatus: value.parseStatus,
+		})
 	) {
 		return { reason: "invalid-payload" };
 	}
@@ -295,6 +349,7 @@ function parseLegacyCandidate(
 				reasoningEffort: value.reasoningEffort,
 				serviceTier: value.serviceTier,
 				parseStatus: value.parseStatus,
+				...(diagnostics ? { diagnostics } : {}),
 				cached: true,
 				updatedAt: generatedAt,
 			},
@@ -338,35 +393,46 @@ export function migrateLegacyPeriodDigests(
 
 	const migrated: LegacyDigestMigrationResult["migrated"] = [];
 	for (const [logicalKey, candidate] of newest) {
-		if (readSyncCache(logicalKey, db)) {
+		const outcome = db.transaction(() => {
+			if (
+				readCurrentPeriodDigest(candidate.period, candidate.contentSource, db)
+			) {
+				return "stable-exists" as const;
+			}
+			const versionId = `legacy-${createHash("sha1")
+				.update(`${candidate.cacheKey}:${candidate.generatedAt}`)
+				.digest("hex")}`;
+			const value: CurrentPeriodDigestV1 = {
+				schemaVersion: 1,
+				period: candidate.period,
+				contentSource: candidate.contentSource,
+				runId: "legacy-migration",
+				versionId,
+				generatedAt: candidate.generatedAt,
+				context: candidate.result.context,
+				digest: candidate.result.digest,
+				markdown: candidate.result.markdown,
+				model: candidate.result.model,
+				reasoningEffort: candidate.result.reasoningEffort,
+				serviceTier: candidate.result.serviceTier,
+				parseStatus: candidate.result.parseStatus,
+				...(candidate.result.diagnostics
+					? { diagnostics: candidate.result.diagnostics }
+					: {}),
+				input: { provenance: "legacy-unknown" },
+				sync: { status: "skipped", steps: [] },
+				migratedFromLegacy: true,
+			};
+			writeSyncCache(logicalKey, value, db, runtime);
+			return "migrated" as const;
+		})();
+		if (outcome === "stable-exists") {
 			diagnostics.push({
 				cacheKey: candidate.cacheKey,
 				reason: "stable-result-exists",
 			});
 			continue;
 		}
-		const versionId = `legacy-${createHash("sha1")
-			.update(`${candidate.cacheKey}:${candidate.generatedAt}`)
-			.digest("hex")}`;
-		const value: CurrentPeriodDigestV1 = {
-			schemaVersion: 1,
-			period: candidate.period,
-			contentSource: candidate.contentSource,
-			runId: "legacy-migration",
-			versionId,
-			generatedAt: candidate.generatedAt,
-			context: candidate.result.context,
-			digest: candidate.result.digest,
-			markdown: candidate.result.markdown,
-			model: candidate.result.model,
-			reasoningEffort: candidate.result.reasoningEffort,
-			serviceTier: candidate.result.serviceTier,
-			parseStatus: candidate.result.parseStatus,
-			input: { provenance: "legacy-unknown" },
-			sync: { status: "skipped", steps: [] },
-			migratedFromLegacy: true,
-		};
-		writeSyncCache(logicalKey, value, db, runtime);
 		migrated.push({
 			period: candidate.period,
 			contentSource: candidate.contentSource,
