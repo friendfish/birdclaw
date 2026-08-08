@@ -940,4 +940,56 @@ describe("period digest orchestrator", () => {
 		expect(JSON.stringify(state)).not.toContain("legacy prompt");
 		expect(JSON.stringify(state)).not.toContain("invalid diagnostics");
 	});
+
+	it("discards malformed source entries when reading persisted run state", async () => {
+		const statePath = periodDigestRunStatePath("today");
+		await fs.mkdir(path.dirname(statePath), { recursive: true });
+		await fs.writeFile(
+			statePath,
+			JSON.stringify({
+				schemaVersion: 1,
+				runId: "malformed-sources-run",
+				period: "today",
+				startedBy: { trigger: "scheduled", origin: "launchd" },
+				joinedBy: [],
+				sourceOrder: ["all", "following", "for_you"],
+				ownerId: "legacy-owner",
+				pid: 123,
+				host: "legacy-host",
+				startedAt: "2026-08-06T08:00:00.000Z",
+				heartbeatAt: "2026-08-06T08:05:00.000Z",
+				phase: "degraded",
+				sources: {
+					all: {
+						state: "completed",
+						attempts: 1,
+						diagnostics: {
+							responseId: "resp_valid",
+							visibleTextLength: 42,
+							reasoningTextLength: 7,
+							rawText: "must not escape",
+						},
+					},
+					following: null,
+					for_you: [],
+					unknown: "malformed",
+				},
+			}),
+			"utf8",
+		);
+
+		const state = await readPeriodDigestRunState("today");
+
+		expect(state?.sources).toEqual({
+			all: {
+				state: "completed",
+				attempts: 1,
+				diagnostics: {
+					responseId: "resp_valid",
+					visibleTextLength: 42,
+					reasoningTextLength: 7,
+				},
+			},
+		});
+	});
 });

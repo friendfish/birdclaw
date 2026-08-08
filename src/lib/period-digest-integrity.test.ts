@@ -59,12 +59,12 @@ describe("period digest displayability", () => {
 		},
 	);
 
-	test("rejects a placeholder-only language marker digest", () => {
+	test("rejects a placeholder-only language marker fallback", () => {
 		expect(
 			isDisplayablePeriodDigest({
 				digest: digest({ title: "[zh-CN]", summary: "[zh-CN]" }),
 				markdown: "# Placeholder shell",
-				parseStatus: "structured",
+				parseStatus: "fallback",
 			}),
 		).toBe(false);
 	});
@@ -83,19 +83,29 @@ describe("period digest displayability", () => {
 			isDisplayablePeriodDigest({
 				digest: value,
 				markdown: "# Placeholder shell",
-				parseStatus: "structured",
+				parseStatus: "fallback",
 			}),
 		).toBe(false);
 	});
 
-	test("rejects the no-model-summary fallback sentinel", () => {
+	test("applies the no-model-summary sentinel only to fallback results", () => {
+		const sentinelOnly = digest({ summary: "No model summary was returned." });
+		const markdown = "# Placeholder shell";
+
 		expect(
 			isDisplayablePeriodDigest({
-				digest: digest({ summary: "No model summary was returned." }),
-				markdown: "# Placeholder shell",
+				digest: sentinelOnly,
+				markdown,
 				parseStatus: "fallback",
 			}),
 		).toBe(false);
+		expect(
+			isDisplayablePeriodDigest({
+				digest: sentinelOnly,
+				markdown,
+				parseStatus: "structured",
+			}),
+		).toBe(true);
 	});
 
 	test("does not treat source tweet IDs as displayable semantic content", () => {
@@ -107,7 +117,7 @@ describe("period digest displayability", () => {
 					sourceTweetIds: ["tweet_1"],
 				}),
 				markdown: "# Placeholder shell",
-				parseStatus: "structured",
+				parseStatus: "fallback",
 			}),
 		).toBe(false);
 	});
@@ -166,7 +176,7 @@ describe("period digest displayability", () => {
 				isDisplayablePeriodDigest({
 					digest: value,
 					markdown: "# Placeholder shell",
-					parseStatus: "structured",
+					parseStatus: "fallback",
 				}),
 			).toBe(false);
 		},
@@ -215,7 +225,7 @@ describe("period digest displayability", () => {
 				isDisplayablePeriodDigest({
 					digest: value,
 					markdown: "# Release notes",
-					parseStatus: "structured",
+					parseStatus: "fallback",
 				}),
 			).toBe(true);
 		}
@@ -230,7 +240,7 @@ describe("period digest displayability", () => {
 					people: [{ handle: "birdclaw", why: "Shared an update." }],
 				}),
 				markdown: " \n\t ",
-				parseStatus: "structured",
+				parseStatus: "fallback",
 			}),
 		).toThrow("Period digest did not contain displayable content");
 	});
@@ -241,7 +251,7 @@ describe("period digest displayability", () => {
 			assertDisplayablePeriodDigest({
 				digest: digest({ title: "[zh-CN]", summary: "[zh-CN]" }),
 				markdown: "# Placeholder shell",
-				parseStatus: "structured",
+				parseStatus: "fallback",
 			});
 		} catch (error) {
 			thrown = error;

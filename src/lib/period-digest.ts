@@ -29,7 +29,9 @@ import {
 } from "./openai-response-runtime";
 import {
 	assertDisplayablePeriodDigest,
+	formatPeriodDigestFallbackTitle,
 	isDisplayablePeriodDigest,
+	PERIOD_DIGEST_NO_SUMMARY,
 } from "./period-digest-integrity";
 import {
 	type EffectivePrompt,
@@ -1320,16 +1322,16 @@ function fallbackDigest(
 		.split("\n")
 		.map((line) => line.match(/^#{1,6}\s+(.+)$/)?.[1]?.trim())
 		.find(Boolean);
-	const neutralFallback = language ? `[${language}]` : undefined;
+	const neutralFallback = language
+		? formatPeriodDigestFallbackTitle(language)
+		: undefined;
 	return {
 		title:
 			heading?.slice(0, 160) ??
 			neutralFallback ??
 			`${context.window.label} digest`,
 		summary:
-			normalized.slice(0, 280) ||
-			neutralFallback ||
-			"No model summary was returned.",
+			normalized.slice(0, 280) || neutralFallback || PERIOD_DIGEST_NO_SUMMARY,
 		keyTopics: [],
 		notableLinks: [],
 		people: [],
@@ -1419,9 +1421,9 @@ function completeOpenAIStreamEffect(
 			options,
 			effectivePrompt.promptHash,
 		);
-		const updatedAt = yield* tryDigestSync(() => {
-			const diagnostics = sanitizeOpenAIStreamDiagnostics(stream.diagnostics);
-			return writeSyncCache(cacheKey, {
+		const diagnostics = sanitizeOpenAIStreamDiagnostics(stream.diagnostics);
+		const updatedAt = yield* tryDigestSync(() =>
+			writeSyncCache(cacheKey, {
 				digest: stream.value,
 				markdown: stream.markdown,
 				model: modelFromOptions(options),
@@ -1431,9 +1433,8 @@ function completeOpenAIStreamEffect(
 				usage: stream.usage,
 				responseId: stream.responseId,
 				...(diagnostics ? { diagnostics } : {}),
-			} satisfies CachedPeriodDigestValue);
-		});
-		const diagnostics = sanitizeOpenAIStreamDiagnostics(stream.diagnostics);
+			} satisfies CachedPeriodDigestValue),
+		);
 		const result: PeriodDigestRunResult = {
 			context: enrichedContext,
 			digest: stream.value,

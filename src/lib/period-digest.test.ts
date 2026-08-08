@@ -16,6 +16,11 @@ import {
 	streamPeriodDigestEffect,
 	streamPeriodDigestPlayground,
 } from "./period-digest";
+import {
+	formatPeriodDigestFallbackTitle,
+	isDisplayablePeriodDigest,
+	PERIOD_DIGEST_NO_SUMMARY,
+} from "./period-digest-integrity";
 import { getTweetsByIds } from "./queries";
 import { resolveEffectivePrompt } from "./prompt-templates";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
@@ -713,35 +718,35 @@ describe("period digest", () => {
 				sourceTweetIds: [],
 			},
 		],
-	])("does not cache %s with visible Markdown", async (_label, digest) => {
-		const streamed = [
-			sseFrame({
-				type: "response.output_text.delta",
-				delta: `# Placeholder shell\n\n---\n${JSON.stringify(digest)}`,
-			}),
-			"data: [DONE]\n\n",
-		].join("");
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamResponse(streamed)));
-		const db = getNativeDb();
-		const cacheKeys = () =>
-			db
-				.prepare(
-					"select cache_key from sync_cache where cache_key like 'period-digest:v2:%' or cache_key like 'period-digest-latest:%' order by cache_key",
-				)
-				.all() as Array<{ cache_key: string }>;
-		const before = cacheKeys();
+	])(
+		"accepts %s from structured model output with visible Markdown",
+		async (_label, digest) => {
+			const streamed = [
+				sseFrame({
+					type: "response.output_text.delta",
+					delta: `# Placeholder shell\n\n---\n${JSON.stringify(digest)}`,
+				}),
+				"data: [DONE]\n\n",
+			].join("");
+			vi.stubGlobal(
+				"fetch",
+				vi.fn().mockResolvedValue(streamResponse(streamed)),
+			);
 
-		await expect(
-			streamPeriodDigest({
+			const result = await streamPeriodDigest({
 				since: "2026-01-01T00:00:00.000Z",
 				until: "2027-01-01T00:00:00.000Z",
 				refresh: true,
 				language: "zh-CN",
-			}),
-		).rejects.toThrow("displayable content");
+			});
 
-		expect(cacheKeys()).toEqual(before);
-	});
+			expect(result).toMatchObject({
+				digest,
+				markdown: "# Placeholder shell",
+				parseStatus: "structured",
+			});
+		},
+	);
 
 	it("runs playground drafts locally without writing digest caches", async () => {
 		vi.useFakeTimers();
@@ -1416,8 +1421,24 @@ describe("period digest", () => {
 			"\n---\n{bad",
 			"ja",
 		);
-		expect(empty.digest.title).toBe("[ja]");
-		expect(empty.digest.summary).toBe("[ja]");
+		expect(empty.digest.title).toBe(formatPeriodDigestFallbackTitle("ja"));
+		expect(empty.digest.summary).toBe(formatPeriodDigestFallbackTitle("ja"));
+
+		const unlocalizedEmpty = __test__.parseDigestFromHybridText(
+			collectPeriodDigestContext({
+				since: "2026-01-01T00:00:00.000Z",
+				until: "2027-01-01T00:00:00.000Z",
+			}),
+			"\n---\n{bad",
+		);
+		expect(unlocalizedEmpty.digest.summary).toBe(PERIOD_DIGEST_NO_SUMMARY);
+		expect(
+			isDisplayablePeriodDigest({
+				digest: unlocalizedEmpty.digest,
+				markdown: "# Placeholder shell",
+				parseStatus: unlocalizedEmpty.parseStatus,
+			}),
+		).toBe(false);
 	});
 
 	describe("digest freshness configuration", () => {

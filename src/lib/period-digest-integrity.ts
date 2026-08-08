@@ -7,7 +7,12 @@ export interface DisplayablePeriodDigestInput {
 }
 
 const LANGUAGE_MARKER = /^\[[^\]\r\n]+\]$/;
-const NO_MODEL_SUMMARY = "No model summary was returned.";
+
+export const PERIOD_DIGEST_NO_SUMMARY = "No model summary was returned.";
+
+export function formatPeriodDigestFallbackTitle(language: string) {
+	return `[${language}]`;
+}
 
 function hasDisplayText(value: string) {
 	return value.trim().length > 0;
@@ -31,22 +36,22 @@ function hasStructuredDetails(digest: PeriodDigest) {
 	);
 }
 
-function isPlaceholderOnlyDigest(digest: PeriodDigest) {
+function isPlaceholderOnlyDigest(input: DisplayablePeriodDigestInput) {
+	if (input.parseStatus !== "fallback") return false;
+	const { digest } = input;
 	if (hasStructuredDetails(digest)) return false;
 	const title = digest.title.trim();
 	const summary = digest.summary.trim();
 	return (
 		(LANGUAGE_MARKER.test(title) && LANGUAGE_MARKER.test(summary)) ||
-		summary === NO_MODEL_SUMMARY
+		summary === PERIOD_DIGEST_NO_SUMMARY
 	);
 }
 
 export function isDisplayablePeriodDigest(
 	input: DisplayablePeriodDigestInput,
 ): boolean {
-	return (
-		input.markdown.trim().length > 0 && !isPlaceholderOnlyDigest(input.digest)
-	);
+	return input.markdown.trim().length > 0 && !isPlaceholderOnlyDigest(input);
 }
 
 export function assertDisplayablePeriodDigest(

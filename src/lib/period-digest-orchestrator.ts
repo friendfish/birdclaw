@@ -269,17 +269,17 @@ function parseRunState(value: unknown): PeriodDigestRunStateV1 | undefined {
 		return undefined;
 	}
 	const sources = Object.fromEntries(
-		Object.entries(state.sources).map(([source, sourceState]) => {
+		Object.entries(state.sources).flatMap(([source, sourceState]) => {
 			if (
 				!sourceState ||
 				typeof sourceState !== "object" ||
 				Array.isArray(sourceState)
 			) {
-				return [source, sourceState];
+				return [];
 			}
 			const { diagnostics: untrustedDiagnostics, ...rest } = sourceState;
 			const diagnostics = sanitizeOpenAIStreamDiagnostics(untrustedDiagnostics);
-			return [source, { ...rest, ...(diagnostics ? { diagnostics } : {}) }];
+			return [[source, { ...rest, ...(diagnostics ? { diagnostics } : {}) }]];
 		}),
 	);
 	return { ...state, sources } as PeriodDigestRunStateV1;
