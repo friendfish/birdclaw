@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { PeriodDigest } from "./analysis-result-contracts";
 import {
 	assertDisplayablePeriodDigest,
+	formatPeriodDigestFallbackTitle,
 	isDisplayablePeriodDigest,
 } from "./period-digest-integrity";
 
@@ -63,6 +64,18 @@ describe("period digest displayability", () => {
 		expect(
 			isDisplayablePeriodDigest({
 				digest: digest({ title: "[zh-CN]", summary: "[zh-CN]" }),
+				markdown: "# Placeholder shell",
+				parseStatus: "fallback",
+			}),
+		).toBe(false);
+	});
+
+	test("keeps the fallback title formatter in sync with language marker recognition", () => {
+		const marker = formatPeriodDigestFallbackTitle("zh-CN");
+
+		expect(
+			isDisplayablePeriodDigest({
+				digest: digest({ title: marker, summary: marker }),
 				markdown: "# Placeholder shell",
 				parseStatus: "fallback",
 			}),
