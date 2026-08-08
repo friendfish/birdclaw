@@ -70,7 +70,7 @@ describe("period digest displayability", () => {
 		).toBe(false);
 	});
 
-	test("rejects the production fallback language marker", () => {
+	test("keeps the fallback title formatter in sync with language marker recognition", () => {
 		const marker = formatPeriodDigestFallbackTitle("zh-CN");
 
 		expect(
