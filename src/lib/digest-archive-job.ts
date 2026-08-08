@@ -316,6 +316,17 @@ export function resolveDigestArchivePaths({
 	period: PeriodDigestPreset;
 	contentSource: PeriodDigestContentSource;
 }) {
+	const root = path.resolve(archiveDir);
+	const candidate = path.resolve(root, runDate);
+	const relative = path.relative(root, candidate);
+	if (
+		relative === ".." ||
+		relative.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(relative)
+	) {
+		throw new Error("Archive path escapes archive directory");
+	}
+
 	const base = path.join(archiveDir, runDate, `${period}-${contentSource}`);
 	return { markdownPath: `${base}.md`, jsonPath: `${base}.json` };
 }

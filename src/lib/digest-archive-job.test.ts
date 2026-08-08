@@ -52,6 +52,40 @@ import {
 import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import { runEffectPromise } from "./effect-runtime";
 
+describe("resolveDigestArchivePaths", () => {
+	it("preserves relative archive paths", () => {
+		const archiveDir = path.join("relative", "archive");
+
+		expect(
+			resolveDigestArchivePaths({
+				archiveDir,
+				runDate: "2026-07-21",
+				period: "yesterday",
+				contentSource: "all",
+			}),
+		).toEqual({
+			markdownPath: path.join(archiveDir, "2026-07-21", "yesterday-all.md"),
+			jsonPath: path.join(archiveDir, "2026-07-21", "yesterday-all.json"),
+		});
+	});
+
+	it.each([
+		["parent", "../outside"],
+		["nested parent", "../../outside"],
+		["sibling with the same prefix", "../archive-other"],
+		["absolute", path.resolve(path.sep, "outside")],
+	])("rejects %s archive path escapes", (_name, runDate) => {
+		expect(() =>
+			resolveDigestArchivePaths({
+				archiveDir: path.join("relative", "archive"),
+				runDate,
+				period: "yesterday",
+				contentSource: "all",
+			}),
+		).toThrow("Archive path escapes archive directory");
+	});
+});
+
 const tempRoots: string[] = [];
 const tempArchiveDirs: string[] = [];
 
