@@ -82,6 +82,71 @@ describe("api digest-archive-entry route", () => {
 		expect(await response.json()).toEqual({ ok: true, result: null });
 	});
 
+	it("defaults an entry request with only a date to yesterday and all", async () => {
+		resolveDigestArchiveDirMock.mockReturnValue("/tmp/archive");
+		readDigestArchiveEntryEffectMock.mockResolvedValue(null);
+
+		const response = await GET({
+			request: new Request(
+				"http://localhost/api/digest-archive-entry?date=2024-02-29",
+			),
+		});
+
+		expect(response.status).toBe(200);
+		expect(readDigestArchiveEntryEffectMock).toHaveBeenCalledWith({
+			archiveDir: "/tmp/archive",
+			period: "yesterday",
+			contentSource: "all",
+			date: "2024-02-29",
+		});
+	});
+
+	it.each([
+		{
+			query: "period=month&contentSource=all&date=2026-07-21",
+			error: "Archive period must be yesterday or week.",
+		},
+		{
+			query: "period=yesterday&contentSource=private&date=2026-07-21",
+			error: "Archive contentSource must be all, following, or for_you.",
+		},
+		{
+			query: "period=yesterday&contentSource=all",
+			error: "Archive date must be a real date in YYYY-MM-DD format.",
+		},
+		{
+			query: "period=yesterday&contentSource=all&date=2026-7-21",
+			error: "Archive date must be a real date in YYYY-MM-DD format.",
+		},
+		{
+			query: "period=yesterday&contentSource=all&date=2026-02-30",
+			error: "Archive date must be a real date in YYYY-MM-DD format.",
+		},
+		{
+			query: "period=yesterday&contentSource=all&date=0000-01-01",
+			error: "Archive date must be a real date in YYYY-MM-DD format.",
+		},
+		{
+			query:
+				"period=yesterday&contentSource=all&date=%2E%2E%2F%2E%2E%2Foutside",
+			error: "Archive date must be a real date in YYYY-MM-DD format.",
+		},
+	])(
+		"rejects an invalid archive entry request: $query",
+		async ({ query, error }) => {
+			const response = await GET({
+				request: new Request(
+					`http://localhost/api/digest-archive-entry?${query}`,
+				),
+			});
+
+			expect(response.status).toBe(400);
+			expect(await response.json()).toEqual({ ok: false, error });
+			expect(resolveDigestArchiveDirMock).not.toHaveBeenCalled();
+			expect(readDigestArchiveEntryEffectMock).not.toHaveBeenCalled();
+		},
+	);
+
 	it.each(["today", "24h"] as const)(
 		"rejects current-view period %s without reading legacy archives",
 		async (period) => {

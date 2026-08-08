@@ -44,6 +44,37 @@ describe("api digest-archive-dates route", () => {
 		},
 	);
 
+	it("defaults an omitted period to yesterday", async () => {
+		resolveDigestArchiveDirMock.mockReturnValue("/tmp/archive");
+		listDigestArchiveDatesEffectMock.mockResolvedValue([]);
+
+		const response = await GET({
+			request: new Request("http://localhost/api/digest-archive-dates"),
+		});
+
+		expect(response.status).toBe(200);
+		expect(listDigestArchiveDatesEffectMock).toHaveBeenCalledWith({
+			archiveDir: "/tmp/archive",
+			period: "yesterday",
+		});
+	});
+
+	it("rejects an invalid period before reading legacy archives", async () => {
+		const response = await GET({
+			request: new Request(
+				"http://localhost/api/digest-archive-dates?period=month",
+			),
+		});
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({
+			ok: false,
+			error: "Archive period must be yesterday or week.",
+		});
+		expect(resolveDigestArchiveDirMock).not.toHaveBeenCalled();
+		expect(listDigestArchiveDatesEffectMock).not.toHaveBeenCalled();
+	});
+
 	it.each(["today", "24h"] as const)(
 		"rejects the current-view period %s without reading legacy archives",
 		async (period) => {

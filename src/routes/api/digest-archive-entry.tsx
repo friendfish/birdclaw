@@ -2,24 +2,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 import { resolveDigestArchiveDir } from "#/lib/config";
 import { readDigestArchiveEntryEffect } from "#/lib/digest-archive-job";
+import { parseDigestArchiveEntryRequest } from "#/lib/digest-archive-request";
 import {
 	jsonResponse,
 	runRouteEffect,
 	sensitiveRequestErrorResponse,
 } from "#/lib/http-effect";
-import type { PeriodDigestContentSource } from "#/lib/period-digest";
-
-function parsePeriod(value: string | null): "yesterday" | "week" {
-	return value === "week" ? "week" : "yesterday";
-}
-
-function currentPeriodError(value: string | null) {
-	return value === "today" || value === "24h";
-}
-
-function parseContentSource(value: string | null): PeriodDigestContentSource {
-	return value === "for_you" || value === "following" ? value : "all";
-}
 
 export const Route = createFileRoute("/api/digest-archive-entry")({
 	server: {
@@ -30,29 +18,22 @@ export const Route = createFileRoute("/api/digest-archive-entry")({
 						const denied = sensitiveRequestErrorResponse(request);
 						if (denied) return denied;
 
-						const url = new URL(request.url);
-						const requestedPeriod = url.searchParams.get("period");
-						if (currentPeriodError(requestedPeriod)) {
+						let options: ReturnType<typeof parseDigestArchiveEntryRequest>;
+						try {
+							options = parseDigestArchiveEntryRequest(new URL(request.url));
+						} catch (error) {
 							return jsonResponse(
 								{
 									ok: false,
-									error:
-										"Today and 24h are current views and do not have archives.",
+									error: error instanceof Error ? error.message : String(error),
 								},
 								{ status: 400 },
 							);
 						}
-						const period = parsePeriod(requestedPeriod);
-						const contentSource = parseContentSource(
-							url.searchParams.get("contentSource"),
-						);
-						const date = url.searchParams.get("date") ?? "";
 						const archiveDir = resolveDigestArchiveDir();
 						const entry = yield* readDigestArchiveEntryEffect({
 							archiveDir,
-							period,
-							contentSource,
-							date,
+							...options,
 						});
 						if (!entry) {
 							// 200, not 404: "no archive for this exact combination" is a
