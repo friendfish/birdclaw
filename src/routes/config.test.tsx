@@ -384,6 +384,46 @@ describe("config prompt panel", () => {
 		expect(await screen.findByText("schedule save failed")).toBeVisible();
 	});
 
+	it("shows retryable and exhausted freshness states", async () => {
+		const schedule = {
+			...scheduleResponse(),
+			freshness: {
+				today: {
+					status: "retryable",
+					dueAt: "2026-08-06T10:00:00.000Z",
+					fireAt: "2026-08-06T11:15:00.000Z",
+					retryAt: "2026-08-06T11:15:00.000Z",
+					retryCount: 1,
+				},
+				"24h": {
+					status: "failed",
+					dueAt: "2026-08-06T10:00:00.000Z",
+					fireAt: "2026-08-06T15:00:00.000Z",
+					retryCount: 3,
+					pageRecoveryUsedAt: "2026-08-06T16:00:00.000Z",
+				},
+			},
+		};
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/config") {
+					return jsonResponse(configResponse());
+				}
+				if (url.pathname === "/api/digest-schedule") {
+					return jsonResponse(schedule);
+				}
+				throw new Error(`Unexpected request: ${url.pathname}`);
+			}),
+		);
+
+		render(<ConfigRoute />);
+		fireEvent.click(await screen.findByRole("button", { name: "摘要调度" }));
+		expect(await screen.findByText(/Today.*重试于/u)).toBeVisible();
+		expect(screen.getByText(/24h.*今日刷新已结束/u)).toBeVisible();
+	});
+
 	it("renders defaults when config and schedule responses are not active", async () => {
 		vi.stubGlobal(
 			"fetch",

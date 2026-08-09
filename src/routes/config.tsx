@@ -73,6 +73,9 @@ const digestScheduleResponseSchema = z.object({
 				dueAt: z.string(),
 				fireAt: z.string(),
 				installError: z.string().optional(),
+				retryAt: z.string().optional(),
+				retryCount: z.number().optional(),
+				pageRecoveryUsedAt: z.string().optional(),
 			})
 			.nullable(),
 		"24h": z
@@ -81,6 +84,9 @@ const digestScheduleResponseSchema = z.object({
 				dueAt: z.string(),
 				fireAt: z.string(),
 				installError: z.string().optional(),
+				retryAt: z.string().optional(),
+				retryCount: z.number().optional(),
+				pageRecoveryUsedAt: z.string().optional(),
 			})
 			.nullable(),
 	}),
@@ -103,6 +109,33 @@ const digestScheduleResponseSchema = z.object({
 			.nullable(),
 	}),
 });
+
+function digestFreshnessStatusText(
+	freshness: NonNullable<
+		z.infer<typeof digestScheduleResponseSchema>["freshness"]["today"]
+	>,
+): string {
+	if (freshness.status === "scheduled") {
+		return `下次超时 ${new Date(freshness.dueAt).toLocaleString()}`;
+	}
+	if (freshness.status === "running") {
+		return "正在刷新";
+	}
+	if (freshness.status === "retryable") {
+		return freshness.retryAt
+			? `重试于 ${new Date(freshness.retryAt).toLocaleString()}`
+			: "等待后台重试";
+	}
+	if (freshness.status === "failed") {
+		return freshness.pageRecoveryUsedAt
+			? "今日刷新已结束"
+			: "自动重试已结束，等待页面恢复";
+	}
+	if (freshness.status === "error") {
+		return `调度安装失败：${freshness.installError ?? "未知错误"}`;
+	}
+	return "今日不再触发超时更新";
+}
 
 const birdCredentialStatusSchema = z
 	.object({
@@ -873,11 +906,7 @@ function ConfigRoute() {
 											const run = digestScheduleStatus.runs[period];
 											const freshnessText = !freshness
 												? "调度尚未初始化"
-												: freshness.status === "scheduled"
-													? `下次超时 ${new Date(freshness.dueAt).toLocaleString()}`
-													: freshness.status === "error"
-														? `调度安装失败：${freshness.installError ?? "未知错误"}`
-														: "今日不再触发超时更新";
+												: digestFreshnessStatusText(freshness);
 											return (
 												<div
 													key={period}
