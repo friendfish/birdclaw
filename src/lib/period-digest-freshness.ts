@@ -322,12 +322,12 @@ export async function consumePeriodDigestFreshnessAttempt({
 	| {
 			valid: false;
 			reason:
-					| "missing-state"
-					| "token-mismatch"
-					| "already-consumed"
-					| "already-running"
-					| "disabled"
-					| "not-due"
+				| "missing-state"
+				| "token-mismatch"
+				| "already-consumed"
+				| "already-running"
+				| "disabled"
+				| "not-due"
 				| "cross-day";
 	  }
 > {
@@ -354,9 +354,7 @@ export async function consumePeriodDigestFreshnessAttempt({
 				state.status === "error" ||
 				(state.status === "consumed" && !state.completedAt);
 			const pageRecovery =
-				origin === "page" &&
-				recoverableTerminal &&
-				!state.pageRecoveryUsedAt;
+				origin === "page" && recoverableTerminal && !state.pageRecoveryUsedAt;
 			if (terminal && !pageRecovery) {
 				return { valid: false, reason: "already-consumed" } as const;
 			}
@@ -379,9 +377,7 @@ export async function consumePeriodDigestFreshnessAttempt({
 				status: "running",
 				startedAt: now.toISOString(),
 				updatedAt: now.toISOString(),
-				...(pageRecovery
-					? { pageRecoveryUsedAt: now.toISOString() }
-					: {}),
+				...(pageRecovery ? { pageRecoveryUsedAt: now.toISOString() } : {}),
 			});
 			return { valid: true } as const;
 		}),
@@ -470,9 +466,7 @@ export async function completePeriodDigestFreshnessAttempt({
 				};
 			}
 
-			const retryAt = roundUpToMinute(
-				new Date(now.getTime() + retryDelay),
-			);
+			const retryAt = roundUpToMinute(new Date(now.getTime() + retryDelay));
 			if (!sameLocalDay(retryAt, now)) {
 				const disabled: PeriodDigestFreshnessStateV1 = {
 					...state,
@@ -572,9 +566,9 @@ export async function triggerDuePeriodDigestFreshness({
 	const run = requestRun
 		? await requestRun({ period, trigger: "freshness", origin })
 		: await import("./period-digest-orchestrator").then(
-					({ requestPeriodDigestRun }) =>
-						requestPeriodDigestRun({ period, trigger: "freshness", origin }),
-				);
+				({ requestPeriodDigestRun }) =>
+					requestPeriodDigestRun({ period, trigger: "freshness", origin }),
+			);
 	void run.completion
 		.then((finalState) =>
 			completeAttempt({
@@ -724,9 +718,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 		...(sameAttempt && previous.retryCount !== undefined
 			? { retryCount: previous.retryCount }
 			: {}),
-		...(sameAttempt && previous.retryAt
-			? { retryAt: previous.retryAt }
-			: {}),
+		...(sameAttempt && previous.retryAt ? { retryAt: previous.retryAt } : {}),
 		...(sameAttempt && previous.pageRecoveryUsedAt
 			? { pageRecoveryUsedAt: previous.pageRecoveryUsedAt }
 			: {}),

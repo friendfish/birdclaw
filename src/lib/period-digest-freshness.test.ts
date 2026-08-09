@@ -185,8 +185,9 @@ describe("period digest freshness", () => {
 			new Date(2026, 7, 6, 11, 47, 0),
 			new Date(2026, 7, 6, 15, 48, 0),
 		];
+		const completedStates = [];
 
-		for (const [index, now] of failureTimes.entries()) {
+		for (const now of failureTimes) {
 			await expect(
 				consumePeriodDigestFreshnessAttempt({
 					period: "today",
@@ -206,19 +207,23 @@ describe("period digest freshness", () => {
 				now,
 				install,
 			});
-			if (index < expectedRetryAt.length) {
-				expect(completed.state).toMatchObject({
-					status: "retryable",
-					retryCount: index + 1,
-					retryAt: expectedRetryAt[index]?.toISOString(),
-				});
-			} else {
-				expect(completed.state).toMatchObject({
-					status: "failed",
-					retryCount: 3,
-				});
+			if (!completed.state) {
+				throw new Error("Expected the freshness attempt to have state");
 			}
+			completedStates.push({
+				status: completed.state.status,
+				retryCount: completed.state.retryCount,
+				retryAt: completed.state.retryAt,
+			});
 		}
+		expect(completedStates).toEqual([
+			...expectedRetryAt.map((retryAt, index) => ({
+				status: "retryable",
+				retryCount: index + 1,
+				retryAt: retryAt.toISOString(),
+			})),
+			{ status: "failed", retryCount: 3, retryAt: undefined },
+		]);
 		expect(install).toHaveBeenCalledTimes(3);
 	});
 
@@ -282,7 +287,11 @@ describe("period digest freshness", () => {
 			joined: false,
 			completion: Promise.resolve({ phase: "failed" as const }),
 		}));
-		const completeAttempt = vi.fn(async () => undefined);
+		const completeAttempt = vi.fn(async () => ({
+			state: undefined,
+			installResult: null,
+			updated: false as const,
+		}));
 
 		await triggerDuePeriodDigestFreshness({
 			period: "today",
@@ -581,14 +590,7 @@ describe("period digest freshness", () => {
 			).resolves.toEqual({ valid: true });
 			expect(await readPeriodDigestFreshnessState("24h")).toMatchObject({
 				status: "running",
-				pageRecoveryUsedAt: new Date(
-					2026,
-					7,
-					6,
-					12,
-					0,
-					0,
-				).toISOString(),
+				pageRecoveryUsedAt: new Date(2026, 7, 6, 12, 0, 0).toISOString(),
 			});
 		},
 	);
