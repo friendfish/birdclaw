@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { resolveDigestArchiveDir } from "#/lib/config";
 import { listDigestArchiveDatesEffect } from "#/lib/digest-archive-job";
 import {
+	DigestArchiveRequestError,
 	parseDigestArchivePeriod,
 	type DigestArchivePeriod,
 } from "#/lib/digest-archive-request";
@@ -21,15 +22,16 @@ export const Route = createFileRoute("/api/digest-archive-dates")({
 						const denied = sensitiveRequestErrorResponse(request);
 						if (denied) return denied;
 
+						const url = new URL(request.url);
 						let period: DigestArchivePeriod;
 						try {
-							const url = new URL(request.url);
 							period = parseDigestArchivePeriod(url.searchParams.get("period"));
 						} catch (error) {
+							if (!(error instanceof DigestArchiveRequestError)) throw error;
 							return jsonResponse(
 								{
 									ok: false,
-									error: error instanceof Error ? error.message : String(error),
+									error: error.message,
 								},
 								{ status: 400 },
 							);

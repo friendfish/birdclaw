@@ -18,6 +18,7 @@ fault-injection coverage, and structural refactoring remain separate actions.
 - Preserve the existing defaults when period or content source is omitted.
 - Require the archive entry date to be a real calendar date in `YYYY-MM-DD`
   form.
+- Apply the same real-date rule to archive dates restored from route search.
 - Prevent archive path construction from escaping the configured archive
   directory.
 - Keep both archive routes on one request-validation contract.
@@ -40,21 +41,29 @@ fault-injection coverage, and structural refactoring remain separate actions.
 
 Add a small shared request-validation module used by both archive API routes.
 It will expose focused parsers for archive period, content source, and entry
-date. The parsers throw request-validation errors with stable, non-sensitive
-messages; each route maps those errors to its existing JSON error shape with
-HTTP 400.
+date, plus a non-throwing date predicate used by route-search normalization.
+The parsers throw a dedicated request-validation error with stable,
+non-sensitive messages; each route maps only that error to its existing JSON
+error shape with HTTP 400.
 
 The shared rules are:
 
 - omitted `period` defaults to `yesterday`;
+- an explicitly present but empty `period` is invalid rather than omitted;
 - `period=yesterday` and `period=week` are accepted;
 - `period=today`, `period=24h`, and any other explicit value return HTTP 400;
 - omitted `contentSource` defaults to `all`;
+- an explicitly present but empty `contentSource` is invalid rather than
+  omitted;
 - `contentSource=all`, `for_you`, and `following` are accepted;
 - any other explicit content source returns HTTP 400;
 - archive entry `date` is required and must identify a real date using exactly
   a four-digit year from 0001 through 9999, a two-digit month, and a two-digit
   day.
+
+Route-search normalization uses the same predicate. A malformed or impossible
+`archiveDate` becomes the existing empty selection instead of reaching the API
+and turning the archive view into a hard fetch error.
 
 The dates-list route validates only `period`. The archive-entry route validates
 all three parameters before resolving the archive directory or reading a file.
@@ -64,12 +73,17 @@ all three parameters before resolving the archive directory or reading a file.
 `resolveDigestArchivePaths` remains the single path-construction boundary. It
 will resolve the configured archive root and the requested date directory,
 then inspect `path.relative(root, candidate)`. It rejects the candidate when
+the run date is not itself a real `YYYY-MM-DD` date (including empty or `.`),
 the relative path is `..`, starts with `..${path.sep}`, or is absolute.
 
 The file basename continues to come only from the typed period and content
 source values. Valid callers therefore receive the same `.md` and `.json`
 paths as before, while direct or future callers cannot use traversal segments
 to escape the archive root.
+
+Archive directory enumeration uses the same real-date predicate and ignores
+malformed or impossible legacy directory names instead of failing the entire
+dates response.
 
 ## Error Handling
 
@@ -78,9 +92,16 @@ The existing specific explanation for `today` and `24h` remains available,
 because those are valid current views but do not have historical archives.
 Other invalid values receive parameter-specific messages.
 
+Only the dedicated archive request-validation error maps to HTTP 400. URL
+construction failures and unexpected parser defects continue through the
+route's existing server-error path and are not echoed to the client as request
+messages.
+
 Containment failures from non-route callers throw before any filesystem read or
-write. Routes should never reach this error after successful date validation;
-it is defense in depth rather than a second public validation contract.
+write. Scheduled jobs lift that synchronous error into the Effect error channel
+so it becomes an ordinary failed step rather than a defect. Routes should never
+reach this error after successful date validation; it is defense in depth
+rather than a second public validation contract.
 
 ## Test Strategy
 
@@ -94,10 +115,18 @@ Use a red-green test sequence covering:
 - missing, malformed, normalized-but-not-exact, and impossible dates returning
   HTTP 400;
 - valid regular and leap-day dates reaching the archive reader;
+- direct parser coverage for accepted content sources, years 0001 and 9999,
+  leap-century behavior, current-view messages, and explicit empty values;
+- route-search normalization rejecting impossible dates;
+- unexpected parser failures not being classified as HTTP 400;
 - traversal attempts returning HTTP 400 without reading outside the archive;
 - `resolveDigestArchivePaths` rejecting parent and absolute escapes, including
   a sibling directory whose name shares the archive root prefix;
 - valid path construction remaining byte-for-byte compatible.
+- empty, dot, and non-date run directories being rejected;
+- malformed or impossible archive directories being ignored during listing;
+- a scheduled invalid run date becoming a failed step rather than an Effect
+  defect.
 
 After targeted tests pass, run formatting and lint checks, type checking, the
 full test suite, and the production build.

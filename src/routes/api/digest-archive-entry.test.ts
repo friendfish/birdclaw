@@ -5,6 +5,9 @@ import { getRouteHandler } from "#/test/route-handlers";
 
 const resolveDigestArchiveDirMock = vi.fn();
 const readDigestArchiveEntryEffectMock = vi.fn();
+const requestParserState = vi.hoisted(() => ({
+	unexpectedError: undefined as unknown,
+}));
 
 vi.mock("#/lib/config", () => ({
 	resolveDigestArchiveDir: (...args: unknown[]) =>
@@ -14,6 +17,19 @@ vi.mock("#/lib/digest-archive-job", () => ({
 	readDigestArchiveEntryEffect: (...args: unknown[]) =>
 		Effect.promise(() => readDigestArchiveEntryEffectMock(...args)),
 }));
+vi.mock("#/lib/digest-archive-request", async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import("#/lib/digest-archive-request")>();
+	return {
+		...actual,
+		parseDigestArchiveEntryRequest: (url: URL) => {
+			if (requestParserState.unexpectedError !== undefined) {
+				throw requestParserState.unexpectedError;
+			}
+			return actual.parseDigestArchiveEntryRequest(url);
+		},
+	};
+});
 
 import { Route } from "./digest-archive-entry";
 
@@ -22,6 +38,7 @@ const GET = getRouteHandler(Route, "GET");
 describe("api digest-archive-entry route", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		requestParserState.unexpectedError = undefined;
 	});
 
 	it("adapts a found archive entry into the run-result shape, using generatedAt as updatedAt", async () => {
@@ -164,4 +181,18 @@ describe("api digest-archive-entry route", () => {
 			expect(readDigestArchiveEntryEffectMock).not.toHaveBeenCalled();
 		},
 	);
+
+	it("does not misclassify an unexpected parser failure as a bad request", async () => {
+		requestParserState.unexpectedError = new Error("unexpected parser failure");
+
+		await expect(
+			GET({
+				request: new Request(
+					"http://localhost/api/digest-archive-entry?date=2026-07-21",
+				),
+			}),
+		).rejects.toThrow("unexpected parser failure");
+		expect(resolveDigestArchiveDirMock).not.toHaveBeenCalled();
+		expect(readDigestArchiveEntryEffectMock).not.toHaveBeenCalled();
+	});
 });

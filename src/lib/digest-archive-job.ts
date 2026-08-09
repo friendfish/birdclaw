@@ -23,6 +23,7 @@ import {
 	updateDigestArchiveRunState,
 	writeDigestArchiveRunState,
 } from "./digest-archive-run-state";
+import { isDigestArchiveDate } from "./digest-archive-request";
 import {
 	runDigestArchivePreSyncEffect,
 	type DigestArchiveSyncResult,
@@ -320,6 +321,7 @@ export function resolveDigestArchivePaths({
 	const candidate = path.resolve(root, runDate);
 	const relative = path.relative(root, candidate);
 	if (
+		!isDigestArchiveDate(runDate) ||
 		relative === ".." ||
 		relative.startsWith(`..${path.sep}`) ||
 		path.isAbsolute(relative)
@@ -477,6 +479,14 @@ function runOneContentSourceEffect({
 			if (onAttempt) {
 				yield* tryPromise(() => onAttempt(attempts));
 			}
+			const { markdownPath, jsonPath } = yield* trySync(() =>
+				resolveDigestArchivePaths({
+					archiveDir,
+					runDate,
+					period,
+					contentSource,
+				}),
+			);
 			const timeoutSignal = AbortSignal.timeout(modelTimeoutMs);
 			const result = yield* Effect.tryPromise({
 				try: (interruptSignal) =>
@@ -499,12 +509,6 @@ function runOneContentSourceEffect({
 						signal: AbortSignal.any([interruptSignal, timeoutSignal]),
 					}),
 				catch: (error) => error,
-			});
-			const { markdownPath, jsonPath } = resolveDigestArchivePaths({
-				archiveDir,
-				runDate,
-				period,
-				contentSource,
 			});
 			const archiveFile: PeriodDigestArchiveFileV3 = {
 				schemaVersion: 3,
@@ -1143,9 +1147,7 @@ async function listDigestArchiveDatesAsync({
 		.readdir(archiveDir, { withFileTypes: true })
 		.catch(() => []);
 	const dateDirs = entries
-		.filter(
-			(entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name),
-		)
+		.filter((entry) => entry.isDirectory() && isDigestArchiveDate(entry.name))
 		.map((entry) => entry.name)
 		.sort()
 		.reverse();

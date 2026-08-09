@@ -1,4 +1,5 @@
 import type { NetworkMapKind } from "./network-map";
+import { isDigestArchiveDate } from "./digest-archive-request";
 import type { PeriodDigestContentSource } from "./period-digest";
 import type { SearchDiscussionSource } from "./search-discussion";
 import type { TweetSearchMode } from "./tweet-search-live";
@@ -33,9 +34,7 @@ function booleanValue(value: unknown, fallback = false) {
 }
 
 function dateValue(value: unknown) {
-	return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
-		? value
-		: "";
+	return isDigestArchiveDate(value) ? value : "";
 }
 
 export interface RouteSearchUpdateOptions {

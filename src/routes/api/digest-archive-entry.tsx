@@ -2,7 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 import { resolveDigestArchiveDir } from "#/lib/config";
 import { readDigestArchiveEntryEffect } from "#/lib/digest-archive-job";
-import { parseDigestArchiveEntryRequest } from "#/lib/digest-archive-request";
+import {
+	DigestArchiveRequestError,
+	parseDigestArchiveEntryRequest,
+} from "#/lib/digest-archive-request";
 import {
 	jsonResponse,
 	runRouteEffect,
@@ -18,14 +21,16 @@ export const Route = createFileRoute("/api/digest-archive-entry")({
 						const denied = sensitiveRequestErrorResponse(request);
 						if (denied) return denied;
 
+						const url = new URL(request.url);
 						let options: ReturnType<typeof parseDigestArchiveEntryRequest>;
 						try {
-							options = parseDigestArchiveEntryRequest(new URL(request.url));
+							options = parseDigestArchiveEntryRequest(url);
 						} catch (error) {
+							if (!(error instanceof DigestArchiveRequestError)) throw error;
 							return jsonResponse(
 								{
 									ok: false,
-									error: error instanceof Error ? error.message : String(error),
+									error: error.message,
 								},
 								{ status: 400 },
 							);

@@ -5,6 +5,9 @@ import { getRouteHandler } from "#/test/route-handlers";
 
 const resolveDigestArchiveDirMock = vi.fn();
 const listDigestArchiveDatesEffectMock = vi.fn();
+const periodParserState = vi.hoisted(() => ({
+	unexpectedError: undefined as unknown,
+}));
 
 vi.mock("#/lib/config", () => ({
 	resolveDigestArchiveDir: (...args: unknown[]) =>
@@ -14,6 +17,19 @@ vi.mock("#/lib/digest-archive-job", () => ({
 	listDigestArchiveDatesEffect: (...args: unknown[]) =>
 		Effect.promise(() => listDigestArchiveDatesEffectMock(...args)),
 }));
+vi.mock("#/lib/digest-archive-request", async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import("#/lib/digest-archive-request")>();
+	return {
+		...actual,
+		parseDigestArchivePeriod: (value: string | null) => {
+			if (periodParserState.unexpectedError !== undefined) {
+				throw periodParserState.unexpectedError;
+			}
+			return actual.parseDigestArchivePeriod(value);
+		},
+	};
+});
 
 import { Route } from "./digest-archive-dates";
 
@@ -22,6 +38,7 @@ const GET = getRouteHandler(Route, "GET");
 describe("api digest-archive-dates route", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		periodParserState.unexpectedError = undefined;
 	});
 
 	it.each(["yesterday", "week"] as const)(
@@ -92,4 +109,18 @@ describe("api digest-archive-dates route", () => {
 			expect(listDigestArchiveDatesEffectMock).not.toHaveBeenCalled();
 		},
 	);
+
+	it("does not misclassify an unexpected parser failure as a bad request", async () => {
+		periodParserState.unexpectedError = new Error("unexpected parser failure");
+
+		await expect(
+			GET({
+				request: new Request(
+					"http://localhost/api/digest-archive-dates?period=yesterday",
+				),
+			}),
+		).rejects.toThrow("unexpected parser failure");
+		expect(resolveDigestArchiveDirMock).not.toHaveBeenCalled();
+		expect(listDigestArchiveDatesEffectMock).not.toHaveBeenCalled();
+	});
 });

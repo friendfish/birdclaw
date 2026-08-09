@@ -70,6 +70,8 @@ describe("resolveDigestArchivePaths", () => {
 	});
 
 	it.each([
+		["empty", ""],
+		["dot", "."],
 		["parent", "../outside"],
 		["nested parent", "../../outside"],
 		["sibling with the same prefix", "../archive-other"],
@@ -617,6 +619,43 @@ describe("digest-archive-job", () => {
 		expect(entry.status).toBe("failed");
 		expect(entry.steps.at(-1)?.contentSource).toBe("for_you");
 		expect(entry.steps.at(-1)?.ok).toBe(true);
+	});
+
+	it("records an invalid run date as a failed step instead of an Effect defect", async () => {
+		streamPeriodDigestMock.mockResolvedValue(digestResult());
+		const archiveDir = tempArchiveDir();
+		const logPath = path.join(archiveDir, "audit.jsonl");
+
+		const entry = await runEffectPromise(
+			runDigestArchiveJobEffect({
+				period: "yesterday",
+				archiveDir,
+				contentSources: ["all"],
+				retries: 0,
+				logPath,
+				now: () => new Date(Number.NaN),
+			}),
+		);
+
+		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
+		expect(entry).toMatchObject({
+			ok: false,
+			status: "failed",
+			runDate: "NaN-NaN-NaN",
+			steps: [
+				{
+					contentSource: "all",
+					ok: false,
+					attempts: 1,
+					error: "Archive path escapes archive directory",
+				},
+			],
+		});
+		expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+			ok: false,
+			status: "failed",
+			steps: [{ ok: false }],
+		});
 	});
 
 	it("writes scheduled schema v3 metadata with the final batch status", async () => {
@@ -1191,6 +1230,21 @@ describe("digest-archive-job", () => {
 			date: "2026-07-21",
 		});
 		expect(missing).toBeNull();
+	});
+
+	it("ignores archive directories whose names are not real dates", async () => {
+		const archiveDir = tempArchiveDir();
+		const invalidDateDir = path.join(archiveDir, "2026-02-30");
+		mkdirSync(invalidDateDir);
+		writeFileSync(
+			path.join(invalidDateDir, "yesterday-all.json"),
+			"{}",
+			"utf8",
+		);
+
+		await expect(
+			listDigestArchiveDates({ archiveDir, period: "yesterday" }),
+		).resolves.toEqual([]);
 	});
 
 	it("forwards an explicit since/until window and liveSync:false for backfilling historical periods", async () => {
