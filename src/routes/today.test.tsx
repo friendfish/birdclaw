@@ -193,6 +193,57 @@ describe("today route", () => {
 		).toBeVisible();
 	});
 
+	it("retries freshness once for each newly failed run", async () => {
+		let freshnessRequests = 0;
+		let runVersion = 1;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse(dataSourcesResponse());
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({ ok: true, runningPeriods: [] });
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return jsonResponse(
+						metadataResponse({
+							isStale: true,
+							runState: {
+								runId: `failed-${String(runVersion)}`,
+								phase: "failed",
+								finishedAt:
+									runVersion === 2
+										? "2026-08-06T12:00:00.000Z"
+										: "2026-08-06T11:00:00.000Z",
+							},
+						}),
+					);
+				}
+				if (url.pathname === "/api/period-digest-freshness") {
+					freshnessRequests += 1;
+					return jsonResponse({
+						ok: true,
+						triggered: false,
+						reason: "not-due",
+					});
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			}),
+		);
+
+		render(<TodayRoute searchState={currentSearch()} />);
+		await waitFor(() => expect(freshnessRequests).toBe(1));
+		focusManager.setFocused(false);
+		runVersion = 2;
+		focusManager.setFocused(true);
+		await waitFor(() => expect(freshnessRequests).toBe(2));
+		expect(
+			screen.getByRole("heading", { name: "Stable Today", level: 1 }),
+		).toBeVisible();
+	});
+
 	it("keeps old content visible while the period batch is generating", async () => {
 		vi.stubGlobal(
 			"fetch",

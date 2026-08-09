@@ -54,6 +54,21 @@ function metadataUrl(period: string, contentSource: PeriodDigestContentSource) {
 	return url.toString();
 }
 
+function terminalRunIdentity(runState: unknown) {
+	if (!runState || typeof runState !== "object") return "no-run";
+	const value = runState as Record<string, unknown>;
+	if (
+		typeof value.runId !== "string" ||
+		typeof value.finishedAt !== "string" ||
+		(value.phase !== "completed" &&
+			value.phase !== "degraded" &&
+			value.phase !== "failed")
+	) {
+		return "active-run";
+	}
+	return `${value.runId}:${value.finishedAt}:${value.phase}`;
+}
+
 /**
  * Lets the Today page discover a period digest that's already generating (or
  * just finished) in the background — e.g. because the user navigated away
@@ -105,7 +120,12 @@ export function usePeriodDigestMetadata({
 			void query.refetch();
 		},
 	});
-	const freshnessKey = `${period}:${contentSource}:${query.data?.result?.updatedAt ?? "empty"}`;
+	const freshnessKey = [
+		period,
+		contentSource,
+		query.data?.result?.updatedAt ?? "empty",
+		terminalRunIdentity(query.data?.runState),
+	].join(":");
 	useEffect(() => {
 		if (
 			!enabled ||
