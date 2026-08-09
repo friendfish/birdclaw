@@ -888,6 +888,47 @@ describe("period digest freshness", () => {
 		expect(install.mock.calls[0]?.[0].programArguments.join(" ")).toContain(
 			reconciled.state.attemptToken,
 		);
+		expect(install.mock.calls[0]?.[0].programArguments.join(" ")).toContain(
+			`kill -0 ${String(process.pid)}`,
+		);
+	});
+
+	it("does not defer a legacy launchd state without caller pid", async () => {
+		const now = new Date(2026, 7, 6, 10, 0, 0);
+		const install = vi.fn(
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const initial = await reconcilePeriodDigestFreshness({
+			period: "today",
+			now,
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		});
+		install.mockClear();
+		await writePeriodDigestFreshnessState({
+			...initial.state,
+			status: "running",
+			runningOrigin: "launchd",
+			startedAt: now.toISOString(),
+			updatedAt: now.toISOString(),
+		});
+
+		const reconciled = await reconcilePeriodDigestFreshness({
+			period: "today",
+			now,
+			freshnessSeconds: 2 * 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			replaceRunningAttempt: true,
+			install,
+		});
+
+		expect(reconciled.state.status).toBe("scheduled");
+		expect(install).toHaveBeenCalledOnce();
+		expect(install.mock.calls[0]?.[0]).toMatchObject({
+			label: "com.steipete.birdclaw.period-digest-freshness-today",
+			runAtLoad: false,
+		});
 	});
 
 	it("preserves a running attempt when a configuration change creates a new token", async () => {

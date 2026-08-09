@@ -1054,9 +1054,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 		: undefined;
 	const shouldDeferLaunchAgentReload =
 		deferLaunchAgentReload ||
-		(replacingRunningAttempt &&
-			(previous?.runningOrigin === "launchd" ||
-				launchdCallerPid !== undefined));
+		(replacingRunningAttempt && launchdCallerPid !== undefined);
 	const agent = shouldDeferLaunchAgentReload
 		? buildPeriodDigestFreshnessRetryReloaderLaunchAgent({
 				period,
