@@ -30,6 +30,7 @@ vi.mock("./digest-archive-sync", () => ({
 import {
 	buildDigestArchiveLaunchAgentPlist,
 	digestArchiveLockPath,
+	formatDigestArchiveRunDate,
 	getDefaultDigestArchiveAuditLogPath,
 	getDigestArchiveStatus,
 	listDigestArchiveDates,
@@ -51,6 +52,74 @@ import {
 } from "./digest-archive-run-state";
 import { resetBirdclawPathsForTests, writeBirdclawConfig } from "./config";
 import { runEffectPromise } from "./effect-runtime";
+
+describe("resolveDigestArchivePaths", () => {
+	it("preserves relative archive paths", () => {
+		const archiveDir = path.join("relative", "archive");
+
+		expect(
+			resolveDigestArchivePaths({
+				archiveDir,
+				runDate: "2026-07-21",
+				period: "yesterday",
+				contentSource: "all",
+			}),
+		).toEqual({
+			markdownPath: path.join(archiveDir, "2026-07-21", "yesterday-all.md"),
+			jsonPath: path.join(archiveDir, "2026-07-21", "yesterday-all.json"),
+		});
+	});
+
+	it.each([
+		["empty", "", "Archive run date must be a real date in YYYY-MM-DD format"],
+		["dot", ".", "Archive run date must be a real date in YYYY-MM-DD format"],
+		[
+			"non-date",
+			"NaN-NaN-NaN",
+			"Archive run date must be a real date in YYYY-MM-DD format",
+		],
+		["parent", "../outside", "Archive path escapes archive directory"],
+		[
+			"nested parent",
+			"../../outside",
+			"Archive path escapes archive directory",
+		],
+		[
+			"sibling with the same prefix",
+			"../archive-other",
+			"Archive path escapes archive directory",
+		],
+		[
+			"absolute",
+			path.resolve(path.sep, "outside"),
+			"Archive path escapes archive directory",
+		],
+	])("rejects %s archive paths", (_name, runDate, expectedError) => {
+		expect(() =>
+			resolveDigestArchivePaths({
+				archiveDir: path.join("relative", "archive"),
+				runDate,
+				period: "yesterday",
+				contentSource: "all",
+			}),
+		).toThrow(expectedError);
+	});
+});
+
+describe("formatDigestArchiveRunDate", () => {
+	it("rejects an invalid date", () => {
+		expect(() => formatDigestArchiveRunDate(new Date(Number.NaN))).toThrow(
+			"Archive run date must be a real date in YYYY-MM-DD format",
+		);
+	});
+
+	it("pads a valid boundary year to four digits", () => {
+		const date = new Date(2026, 0, 1);
+		date.setFullYear(1);
+
+		expect(formatDigestArchiveRunDate(date)).toBe("0001-01-01");
+	});
+});
 
 const tempRoots: string[] = [];
 const tempArchiveDirs: string[] = [];
@@ -583,6 +652,26 @@ describe("digest-archive-job", () => {
 		expect(entry.status).toBe("failed");
 		expect(entry.steps.at(-1)?.contentSource).toBe("for_you");
 		expect(entry.steps.at(-1)?.ok).toBe(true);
+	});
+
+	it("rejects an invalid run date before entering scheduled retries", async () => {
+		streamPeriodDigestMock.mockResolvedValue(digestResult());
+
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect({
+					period: "yesterday",
+					archiveDir: tempArchiveDir(),
+					contentSources: ["all"],
+					retryDelayMs: 0,
+					now: () => new Date(Number.NaN),
+				}),
+			),
+		).rejects.toThrow(
+			"Archive run date must be a real date in YYYY-MM-DD format",
+		);
+
+		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
 	});
 
 	it("writes scheduled schema v3 metadata with the final batch status", async () => {
@@ -1157,6 +1246,21 @@ describe("digest-archive-job", () => {
 			date: "2026-07-21",
 		});
 		expect(missing).toBeNull();
+	});
+
+	it("ignores archive directories whose names are not real dates", async () => {
+		const archiveDir = tempArchiveDir();
+		const invalidDateDir = path.join(archiveDir, "2026-02-30");
+		mkdirSync(invalidDateDir);
+		writeFileSync(
+			path.join(invalidDateDir, "yesterday-all.json"),
+			"{}",
+			"utf8",
+		);
+
+		await expect(
+			listDigestArchiveDates({ archiveDir, period: "yesterday" }),
+		).resolves.toEqual([]);
 	});
 
 	it("forwards an explicit since/until window and liveSync:false for backfilling historical periods", async () => {

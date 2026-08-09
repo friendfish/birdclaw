@@ -7,6 +7,7 @@ import {
 	installBookmarkSyncLaunchAgent,
 	runBookmarkSyncJob,
 } from "#/lib/bookmark-sync-job";
+import { isCalendarDateString } from "#/lib/calendar-date";
 import {
 	installAllDigestArchiveLaunchAgents,
 	installDigestArchiveLaunchAgent,
@@ -368,6 +369,12 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				);
 				if (state.phase === "failed") process.exitCode = 1;
 				return;
+			}
+			if (
+				options.runDate !== undefined &&
+				!isCalendarDateString(options.runDate)
+			) {
+				throw new Error("--run-date must be a real date in YYYY-MM-DD format");
 			}
 			const runDate = options.runDate
 				? new Date(`${options.runDate}T00:00:00`)

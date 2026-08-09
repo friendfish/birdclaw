@@ -9,6 +9,7 @@ import {
 	type DigestSchedulePeriod,
 	type DigestScheduleTime,
 } from "./config";
+import { isCalendarDateString } from "./calendar-date";
 import {
 	readBirdCredentialsFileStrict,
 	type BirdCredentials,
@@ -41,6 +42,7 @@ import {
 	peekScheduledJobLockMetadata,
 	peekScheduledJobLockMetadataEffect,
 	startScheduledJobRun,
+	type ScheduledJobLockMetadata,
 } from "./scheduled-job";
 import {
 	normalizeDigestLanguage,
@@ -63,6 +65,8 @@ const DEFAULT_DIGEST_ARCHIVE_RETRIES = 2;
 const DEFAULT_DIGEST_ARCHIVE_RETRY_DELAY_MS = 2 * 60_000;
 const DEFAULT_MODEL_TIMEOUT_MS = 10 * 60_000;
 export const DEFAULT_LOCK_STALE_MS = 60_000;
+const ARCHIVE_RUN_DATE_ERROR =
+	"Archive run date must be a real date in YYYY-MM-DD format";
 
 // The reviewed default: 24h was originally 08:20, moved to 08:45 to widen
 // the gap from Today's 08:00 run given the ~30 minute worst-case retry
@@ -207,10 +211,22 @@ function trySync<T>(try_: () => T) {
 }
 
 export function formatDigestArchiveRunDate(date: Date) {
-	const yyyy = date.getFullYear();
+	const yyyy = String(date.getFullYear()).padStart(4, "0");
 	const mm = String(date.getMonth() + 1).padStart(2, "0");
 	const dd = String(date.getDate()).padStart(2, "0");
-	return `${yyyy}-${mm}-${dd}`;
+	const runDate = `${yyyy}-${mm}-${dd}`;
+	if (!isCalendarDateString(runDate)) throw new Error(ARCHIVE_RUN_DATE_ERROR);
+	return runDate;
+}
+
+function digestArchiveRunDateFromLockMetadata(
+	metadata: ScheduledJobLockMetadata,
+) {
+	// The lock reader validates and ISO-normalizes startedAt, including its
+	// filesystem-mtime fallback for legacy or partially written locks.
+	return (
+		metadata.runDate ?? formatDigestArchiveRunDate(new Date(metadata.startedAt))
+	);
 }
 
 export function resolveDigestArchiveLanguage(requested?: string) {
@@ -316,6 +332,18 @@ export function resolveDigestArchivePaths({
 	period: PeriodDigestPreset;
 	contentSource: PeriodDigestContentSource;
 }) {
+	const root = path.resolve(archiveDir);
+	const candidate = path.resolve(root, runDate);
+	const relative = path.relative(root, candidate);
+	if (
+		relative === ".." ||
+		relative.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(relative)
+	) {
+		throw new Error("Archive path escapes archive directory");
+	}
+	if (!isCalendarDateString(runDate)) throw new Error(ARCHIVE_RUN_DATE_ERROR);
+
 	const base = path.join(archiveDir, runDate, `${period}-${contentSource}`);
 	return { markdownPath: `${base}.md`, jsonPath: `${base}.json` };
 }
@@ -466,6 +494,14 @@ function runOneContentSourceEffect({
 			if (onAttempt) {
 				yield* tryPromise(() => onAttempt(attempts));
 			}
+			const { markdownPath, jsonPath } = yield* trySync(() =>
+				resolveDigestArchivePaths({
+					archiveDir,
+					runDate,
+					period,
+					contentSource,
+				}),
+			);
 			const timeoutSignal = AbortSignal.timeout(modelTimeoutMs);
 			const result = yield* Effect.tryPromise({
 				try: (interruptSignal) =>
@@ -488,12 +524,6 @@ function runOneContentSourceEffect({
 						signal: AbortSignal.any([interruptSignal, timeoutSignal]),
 					}),
 				catch: (error) => error,
-			});
-			const { markdownPath, jsonPath } = resolveDigestArchivePaths({
-				archiveDir,
-				runDate,
-				period,
-				contentSource,
 			});
 			const archiveFile: PeriodDigestArchiveFileV3 = {
 				schemaVersion: 3,
@@ -1132,9 +1162,7 @@ async function listDigestArchiveDatesAsync({
 		.readdir(archiveDir, { withFileTypes: true })
 		.catch(() => []);
 	const dateDirs = entries
-		.filter(
-			(entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name),
-		)
+		.filter((entry) => entry.isDirectory() && isCalendarDateString(entry.name))
 		.map((entry) => entry.name)
 		.sort()
 		.reverse();
@@ -1287,9 +1315,7 @@ export async function peekDigestArchiveRunningRuns(): Promise<
 		if (metadata) {
 			running.push({
 				period,
-				runDate:
-					metadata.runDate ??
-					formatDigestArchiveRunDate(new Date(metadata.startedAt)),
+				runDate: digestArchiveRunDateFromLockMetadata(metadata),
 				totalSources: metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 			});
 		}
@@ -1320,9 +1346,7 @@ export function peekDigestArchiveRunningRunsEffect(): Effect.Effect<
 					metadata
 						? {
 								period,
-								runDate:
-									metadata.runDate ??
-									formatDigestArchiveRunDate(new Date(metadata.startedAt)),
+								runDate: digestArchiveRunDateFromLockMetadata(metadata),
 								totalSources:
 									metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 							}
@@ -1463,9 +1487,7 @@ export async function getDigestArchiveStatus(): Promise<DigestArchiveStatusSnaps
 		}
 		activeRuns.push({
 			period,
-			runDate:
-				metadata.runDate ??
-				formatDigestArchiveRunDate(new Date(metadata.startedAt)),
+			runDate: digestArchiveRunDateFromLockMetadata(metadata),
 			totalSources: metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 			phase: "pre-sync",
 			startedAt: metadata.startedAt,
