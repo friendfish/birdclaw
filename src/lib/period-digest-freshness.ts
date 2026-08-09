@@ -709,10 +709,10 @@ async function reconcilePeriodDigestFreshnessInternal({
 		return { state: previous, installResult: null };
 	}
 	const sameAttempt = previous?.attemptToken === attemptToken;
+	const restoringRetry =
+		sameAttempt && previous.status === "error" && Boolean(previous.retryAt);
 	const desiredFireAt =
-		sameAttempt && previous.status === "error" && previous.retryAt
-			? new Date(previous.retryAt)
-			: dueAt;
+		restoringRetry && previous.retryAt ? new Date(previous.retryAt) : dueAt;
 	const fireAt = roundUpToMinute(
 		desiredFireAt.getTime() <= now.getTime()
 			? new Date(now.getTime() + 1)
@@ -724,7 +724,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 		attemptToken,
 		dueAt: dueAt.toISOString(),
 		fireAt: fireAt.toISOString(),
-		status: "scheduled",
+		status: restoringRetry ? "retryable" : "scheduled",
 		updatedAt: now.toISOString(),
 		freshnessSeconds,
 		sourceIdentities,

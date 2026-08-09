@@ -484,6 +484,46 @@ describe("period digest freshness", () => {
 		expect(maximumActiveInstalls).toBe(1);
 	});
 
+	it("preserves retry eligibility when reconciling an install error", async () => {
+		const now = new Date(2026, 7, 6, 10, 0, 0);
+		const retryAt = new Date(2026, 7, 6, 11, 0, 0);
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const input = {
+			period: "today" as const,
+			now,
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		};
+		const initial = await reconcilePeriodDigestFreshness(input);
+		await writePeriodDigestFreshnessState({
+			...initial.state,
+			status: "error",
+			retryCount: 1,
+			retryAt: retryAt.toISOString(),
+			fireAt: retryAt.toISOString(),
+			installError: "launchctl denied",
+		});
+
+		const reconciled = await reconcilePeriodDigestFreshness(input);
+
+		expect(reconciled.state).toMatchObject({
+			status: "retryable",
+			retryCount: 1,
+			retryAt: retryAt.toISOString(),
+		});
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: initial.state.attemptToken,
+				origin: "page",
+				now: new Date(2026, 7, 6, 10, 5, 0),
+			}),
+		).resolves.toEqual({ valid: false, reason: "not-due" });
+	});
+
 	it("derives a stable token and preserves its lifecycle across reconciliation", async () => {
 		const now = new Date(2026, 7, 6, 10, 0, 0);
 		const install = vi.fn(
