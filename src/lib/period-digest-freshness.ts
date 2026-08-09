@@ -561,7 +561,17 @@ export async function triggerDuePeriodDigestFreshness({
 		now,
 	});
 	if (!attempt.valid) {
-		return { triggered: false as const, reason: attempt.reason };
+		const eligibleAt =
+			attempt.reason === "not-due"
+				? state.status === "retryable"
+					? state.retryAt
+					: state.dueAt
+				: undefined;
+		return {
+			triggered: false as const,
+			reason: attempt.reason,
+			...(eligibleAt ? { eligibleAt } : {}),
+		};
 	}
 	const reportFailedAttempt = () =>
 		completeAttempt({

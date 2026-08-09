@@ -857,6 +857,37 @@ describe("period digest freshness", () => {
 		).resolves.toEqual({ valid: false, reason: "cross-day" });
 	});
 
+	it("returns the authoritative eligibility time for an early page trigger", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		const retryAt = new Date(2026, 7, 6, 11, 30, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "early-page-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: retryAt.toISOString(),
+			status: "retryable",
+			retryCount: 1,
+			retryAt: retryAt.toISOString(),
+			updatedAt: dueAt.toISOString(),
+		});
+		const requestRun = vi.fn();
+
+		await expect(
+			triggerDuePeriodDigestFreshness({
+				period: "today",
+				origin: "page",
+				now: new Date(2026, 7, 6, 11, 0, 0),
+				requestRun,
+			}),
+		).resolves.toEqual({
+			triggered: false,
+			reason: "not-due",
+			eligibleAt: retryAt.toISOString(),
+		});
+		expect(requestRun).not.toHaveBeenCalled();
+	});
+
 	it("returns disabled without installing or triggering when due time crosses midnight", async () => {
 		const install = vi.fn();
 		const reconciled = await reconcilePeriodDigestFreshness({

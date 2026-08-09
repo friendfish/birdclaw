@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { fetchJson } from "#/lib/api-client";
 import { queryKeys } from "#/lib/query-client";
@@ -46,6 +46,13 @@ export const periodDigestMetadataResponseSchema = z.object({
 		.nullable(),
 	runState: z.looseObject({}).nullable(),
 	migration: z.unknown().nullable(),
+});
+
+const periodDigestFreshnessResponseSchema = z.object({
+	ok: z.boolean(),
+	triggered: z.boolean(),
+	reason: z.string().optional(),
+	eligibleAt: z.string().optional(),
 });
 
 function metadataUrl(period: string, contentSource: PeriodDigestContentSource) {
@@ -102,6 +109,9 @@ export function usePeriodDigestMetadata({
 		refetchOnWindowFocus: true,
 	});
 	const attemptedFreshnessKey = useRef<string | null>(null);
+	const [freshnessEligibleAt, setFreshnessEligibleAt] = useState<string | null>(
+		null,
+	);
 	const freshnessMutation = useMutation({
 		mutationFn: async () => {
 			const url = new URL(
@@ -115,11 +125,34 @@ export function usePeriodDigestMetadata({
 					`Freshness request failed (${String(response.status)})`,
 				);
 			}
+			return periodDigestFreshnessResponseSchema.parse(await response.json());
 		},
-		onSuccess: () => {
+		onSuccess: (result) => {
+			setFreshnessEligibleAt(
+				!result.triggered && result.reason === "not-due"
+					? (result.eligibleAt ?? null)
+					: null,
+			);
 			void query.refetch();
 		},
 	});
+	useEffect(() => {
+		if (!freshnessEligibleAt) return;
+		const eligibleTime = new Date(freshnessEligibleAt).getTime();
+		if (!Number.isFinite(eligibleTime)) {
+			setFreshnessEligibleAt(null);
+			return;
+		}
+		const remainingMs = eligibleTime - Date.now();
+		const timeout = window.setTimeout(
+			() => {
+				attemptedFreshnessKey.current = null;
+				setFreshnessEligibleAt(null);
+			},
+			remainingMs > 0 ? remainingMs + 50 : IDLE_POLL_INTERVAL_MS,
+		);
+		return () => window.clearTimeout(timeout);
+	}, [freshnessEligibleAt]);
 	const freshnessKey = [
 		period,
 		contentSource,
@@ -142,6 +175,7 @@ export function usePeriodDigestMetadata({
 	}, [
 		enabled,
 		freshnessKey,
+		freshnessEligibleAt,
 		freshnessMutation,
 		query.data?.isGenerating,
 		query.data?.isStale,

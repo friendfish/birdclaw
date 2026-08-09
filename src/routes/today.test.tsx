@@ -244,6 +244,45 @@ describe("today route", () => {
 		).toBeVisible();
 	});
 
+	it("retries freshness when the server eligibility time arrives", async () => {
+		let freshnessRequests = 0;
+		const eligibleAt = new Date(Date.now() + 50).toISOString();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/data-sources") {
+					return jsonResponse(dataSourcesResponse());
+				}
+				if (url.pathname === "/api/digest-archive-status") {
+					return jsonResponse({ ok: true, runningPeriods: [] });
+				}
+				if (url.pathname === "/api/period-digest-metadata") {
+					return jsonResponse(metadataResponse({ isStale: true }));
+				}
+				if (url.pathname === "/api/period-digest-freshness") {
+					freshnessRequests += 1;
+					return jsonResponse(
+						freshnessRequests === 1
+							? {
+									ok: true,
+									triggered: false,
+									reason: "not-due",
+									eligibleAt,
+								}
+							: { ok: true, triggered: true, runId: "due-run" },
+					);
+				}
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			}),
+		);
+
+		render(<TodayRoute searchState={currentSearch()} />);
+
+		await waitFor(() => expect(freshnessRequests).toBe(1));
+		await waitFor(() => expect(freshnessRequests).toBe(2));
+	});
+
 	it("keeps old content visible while the period batch is generating", async () => {
 		vi.stubGlobal(
 			"fetch",
