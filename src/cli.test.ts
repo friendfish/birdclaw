@@ -1366,24 +1366,22 @@ describe("cli", () => {
 			runDigestArchiveJobMock.mockResolvedValue({ ok: true });
 			const { runCli } = await loadCli();
 
-			await runCli([
-				"node",
-				"birdclaw",
-				"jobs",
-				"run-digest-archive",
-				"--period",
-				"week",
-				"--run-date",
-				runDate,
-			]);
+			await expect(
+				runCli([
+					"node",
+					"birdclaw",
+					"jobs",
+					"run-digest-archive",
+					"--period",
+					"week",
+					"--run-date",
+					runDate,
+				]),
+			).rejects.toThrow("--run-date must be a real date in YYYY-MM-DD format");
 
 			expect(runDigestArchiveJobMock).not.toHaveBeenCalled();
-			expect(JSON.parse(consoleLogMock.mock.lastCall?.[0] as string)).toEqual({
-				ok: false,
-				status: "failed",
-				error: "--run-date must be a real date in YYYY-MM-DD format",
-			});
-			expect(process.exitCode).toBe(1);
+			expect(consoleLogMock).not.toHaveBeenCalled();
+			expect(process.exitCode).toBeUndefined();
 		},
 	);
 

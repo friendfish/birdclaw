@@ -374,16 +374,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				options.runDate !== undefined &&
 				!isCalendarDateString(options.runDate)
 			) {
-				print(
-					{
-						ok: false,
-						status: "failed",
-						error: "--run-date must be a real date in YYYY-MM-DD format",
-					},
-					true,
-				);
-				process.exitCode = 1;
-				return;
+				throw new Error("--run-date must be a real date in YYYY-MM-DD format");
 			}
 			const runDate = options.runDate
 				? new Date(`${options.runDate}T00:00:00`)

@@ -73,9 +73,11 @@ and turning the archive view into a hard fetch error.
 For archived periods, `jobs run-digest-archive --run-date` checks the raw option
 before constructing a JavaScript `Date`, preventing values such as
 `2026-02-30` from being silently normalized to a different day. An invalid
-option prints a structured failure object, sets exit code 1, and does not start
-or audit a job that has no valid run date. Current-view periods continue to
-report this archive-only option as ignored.
+option follows the CLI's existing invalid-option contract: it throws before
+dispatch, then the executable's top-level handler writes the message to stderr
+and exits with code 1. It does not start or audit a job that has no valid run
+date. Current-view periods continue to report this archive-only option as
+ignored.
 
 The scheduled-job lock reader also uses the shared predicate, so formatted but
 impossible legacy `runDate` values are omitted and status callers fall back to
@@ -153,7 +155,7 @@ Use a red-green test sequence covering:
 - the shared request-error classifier returning dedicated messages and
   rethrowing unexpected failures;
 - CLI backfill dates rejecting impossible or malformed input before job
-  dispatch while returning structured failure output;
+  dispatch with the standard thrown option error and no job output;
 - lock metadata omitting formatted but impossible run dates.
 
 After targeted tests pass, run formatting and lint checks, type checking, the
