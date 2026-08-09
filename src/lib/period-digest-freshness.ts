@@ -40,6 +40,7 @@ export interface PeriodDigestFreshnessStateV1 {
 		| "error";
 	updatedAt: string;
 	consumedAt?: string;
+	completedAt?: string;
 	startedAt?: string;
 	failedAt?: string;
 	installError?: string;
@@ -348,8 +349,14 @@ export async function consumePeriodDigestFreshnessAttempt({
 				state.status === "failed" ||
 				state.status === "consumed" ||
 				state.status === "error";
+			const recoverableTerminal =
+				state.status === "failed" ||
+				state.status === "error" ||
+				(state.status === "consumed" && !state.completedAt);
 			const pageRecovery =
-				origin === "page" && terminal && !state.pageRecoveryUsedAt;
+				origin === "page" &&
+				recoverableTerminal &&
+				!state.pageRecoveryUsedAt;
 			if (terminal && !pageRecovery) {
 				return { valid: false, reason: "already-consumed" } as const;
 			}
@@ -420,6 +427,7 @@ export async function completePeriodDigestFreshnessAttempt({
 					...state,
 					status: "consumed",
 					consumedAt: now.toISOString(),
+					completedAt: now.toISOString(),
 					updatedAt: now.toISOString(),
 				};
 				await writeStateFile(statePath, consumed);
@@ -529,6 +537,7 @@ export async function triggerDuePeriodDigestFreshness({
 	origin,
 	now = new Date(),
 	requestRun,
+	completeAttempt = completePeriodDigestFreshnessAttempt,
 }: {
 	period: CurrentPeriodDigestPeriod;
 	origin: "page" | "cli";
@@ -537,7 +546,12 @@ export async function triggerDuePeriodDigestFreshness({
 		period: CurrentPeriodDigestPeriod;
 		trigger: "freshness";
 		origin: "page" | "cli";
-	}) => Promise<{ runId: string; joined: boolean }>;
+	}) => Promise<{
+		runId: string;
+		joined: boolean;
+		completion: Promise<{ phase: "completed" | "degraded" | "failed" }>;
+	}>;
+	completeAttempt?: typeof completePeriodDigestFreshnessAttempt;
 }) {
 	let state = await readPeriodDigestFreshnessState(period);
 	if (!state) {
@@ -549,6 +563,7 @@ export async function triggerDuePeriodDigestFreshness({
 	const attempt = await consumePeriodDigestFreshnessAttempt({
 		period,
 		attemptToken: state.attemptToken,
+		origin,
 		now,
 	});
 	if (!attempt.valid) {
@@ -557,9 +572,18 @@ export async function triggerDuePeriodDigestFreshness({
 	const run = requestRun
 		? await requestRun({ period, trigger: "freshness", origin })
 		: await import("./period-digest-orchestrator").then(
-				({ requestPeriodDigestRun }) =>
-					requestPeriodDigestRun({ period, trigger: "freshness", origin }),
-			);
+					({ requestPeriodDigestRun }) =>
+						requestPeriodDigestRun({ period, trigger: "freshness", origin }),
+				);
+	void run.completion
+		.then((finalState) =>
+			completeAttempt({
+				period,
+				attemptToken: state.attemptToken,
+				outcome: finalState.phase === "failed" ? "failed" : "published",
+			}),
+		)
+		.catch(() => undefined);
 	return {
 		triggered: true as const,
 		runId: run.runId,

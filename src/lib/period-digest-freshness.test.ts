@@ -236,7 +236,7 @@ describe("period digest freshness", () => {
 		const requestRun = vi.fn(async () => ({
 			runId: "fresh-run",
 			joined: false,
-			completion: Promise.resolve(undefined),
+			completion: Promise.resolve({ phase: "completed" as const }),
 		}));
 
 		await expect(
@@ -261,9 +261,99 @@ describe("period digest freshness", () => {
 			}),
 		).resolves.toMatchObject({
 			triggered: false,
-			reason: "already-running",
+			reason: "already-consumed",
 		});
 		expect(requestRun).toHaveBeenCalledTimes(1);
+	});
+
+	it("reports a page-triggered all-source failure to the state machine", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "failed-page-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "scheduled",
+			updatedAt: dueAt.toISOString(),
+		});
+		const requestRun = vi.fn(async () => ({
+			runId: "failed-run",
+			joined: false,
+			completion: Promise.resolve({ phase: "failed" as const }),
+		}));
+		const completeAttempt = vi.fn(async () => undefined);
+
+		await triggerDuePeriodDigestFreshness({
+			period: "today",
+			origin: "page",
+			now: new Date(2026, 7, 6, 10, 31, 0),
+			requestRun,
+			completeAttempt,
+		});
+		await vi.waitFor(() => {
+			expect(completeAttempt).toHaveBeenCalledWith({
+				period: "today",
+				attemptToken: "failed-page-token",
+				outcome: "failed",
+			});
+		});
+	});
+
+	it("recovers a failed launchd attempt from the page on the same day", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "dark-wake-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "scheduled",
+			updatedAt: dueAt.toISOString(),
+		});
+		await consumePeriodDigestFreshnessAttempt({
+			period: "today",
+			attemptToken: "dark-wake-token",
+			origin: "launchd",
+			now: new Date(2026, 7, 6, 10, 31, 0),
+		});
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		await completePeriodDigestFreshnessAttempt({
+			period: "today",
+			attemptToken: "dark-wake-token",
+			outcome: "failed",
+			now: new Date(2026, 7, 6, 10, 31, 0),
+			install,
+		});
+		const successAt = new Date(2026, 7, 6, 10, 46, 0);
+		const requestRun = vi.fn(async () => ({
+			runId: "recovery-run",
+			joined: false,
+			completion: Promise.resolve({ phase: "completed" as const }),
+		}));
+
+		await triggerDuePeriodDigestFreshness({
+			period: "today",
+			origin: "page",
+			now: successAt,
+			requestRun,
+			completeAttempt: (input) =>
+				completePeriodDigestFreshnessAttempt({
+					...input,
+					now: successAt,
+					install,
+				}),
+		});
+		await vi.waitFor(async () => {
+			expect(await readPeriodDigestFreshnessState("today")).toMatchObject({
+				status: "consumed",
+				retryCount: 1,
+			});
+		});
+		expect(requestRun).toHaveBeenCalledOnce();
+		expect(install).toHaveBeenCalledOnce();
 	});
 
 	it("serializes agent reconciliation and persists installation failures", async () => {
