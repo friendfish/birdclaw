@@ -140,6 +140,7 @@ export interface PeriodDigestOrchestratorDependencies {
 		period: CurrentPeriodDigestPeriod,
 		options?: {
 			deferLaunchAgentReload?: boolean;
+			replaceRunningAttempt?: boolean;
 			suppressSources?: PeriodDigestContentSource[];
 		},
 	): Promise<unknown>;
@@ -882,16 +883,14 @@ async function runOwnedBatch({
 			const deferLaunchAgentReload =
 				request.trigger === "freshness" && request.origin === "launchd";
 			const reconciliationOptions = {
+				replaceRunningAttempt: true,
 				...(deferLaunchAgentReload ? { deferLaunchAgentReload: true } : {}),
 				...(suppressSources.length > 0 ? { suppressSources } : {}),
 			};
-			const reconciliation =
-				Object.keys(reconciliationOptions).length > 0
-					? dependencies.reconcileFreshness?.(
-							request.period,
-							reconciliationOptions,
-						)
-					: dependencies.reconcileFreshness?.(request.period);
+			const reconciliation = dependencies.reconcileFreshness?.(
+				request.period,
+				reconciliationOptions,
+			);
 			await reconciliation?.catch(() => undefined);
 		}
 		const observedFinalState = await withJoinedTriggers(finalState);

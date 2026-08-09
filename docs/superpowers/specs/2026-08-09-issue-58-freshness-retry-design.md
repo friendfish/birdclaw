@@ -41,11 +41,14 @@ retryCount?: number;
 retryAt?: string;
 pageRecoveryUsedAt?: string;
 completedAt?: string;
+runningOrigin?: "launchd" | "page" | "cli";
+launchdCallerPid?: number;
 ```
 
 - `scheduled`：初次 freshness 已安装，等待 `dueAt`。
-- `running`：某个进程已原子取得该 token；状态带 15 分钟租约。租约内其他进程只能
-  跳过或加入现有摘要批次；租约过期且 period-run 心跳锁已失效时可重新调度。
+- `running`：某个进程已原子取得该 token；状态带 15 分钟租约，并记录最近取得者来源。
+  launchd 调用者的 PID 会单独保留，即使页面/CLI 过租约接管也不会丢失。租约内其他进程
+  只能跳过或加入现有摘要批次；租约过期且 period-run 心跳锁已失效时可重新调度。
 - `retryable`：上次批次全量失败，已保存并安装下一次 `retryAt`。
 - `failed`：三次后台重试均失败，不再自动调度；同日仍可使用一次页面恢复机会。
 - `consumed`：成功完成或从旧版本读取的终态。新版成功完成时写入 `completedAt`；
@@ -67,13 +70,16 @@ token，因此并发触发无法绕过状态锁。
 1. launchd 使用 attempt token 调用 `consumePeriodDigestFreshnessAttempt`。
 2. consume 在 scheduler lease 内校验 token、自然日、到期时间和状态，然后将状态写为 `running`。
 3. CLI 启动或加入统一的 period digest 批次，并等待 completion。
-4. 若批次至少发布一个来源，现有 orchestrator reconciliation 根据新 version identity
-   安排下一次 freshness；失败来源继续使用现有 suppression 规则。launchd freshness
-   进程不会直接替换自己的 LaunchAgent，而是安装不同 label 的短命 reloader，等当前
-   进程退出后再激活下一代任务。
+4. 若批次至少发布一个来源，现有 orchestrator reconciliation 以明确的 published
+   replacement 权限，根据新 version identity 安排下一次 freshness；失败来源继续使用
+   现有 suppression 规则。普通配置保存即使生成不同 token，也不能越过运行租约/心跳锁。
+   launchd freshness 即使加入由其他进程拥有的批次，也不会直接替换自己的 LaunchAgent，
+   而是安装不同 label 的短命 reloader，等待状态里记录的 launchd 调用者 PID 退出后再激活
+   下一代任务。
 5. 若批次全量失败，completion 回写在 scheduler lease 内把同一 token 标为
-   `retryable` 并计算退避时间。launchd 触发的失败重试也复用相同 reloader 流程，避免
-   job 在执行 `unload` 自身后、来不及重新 `load` 就被终止。
+   `retryable` 并计算退避时间。只要 attempt 仍记录 launchd 调用者，即使页面/CLI 加入者
+   先取得 completion 回写，也复用相同 reloader 流程，避免 job 在执行 `unload` 自身后、
+   来不及重新 `load` 就被终止。
 6. 第三次后台重试仍失败后写为 `failed`，不再自动安装任务。
 
 ### 页面恢复
@@ -119,8 +125,9 @@ origin 和最终 run phase。只有 state 仍匹配该 token 且处于 `running`
 - 后台次数耗尽后只保留一次页面恢复机会；页面恢复失败不再自动重排。
 - `running` 租约固定为 15 分钟；显式 reconciliation 还必须确认 period-run 心跳锁
   已失效，才会安装新的 freshness agent，避免终止正常的长生成任务。
-- reloader 等待父 PID 最多 6 小时，与 period-run 最大寿命一致；PID 被复用时不会
-  无限期挂起，超时后仍须通过 token 和状态校验才能激活目标 agent。
+- reloader 按墙钟时间等待 launchd 调用者 PID 最多 6 小时，与 period-run 最大寿命一致；
+  机器休眠不会暂停该截止时间，PID 被复用时也不会无限期挂起。超时后仍须通过 token 和
+  状态校验才能激活目标 agent。
 - 任何尚未到期、仍在 running 租约内、token 不匹配或跨日的请求都不会启动新批次。
 
 ## 错误处理与兼容性

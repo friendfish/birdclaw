@@ -47,6 +47,8 @@ export interface PeriodDigestFreshnessStateV1 {
 	consumedAt?: string;
 	completedAt?: string;
 	startedAt?: string;
+	runningOrigin?: PeriodDigestFreshnessOrigin;
+	launchdCallerPid?: number;
 	failedAt?: string;
 	installError?: string;
 	retryCount?: number;
@@ -115,6 +117,10 @@ function runningLeaseEligibleAt(state: PeriodDigestFreshnessStateV1) {
 	return Number.isFinite(startedAt.getTime())
 		? new Date(startedAt.getTime() + FRESHNESS_RUNNING_LEASE_MS)
 		: new Date(0);
+}
+
+function validProcessId(value: unknown): value is number {
+	return Number.isSafeInteger(value) && Number(value) > 0;
 }
 
 async function isPeriodDigestRunActive(period: CurrentPeriodDigestPeriod) {
@@ -354,6 +360,7 @@ export function buildPeriodDigestFreshnessRetryReloaderLaunchAgent({
 	launchAgentsDir?: string;
 }): LaunchAgent {
 	const root = getBirdclawPaths().rootDir;
+	const waitPid = validProcessId(parentPid) ? parentPid : process.pid;
 	const label = `${periodDigestFreshnessLaunchAgentLabel(period)}-reloader`;
 	const helperPlistPath = launchAgentPlistPath(label, { launchAgentsDir });
 	const activationArguments = buildLaunchProgramArguments({
@@ -372,8 +379,8 @@ export function buildPeriodDigestFreshnessRetryReloaderLaunchAgent({
 	});
 	const activationCommand = activationArguments.map(shellQuote).join(" ");
 	const script = [
-		`remaining=${String(FRESHNESS_RELOADER_WAIT_SECONDS)}`,
-		`while /bin/kill -0 ${String(parentPid)} 2>/dev/null && [ "$remaining" -gt 0 ]; do /bin/sleep 1; remaining=$((remaining - 1)); done`,
+		`deadline=$(( $(/bin/date +%s) + ${String(FRESHNESS_RELOADER_WAIT_SECONDS)} ))`,
+		`while /bin/kill -0 ${String(waitPid)} 2>/dev/null && [ "$(/bin/date +%s)" -lt "$deadline" ]; do /bin/sleep 1; done`,
 		activationCommand,
 		"activation_status=$?",
 		`/usr/bin/unlink ${shellQuote(helperPlistPath)} 2>/dev/null || true`,
@@ -478,10 +485,21 @@ export async function consumePeriodDigestFreshnessAttempt({
 						: {}),
 				} as const;
 			}
+			const { launchdCallerPid, ...stateWithoutLaunchdCallerPid } = state;
+			const retainedLaunchdCallerPid =
+				state.status === "running" && validProcessId(launchdCallerPid)
+					? launchdCallerPid
+					: undefined;
 			await writeStateFile(statePath, {
-				...state,
+				...stateWithoutLaunchdCallerPid,
 				status: "running",
 				startedAt: now.toISOString(),
+				runningOrigin: origin,
+				...(origin === "launchd"
+					? { launchdCallerPid: process.pid }
+					: retainedLaunchdCallerPid !== undefined
+						? { launchdCallerPid: retainedLaunchdCallerPid }
+						: {}),
 				updatedAt: now.toISOString(),
 				...(pageRecovery ? { pageRecoveryUsedAt: now.toISOString() } : {}),
 			});
@@ -710,11 +728,15 @@ export async function completePeriodDigestFreshnessAttempt({
 			};
 			await writeStateFile(statePath, retryable);
 			const execution = resolveDigestLaunchdExecution();
+			const launchdCallerPid = validProcessId(state.launchdCallerPid)
+				? state.launchdCallerPid
+				: undefined;
 			const agent =
-				origin === "launchd"
+				origin === "launchd" || launchdCallerPid !== undefined
 					? buildPeriodDigestFreshnessRetryReloaderLaunchAgent({
 							period,
 							attemptToken,
+							parentPid: launchdCallerPid,
 							program: program ?? execution.program,
 							envFile: envFile ?? execution.envFile,
 							launchAgentsDir: installOptions?.launchAgentsDir,
@@ -839,6 +861,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 	install = installLaunchAgent,
 	suppressSources = [],
 	deferLaunchAgentReload = false,
+	replaceRunningAttempt = false,
 	program,
 	envFile,
 }: {
@@ -853,6 +876,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 	) => Promise<LaunchAgentInstallResult>;
 	suppressSources?: PeriodDigestContentSource[];
 	deferLaunchAgentReload?: boolean;
+	replaceRunningAttempt?: boolean;
 	program?: string;
 	envFile?: string;
 }) {
@@ -916,6 +940,17 @@ async function reconcilePeriodDigestFreshnessInternal({
 			}),
 		)
 		.digest("hex");
+	const sameAttempt = previous?.attemptToken === attemptToken;
+	const replacingRunningAttempt = Boolean(
+		previous?.status === "running" && replaceRunningAttempt && !sameAttempt,
+	);
+	if (previous?.status === "running" && !replacingRunningAttempt) {
+		const leaseActive =
+			now.getTime() < runningLeaseEligibleAt(previous).getTime();
+		if (leaseActive || (await isPeriodDigestRunActive(period))) {
+			return { state: previous, installResult: null };
+		}
+	}
 	if (!dueAt) {
 		const state: PeriodDigestFreshnessStateV1 = {
 			schemaVersion: 1,
@@ -931,14 +966,6 @@ async function reconcilePeriodDigestFreshnessInternal({
 		};
 		await writePeriodDigestFreshnessState(state);
 		return { state, installResult: null };
-	}
-	const sameAttempt = previous?.attemptToken === attemptToken;
-	if (sameAttempt && previous.status === "running") {
-		const leaseActive =
-			now.getTime() < runningLeaseEligibleAt(previous).getTime();
-		if (leaseActive || (await isPeriodDigestRunActive(period))) {
-			return { state: previous, installResult: null };
-		}
 	}
 	if (
 		sameAttempt &&
@@ -978,10 +1005,19 @@ async function reconcilePeriodDigestFreshnessInternal({
 	};
 	await writePeriodDigestFreshnessState(state);
 	const execution = resolveDigestLaunchdExecution();
-	const agent = deferLaunchAgentReload
+	const launchdCallerPid = validProcessId(previous?.launchdCallerPid)
+		? previous.launchdCallerPid
+		: undefined;
+	const shouldDeferLaunchAgentReload =
+		deferLaunchAgentReload ||
+		(replacingRunningAttempt &&
+			(previous?.runningOrigin === "launchd" ||
+				launchdCallerPid !== undefined));
+	const agent = shouldDeferLaunchAgentReload
 		? buildPeriodDigestFreshnessRetryReloaderLaunchAgent({
 				period,
 				attemptToken,
+				parentPid: launchdCallerPid,
 				program: program ?? execution.program,
 				envFile: envFile ?? execution.envFile,
 				launchAgentsDir: installOptions?.launchAgentsDir,

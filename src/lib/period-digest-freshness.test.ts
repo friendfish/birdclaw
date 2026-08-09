@@ -141,9 +141,8 @@ describe("period digest freshness", () => {
 		const command = agent.programArguments.join(" ");
 		for (const expected of [
 			"4242",
-			"remaining=21600",
-			'[ "$remaining" -gt 0 ]',
-			"remaining=$((remaining - 1))",
+			"deadline=$(( $(/bin/date +%s) + 21600 ))",
+			'[ "$(/bin/date +%s)" -lt "$deadline" ]',
 			"activate-period-digest-freshness-retry",
 			"retry-token",
 			launchAgentsDir,
@@ -151,6 +150,7 @@ describe("period digest freshness", () => {
 		]) {
 			expect(command).toContain(expected);
 		}
+		expect(command).not.toContain("remaining=");
 		expect(command).not.toContain("run-period-digest");
 	});
 
@@ -184,6 +184,8 @@ describe("period digest freshness", () => {
 		).resolves.toEqual({ valid: true });
 		expect(await readPeriodDigestFreshnessState("24h")).toMatchObject({
 			status: "running",
+			runningOrigin: "launchd",
+			launchdCallerPid: process.pid,
 		});
 		await expect(
 			consumePeriodDigestFreshnessAttempt({
@@ -209,6 +211,8 @@ describe("period digest freshness", () => {
 			fireAt: dueAt.toISOString(),
 			status: "running",
 			startedAt: startedAt.toISOString(),
+			runningOrigin: "launchd",
+			launchdCallerPid: 4242,
 			updatedAt: startedAt.toISOString(),
 		});
 
@@ -236,6 +240,8 @@ describe("period digest freshness", () => {
 		expect(await readPeriodDigestFreshnessState("today")).toMatchObject({
 			status: "running",
 			startedAt: eligibleAt.toISOString(),
+			runningOrigin: "page",
+			launchdCallerPid: 4242,
 		});
 	});
 
@@ -315,6 +321,44 @@ describe("period digest freshness", () => {
 				"com.steipete.birdclaw.period-digest-freshness-today-reloader",
 			);
 		}
+	});
+
+	it("defers a page-owned failure retry while its launchd caller exits", async () => {
+		const now = new Date(2026, 7, 6, 10, 31, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "joined-failure-token",
+			dueAt: new Date(2026, 7, 6, 10, 30, 0).toISOString(),
+			fireAt: new Date(2026, 7, 6, 10, 30, 0).toISOString(),
+			status: "running",
+			startedAt: now.toISOString(),
+			runningOrigin: "page",
+			launchdCallerPid: 4242,
+			updatedAt: now.toISOString(),
+		});
+		const install = vi.fn(
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+
+		const completed = await completePeriodDigestFreshnessAttempt({
+			period: "today",
+			attemptToken: "joined-failure-token",
+			origin: "page",
+			outcome: "failed",
+			now,
+			install,
+		});
+
+		expect(completed.state).toMatchObject({ status: "retryable" });
+		expect(install).toHaveBeenCalledOnce();
+		expect(install.mock.calls[0]?.[0]).toMatchObject({
+			label: "com.steipete.birdclaw.period-digest-freshness-today-reloader",
+			runAtLoad: true,
+		});
+		expect(install.mock.calls[0]?.[0].programArguments.join(" ")).toContain(
+			"kill -0 4242",
+		);
 	});
 
 	it("activates a deferred retry only while the token remains retryable", async () => {
@@ -723,6 +767,96 @@ describe("period digest freshness", () => {
 		});
 		expect(install.mock.calls[0]?.[0].programArguments.join(" ")).toContain(
 			reconciled.state.attemptToken,
+		);
+	});
+
+	it("preserves a running attempt when a configuration change creates a new token", async () => {
+		const now = new Date(2026, 7, 6, 10, 0, 0);
+		const install = vi.fn(
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const initial = await reconcilePeriodDigestFreshness({
+			period: "today",
+			now,
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		});
+		install.mockClear();
+		await writePeriodDigestFreshnessState({
+			...initial.state,
+			status: "running",
+			runningOrigin: "launchd",
+			startedAt: new Date(now.getTime() - 16 * 60_000).toISOString(),
+			updatedAt: new Date(now.getTime() - 16 * 60_000).toISOString(),
+		});
+		const release = await acquireScheduledJobLock(
+			periodDigestRunLockPath("today"),
+			60_000,
+		);
+		if (!release) throw new Error("Expected the digest lock to be acquired");
+
+		try {
+			const reconciled = await reconcilePeriodDigestFreshness({
+				period: "today",
+				now,
+				freshnessSeconds: 2 * 60 * 60,
+				schedule: { hour: 9, minute: 0 },
+				install,
+			});
+
+			expect(reconciled.state).toMatchObject({
+				attemptToken: initial.state.attemptToken,
+				status: "running",
+				runningOrigin: "launchd",
+			});
+			expect(install).not.toHaveBeenCalled();
+		} finally {
+			await release();
+		}
+	});
+
+	it("publishes a new attempt through a reloader for a launchd-owned run", async () => {
+		const now = new Date(2026, 7, 6, 10, 0, 0);
+		const install = vi.fn(
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const initial = await reconcilePeriodDigestFreshness({
+			period: "24h",
+			now,
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		});
+		install.mockClear();
+		await writePeriodDigestFreshnessState({
+			...initial.state,
+			status: "running",
+			runningOrigin: "page",
+			launchdCallerPid: 4242,
+			startedAt: now.toISOString(),
+			updatedAt: now.toISOString(),
+		});
+
+		const reconciled = await reconcilePeriodDigestFreshness({
+			period: "24h",
+			now,
+			freshnessSeconds: 2 * 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			replaceRunningAttempt: true,
+			install,
+			program: "/opt/homebrew/bin/birdclaw",
+		});
+
+		expect(reconciled.state).toMatchObject({ status: "scheduled" });
+		expect(reconciled.state.attemptToken).not.toBe(initial.state.attemptToken);
+		expect(install).toHaveBeenCalledOnce();
+		expect(install.mock.calls[0]?.[0]).toMatchObject({
+			label: "com.steipete.birdclaw.period-digest-freshness-24h-reloader",
+			runAtLoad: true,
+		});
+		expect(install.mock.calls[0]?.[0].programArguments.join(" ")).toContain(
+			"kill -0 4242",
 		);
 	});
 

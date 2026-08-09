@@ -573,6 +573,7 @@ describe("period digest orchestrator", () => {
 		expect(finalState.sources.for_you.state).toBe("completed");
 		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
 			deferLaunchAgentReload: true,
+			replaceRunningAttempt: true,
 			suppressSources: ["all"],
 		});
 	});
@@ -589,6 +590,7 @@ describe("period digest orchestrator", () => {
 		expect(finalState.phase).toBe("completed");
 		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
 			deferLaunchAgentReload: true,
+			replaceRunningAttempt: true,
 		});
 	});
 
@@ -723,7 +725,9 @@ describe("period digest orchestrator", () => {
 			attempts: 2,
 		});
 		expect(sleep).toHaveBeenCalledWith(25);
-		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today");
+		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
+			replaceRunningAttempt: true,
+		});
 		expect(deps.audit).toHaveBeenCalledWith(
 			expect.objectContaining({
 				phase: "completed",
@@ -831,7 +835,9 @@ describe("period digest orchestrator", () => {
 		expect(deps.generate).toHaveBeenCalledWith(
 			expect.objectContaining({ account: "alice", language: "zh-CN" }),
 		);
-		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today");
+		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
+			replaceRunningAttempt: true,
+		});
 		expect(deps.audit).toHaveBeenCalledOnce();
 	});
 
