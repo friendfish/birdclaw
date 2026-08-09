@@ -1400,7 +1400,7 @@ Expected: bash syntax and diff checks exit zero.
 Review the exact range `e306e4a..HEAD` against the third-round review requirements.
 Fix every valid Critical, Important, and Minor finding before proceeding.
 
-- [ ] **Step 5: Push and reply to the third-round review**
+- [x] **Step 5: Push and reply to the third-round review**
 
 Push `codex/issue-58-freshness-retry`, post a PR comment summarizing all three fixes
 and verification evidence, then wait for the new-head GitHub `validate` check.
