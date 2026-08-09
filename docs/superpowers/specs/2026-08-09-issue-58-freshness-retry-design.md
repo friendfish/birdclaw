@@ -40,14 +40,16 @@ status: "scheduled" | "running" | "retryable" | "failed" |
 retryCount?: number;
 retryAt?: string;
 pageRecoveryUsedAt?: string;
+completedAt?: string;
 ```
 
 - `scheduled`：初次 freshness 已安装，等待 `dueAt`。
 - `running`：某个进程已原子取得该 token；其他进程只能跳过或加入现有摘要批次。
 - `retryable`：上次批次全量失败，已保存并安装下一次 `retryAt`。
 - `failed`：三次后台重试均失败，不再自动调度；同日仍可使用一次页面恢复机会。
-- `consumed`：成功完成或从旧版本读取的终态。对于旧版遗留的同日 `consumed`
-  状态，页面可使用一次恢复机会，修复升级前已卡住的用户。
+- `consumed`：成功完成或从旧版本读取的终态。新版成功完成时写入 `completedAt`；
+  对于没有该字段的旧版同日 `consumed` 状态，页面可使用一次恢复机会，修复升级前
+  已卡住的用户。
 - `disabled`：freshness 截止时间或下一次重试跨日。
 - `error`：LaunchAgent 安装失败；页面仍可在同日直接恢复，不依赖该 agent。
 

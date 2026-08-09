@@ -133,6 +133,7 @@ export interface PeriodDigestFreshnessStateV1 {
 		| "error";
 	updatedAt: string;
 	consumedAt?: string;
+	completedAt?: string;
 	installError?: string;
 	freshnessSeconds?: number;
 	sourceIdentities?: Partial<Record<PeriodDigestContentSource, string>>;
@@ -161,6 +162,7 @@ if (state.status === "running") {
 const pageRecovery =
 	origin === "page" &&
 	["failed", "consumed", "error"].includes(state.status) &&
+	(state.status !== "consumed" || !state.completedAt) &&
 	!state.pageRecoveryUsedAt;
 if (
 	["failed", "consumed", "error"].includes(state.status) &&
@@ -273,6 +275,7 @@ export async function completePeriodDigestFreshnessAttempt({
 					...state,
 					status: "consumed" as const,
 					consumedAt: now.toISOString(),
+					completedAt: now.toISOString(),
 					updatedAt: now.toISOString(),
 				};
 				await writeStateFile(statePath, consumed);
