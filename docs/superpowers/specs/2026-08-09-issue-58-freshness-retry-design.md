@@ -67,7 +67,9 @@ token，因此并发触发无法绕过状态锁。
 4. 若批次至少发布一个来源，现有 orchestrator reconciliation 根据新 version identity
    安排下一次 freshness；失败来源继续使用现有 suppression 规则。
 5. 若批次全量失败，completion 回写在 scheduler lease 内把同一 token 标为
-   `retryable`，计算退避时间并安装一次性 LaunchAgent。
+   `retryable` 并计算退避时间。launchd 触发的进程先安装一个不同 label 的短命
+   reloader；reloader 等当前进程退出后再替换一次性 freshness LaunchAgent，避免 job
+   在执行 `unload` 自身后、来不及重新 `load` 就被终止。
 6. 第三次后台重试仍失败后写为 `failed`，不再自动安装任务。
 
 ### 页面恢复
@@ -82,6 +84,10 @@ launchd 相同的 token 和调度锁，但在以下状态拥有恢复语义：
 页面 freshness 去重 key 加入最终 run 的身份/完成时间。这样每次失败批次结束后，
 页面能重新评估服务端状态；同一批次的普通轮询仍只发送一次 POST。真正是否允许
 启动由持久化 state 和跨进程锁决定，React ref 不是正确性的唯一边界。
+
+若服务端返回 `not-due`，响应同时携带权威 `eligibleAt`。已打开的页面设置一次性
+计时器，到点后清除当前 key 的本地去重并重新请求，因此可在 launchd 未触发时接手
+已经到期的后台重试，同时不会在退避窗口内提前运行。
 
 ### 完成回写
 
@@ -107,6 +113,10 @@ origin 和最终 run phase。只有 state 仍匹配该 token 且处于 `running`
 ## 错误处理与兼容性
 
 - LaunchAgent 安装失败保留 `error` 和 `installError`，不会伪装成已成功调度。
+- 同 token 的重试安装错误在 reconcile 后仍恢复为 `retryable`，保留原 `retryAt`；
+  不会因为配置保存或状态读取而降回 `scheduled` 并绕过退避。
+- reloader 激活目标 agent 前再次校验 token 和 `retryable` 状态；目标安装失败会把
+  attempt 回写为 `error`，随后删除 helper plist 并移除 helper label。
 - completion 回写失败不能改写摘要批次结果，但 CLI 会记录失败，页面后续仍可通过
   状态检查恢复。
 - 旧 state 缺少新增字段时按 `retryCount = 0`、页面恢复未使用处理。
@@ -123,6 +133,8 @@ origin 和最终 run phase。只有 state 仍匹配该 token 且处于 `running`
 6. CLI 单测：launchd freshness completion 会回写成功或失败结果。
 7. 页面单测：失败 run 更新去重 key，恢复焦点可再次请求，但同一 run 不重复 POST。
 8. 集成回归：DarkWake 全量失败 -> retryable -> 同日页面恢复 -> 成功发布 -> 新 freshness 被安排。
+9. reloader 单测：launchd completion 使用不同 label；父进程退出后隐藏命令只为仍
+   retryable 的同 token 安装目标 agent，并持久化实际安装失败。
 
 ## 非目标
 
