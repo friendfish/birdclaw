@@ -39,12 +39,13 @@ fault-injection coverage, and structural refactoring remain separate actions.
 
 ## Chosen Approach
 
-Add a small shared request-validation module used by both archive API routes.
-It will expose focused parsers for archive period, content source, and entry
-date, plus a non-throwing date predicate used by route-search normalization.
-The parsers throw a dedicated request-validation error with stable,
-non-sensitive messages; each route maps only that error to its existing JSON
-error shape with HTTP 400.
+Add a neutral calendar-date module that owns the non-throwing real-date
+predicate used by route-search normalization, request parsing, directory
+enumeration, and path construction. A separate request-validation module
+exposes focused parsers for archive period, content source, and entry date. The
+parsers throw a dedicated request-validation error with stable, non-sensitive
+messages; a shared error-classification function lets each route map only that
+error to its existing JSON error shape with HTTP 400.
 
 The shared rules are:
 
@@ -75,6 +76,8 @@ will resolve the configured archive root and the requested date directory,
 then inspect `path.relative(root, candidate)`. It rejects the candidate when
 the run date is not itself a real `YYYY-MM-DD` date (including empty or `.`),
 the relative path is `..`, starts with `..${path.sep}`, or is absolute.
+Actual parent or absolute escapes keep the containment-specific error, while a
+contained but invalid run date receives a separate calendar-date error.
 
 The file basename continues to come only from the typed period and content
 source values. Valid callers therefore receive the same `.md` and `.json`
@@ -92,16 +95,18 @@ The existing specific explanation for `today` and `24h` remains available,
 because those are valid current views but do not have historical archives.
 Other invalid values receive parameter-specific messages.
 
-Only the dedicated archive request-validation error maps to HTTP 400. URL
-construction failures and unexpected parser defects continue through the
-route's existing server-error path and are not echoed to the client as request
-messages.
+Only the dedicated archive request-validation error maps to HTTP 400. The
+shared classifier rethrows URL construction failures and unexpected parser
+defects so they continue through the route's existing server-error path and are
+not echoed to the client as request messages.
 
 Containment failures from non-route callers throw before any filesystem read or
-write. Scheduled jobs lift that synchronous error into the Effect error channel
-so it becomes an ordinary failed step rather than a defect. Routes should never
-reach this error after successful date validation; it is defense in depth
-rather than a second public validation contract.
+write. Scheduled jobs validate the formatted run date once through the Effect
+error channel before acquiring a lock or entering content-source retries, so an
+invalid clock override fails immediately rather than sleeping through retries.
+The path constructor repeats the check inside the write workflow as defense in
+depth. Routes should never reach this error after successful date validation;
+it is not a second public validation contract.
 
 ## Test Strategy
 
@@ -122,11 +127,14 @@ Use a red-green test sequence covering:
 - traversal attempts returning HTTP 400 without reading outside the archive;
 - `resolveDigestArchivePaths` rejecting parent and absolute escapes, including
   a sibling directory whose name shares the archive root prefix;
-- valid path construction remaining byte-for-byte compatible.
+- valid path construction remaining byte-for-byte compatible;
 - empty, dot, and non-date run directories being rejected;
 - malformed or impossible archive directories being ignored during listing;
-- a scheduled invalid run date becoming a failed step rather than an Effect
-  defect.
+- a scheduled invalid run date failing before retries with a date-specific
+  message;
+- boundary years being formatted with exactly four digits;
+- the shared request-error classifier returning dedicated messages and
+  rethrowing unexpected failures.
 
 After targeted tests pass, run formatting and lint checks, type checking, the
 full test suite, and the production build.

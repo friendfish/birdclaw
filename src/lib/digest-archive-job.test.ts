@@ -30,6 +30,7 @@ vi.mock("./digest-archive-sync", () => ({
 import {
 	buildDigestArchiveLaunchAgentPlist,
 	digestArchiveLockPath,
+	formatDigestArchiveRunDate,
 	getDefaultDigestArchiveAuditLogPath,
 	getDigestArchiveStatus,
 	listDigestArchiveDates,
@@ -70,13 +71,30 @@ describe("resolveDigestArchivePaths", () => {
 	});
 
 	it.each([
-		["empty", ""],
-		["dot", "."],
-		["parent", "../outside"],
-		["nested parent", "../../outside"],
-		["sibling with the same prefix", "../archive-other"],
-		["absolute", path.resolve(path.sep, "outside")],
-	])("rejects %s archive path escapes", (_name, runDate) => {
+		["empty", "", "Archive run date must be a real date in YYYY-MM-DD format"],
+		["dot", ".", "Archive run date must be a real date in YYYY-MM-DD format"],
+		[
+			"non-date",
+			"NaN-NaN-NaN",
+			"Archive run date must be a real date in YYYY-MM-DD format",
+		],
+		["parent", "../outside", "Archive path escapes archive directory"],
+		[
+			"nested parent",
+			"../../outside",
+			"Archive path escapes archive directory",
+		],
+		[
+			"sibling with the same prefix",
+			"../archive-other",
+			"Archive path escapes archive directory",
+		],
+		[
+			"absolute",
+			path.resolve(path.sep, "outside"),
+			"Archive path escapes archive directory",
+		],
+	])("rejects %s archive paths", (_name, runDate, expectedError) => {
 		expect(() =>
 			resolveDigestArchivePaths({
 				archiveDir: path.join("relative", "archive"),
@@ -84,7 +102,22 @@ describe("resolveDigestArchivePaths", () => {
 				period: "yesterday",
 				contentSource: "all",
 			}),
-		).toThrow("Archive path escapes archive directory");
+		).toThrow(expectedError);
+	});
+});
+
+describe("formatDigestArchiveRunDate", () => {
+	it("rejects an invalid date", () => {
+		expect(() => formatDigestArchiveRunDate(new Date(Number.NaN))).toThrow(
+			"Archive run date must be a real date in YYYY-MM-DD format",
+		);
+	});
+
+	it("pads a valid boundary year to four digits", () => {
+		const date = new Date(2026, 0, 1);
+		date.setFullYear(1);
+
+		expect(formatDigestArchiveRunDate(date)).toBe("0001-01-01");
 	});
 });
 
@@ -621,41 +654,24 @@ describe("digest-archive-job", () => {
 		expect(entry.steps.at(-1)?.ok).toBe(true);
 	});
 
-	it("records an invalid run date as a failed step instead of an Effect defect", async () => {
+	it("rejects an invalid run date before entering scheduled retries", async () => {
 		streamPeriodDigestMock.mockResolvedValue(digestResult());
-		const archiveDir = tempArchiveDir();
-		const logPath = path.join(archiveDir, "audit.jsonl");
 
-		const entry = await runEffectPromise(
-			runDigestArchiveJobEffect({
-				period: "yesterday",
-				archiveDir,
-				contentSources: ["all"],
-				retries: 0,
-				logPath,
-				now: () => new Date(Number.NaN),
-			}),
+		await expect(
+			runEffectPromise(
+				runDigestArchiveJobEffect({
+					period: "yesterday",
+					archiveDir: tempArchiveDir(),
+					contentSources: ["all"],
+					retryDelayMs: 0,
+					now: () => new Date(Number.NaN),
+				}),
+			),
+		).rejects.toThrow(
+			"Archive run date must be a real date in YYYY-MM-DD format",
 		);
 
 		expect(streamPeriodDigestMock).not.toHaveBeenCalled();
-		expect(entry).toMatchObject({
-			ok: false,
-			status: "failed",
-			runDate: "NaN-NaN-NaN",
-			steps: [
-				{
-					contentSource: "all",
-					ok: false,
-					attempts: 1,
-					error: "Archive path escapes archive directory",
-				},
-			],
-		});
-		expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
-			ok: false,
-			status: "failed",
-			steps: [{ ok: false }],
-		});
 	});
 
 	it("writes scheduled schema v3 metadata with the final batch status", async () => {

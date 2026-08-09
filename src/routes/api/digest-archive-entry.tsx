@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { resolveDigestArchiveDir } from "#/lib/config";
 import { readDigestArchiveEntryEffect } from "#/lib/digest-archive-job";
 import {
-	DigestArchiveRequestError,
+	digestArchiveRequestErrorMessage,
 	parseDigestArchiveEntryRequest,
 } from "#/lib/digest-archive-request";
 import {
@@ -26,11 +26,10 @@ export const Route = createFileRoute("/api/digest-archive-entry")({
 						try {
 							options = parseDigestArchiveEntryRequest(url);
 						} catch (error) {
-							if (!(error instanceof DigestArchiveRequestError)) throw error;
 							return jsonResponse(
 								{
 									ok: false,
-									error: error.message,
+									error: digestArchiveRequestErrorMessage(error),
 								},
 								{ status: 400 },
 							);

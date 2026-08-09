@@ -9,6 +9,7 @@ import {
 	type DigestSchedulePeriod,
 	type DigestScheduleTime,
 } from "./config";
+import { isCalendarDateString } from "./calendar-date";
 import {
 	readBirdCredentialsFileStrict,
 	type BirdCredentials,
@@ -23,7 +24,6 @@ import {
 	updateDigestArchiveRunState,
 	writeDigestArchiveRunState,
 } from "./digest-archive-run-state";
-import { isDigestArchiveDate } from "./digest-archive-request";
 import {
 	runDigestArchivePreSyncEffect,
 	type DigestArchiveSyncResult,
@@ -64,6 +64,8 @@ const DEFAULT_DIGEST_ARCHIVE_RETRIES = 2;
 const DEFAULT_DIGEST_ARCHIVE_RETRY_DELAY_MS = 2 * 60_000;
 const DEFAULT_MODEL_TIMEOUT_MS = 10 * 60_000;
 export const DEFAULT_LOCK_STALE_MS = 60_000;
+const ARCHIVE_RUN_DATE_ERROR =
+	"Archive run date must be a real date in YYYY-MM-DD format";
 
 // The reviewed default: 24h was originally 08:20, moved to 08:45 to widen
 // the gap from Today's 08:00 run given the ~30 minute worst-case retry
@@ -208,10 +210,12 @@ function trySync<T>(try_: () => T) {
 }
 
 export function formatDigestArchiveRunDate(date: Date) {
-	const yyyy = date.getFullYear();
+	const yyyy = String(date.getFullYear()).padStart(4, "0");
 	const mm = String(date.getMonth() + 1).padStart(2, "0");
 	const dd = String(date.getDate()).padStart(2, "0");
-	return `${yyyy}-${mm}-${dd}`;
+	const runDate = `${yyyy}-${mm}-${dd}`;
+	if (!isCalendarDateString(runDate)) throw new Error(ARCHIVE_RUN_DATE_ERROR);
+	return runDate;
 }
 
 export function resolveDigestArchiveLanguage(requested?: string) {
@@ -321,13 +325,13 @@ export function resolveDigestArchivePaths({
 	const candidate = path.resolve(root, runDate);
 	const relative = path.relative(root, candidate);
 	if (
-		!isDigestArchiveDate(runDate) ||
 		relative === ".." ||
 		relative.startsWith(`..${path.sep}`) ||
 		path.isAbsolute(relative)
 	) {
 		throw new Error("Archive path escapes archive directory");
 	}
+	if (!isCalendarDateString(runDate)) throw new Error(ARCHIVE_RUN_DATE_ERROR);
 
 	const base = path.join(archiveDir, runDate, `${period}-${contentSource}`);
 	return { markdownPath: `${base}.md`, jsonPath: `${base}.json` };
@@ -1147,7 +1151,7 @@ async function listDigestArchiveDatesAsync({
 		.readdir(archiveDir, { withFileTypes: true })
 		.catch(() => []);
 	const dateDirs = entries
-		.filter((entry) => entry.isDirectory() && isDigestArchiveDate(entry.name))
+		.filter((entry) => entry.isDirectory() && isCalendarDateString(entry.name))
 		.map((entry) => entry.name)
 		.sort()
 		.reverse();

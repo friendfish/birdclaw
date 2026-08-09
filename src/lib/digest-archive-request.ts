@@ -2,6 +2,7 @@ import type {
 	PeriodDigestContentSource,
 	PeriodDigestPreset,
 } from "./period-digest";
+import { isCalendarDateString } from "./calendar-date";
 
 export type DigestArchivePeriod = Exclude<PeriodDigestPreset, "today" | "24h">;
 
@@ -10,6 +11,11 @@ export class DigestArchiveRequestError extends Error {
 		super(message);
 		this.name = "DigestArchiveRequestError";
 	}
+}
+
+export function digestArchiveRequestErrorMessage(error: unknown): string {
+	if (!(error instanceof DigestArchiveRequestError)) throw error;
+	return error.message;
 }
 
 const ARCHIVE_DATE_ERROR =
@@ -42,25 +48,8 @@ export function parseDigestArchiveContentSource(
 	);
 }
 
-export function isDigestArchiveDate(value: unknown): value is string {
-	if (
-		typeof value !== "string" ||
-		!value ||
-		!/^\d{4}-\d{2}-\d{2}$/u.test(value) ||
-		value.startsWith("0000-")
-	) {
-		return false;
-	}
-
-	const parsed = new Date(`${value}T00:00:00.000Z`);
-	return !(
-		Number.isNaN(parsed.getTime()) ||
-		parsed.toISOString().slice(0, 10) !== value
-	);
-}
-
 export function parseDigestArchiveDate(value: string | null): string {
-	if (isDigestArchiveDate(value)) return value;
+	if (isCalendarDateString(value)) return value;
 	throw new DigestArchiveRequestError(ARCHIVE_DATE_ERROR);
 }
 
