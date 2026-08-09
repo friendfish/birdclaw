@@ -128,6 +128,14 @@ function runningLeaseEligibleAt(state: PeriodDigestFreshnessStateV1) {
 		: new Date(0);
 }
 
+function freshnessEligibilityAt(state: PeriodDigestFreshnessStateV1) {
+	const retryAt =
+		(state.status === "retryable" || state.status === "error") && state.retryAt
+			? state.retryAt
+			: undefined;
+	return new Date(retryAt ?? state.dueAt);
+}
+
 function validProcessId(value: unknown): value is number {
 	return Number.isSafeInteger(value) && Number(value) > 0;
 }
@@ -481,7 +489,7 @@ export async function consumePeriodDigestFreshnessAttempt({
 			if (terminal && !pageRecovery && !retryInstallPending) {
 				return { valid: false, reason: "already-consumed" } as const;
 			}
-			const eligibleAt = new Date(state.retryAt ?? state.dueAt);
+			const eligibleAt = freshnessEligibilityAt(state);
 			if (
 				!Number.isFinite(eligibleAt.getTime()) ||
 				now.getTime() < eligibleAt.getTime()
@@ -1002,7 +1010,9 @@ async function reconcilePeriodDigestFreshnessInternal({
 		...(sameAttempt && previous.retryCount !== undefined
 			? { retryCount: previous.retryCount }
 			: {}),
-		...(sameAttempt && previous.retryAt ? { retryAt: previous.retryAt } : {}),
+		...(restoringRetry && previous.retryAt
+			? { retryAt: previous.retryAt }
+			: {}),
 		...(sameAttempt && previous.pageRecoveryUsedAt
 			? { pageRecoveryUsedAt: previous.pageRecoveryUsedAt }
 			: {}),

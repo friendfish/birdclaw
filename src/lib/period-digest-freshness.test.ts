@@ -199,6 +199,29 @@ describe("period digest freshness", () => {
 		expect(testHome().root).toBeTruthy();
 	});
 
+	it("ignores stale retryAt on a scheduled attempt", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 0, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "scheduled-with-stale-retry",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "scheduled",
+			retryAt: new Date(2026, 7, 7, 0, 15, 0).toISOString(),
+			updatedAt: dueAt.toISOString(),
+		});
+
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: "scheduled-with-stale-retry",
+				origin: "page",
+				now: new Date(2026, 7, 6, 23, 50, 0),
+			}),
+		).resolves.toEqual({ valid: true });
+	});
+
 	it("reclaims an orphaned running attempt after its lease expires", async () => {
 		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
 		const startedAt = new Date(2026, 7, 6, 10, 31, 0);
@@ -1061,6 +1084,38 @@ describe("period digest freshness", () => {
 			reason: "not-due",
 			eligibleAt: retryAt.toISOString(),
 		});
+	});
+
+	it("clears stale retryAt when reconciling a scheduled attempt", async () => {
+		const now = new Date(2026, 7, 6, 10, 0, 0);
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const input = {
+			period: "today" as const,
+			now,
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		};
+		const initial = await reconcilePeriodDigestFreshness(input);
+		await writePeriodDigestFreshnessState({
+			...initial.state,
+			status: "disabled",
+			fireAt: "",
+			retryCount: 1,
+			retryAt: new Date(2026, 7, 7, 0, 15, 0).toISOString(),
+		});
+		install.mockClear();
+
+		const reconciled = await reconcilePeriodDigestFreshness(input);
+
+		expect(reconciled.state).toMatchObject({
+			status: "scheduled",
+			retryCount: 1,
+		});
+		expect(reconciled.state).not.toHaveProperty("retryAt");
+		expect(install).toHaveBeenCalledOnce();
 	});
 
 	it("derives a stable token and preserves its lifecycle across reconciliation", async () => {
