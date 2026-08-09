@@ -1395,7 +1395,7 @@ git diff --check e306e4a..HEAD
 
 Expected: bash syntax and diff checks exit zero.
 
-- [ ] **Step 4: Request independent review**
+- [x] **Step 4: Request independent review**
 
 Review the exact range `e306e4a..HEAD` against the third-round review requirements.
 Fix every valid Critical, Important, and Minor finding before proceeding.
@@ -1449,7 +1449,7 @@ pnpm run check
 
 Expected: 70 focused tests pass and format, lint, and typecheck exit zero.
 
-- [ ] **Step 5: Commit, re-review, and repeat full verification**
+- [x] **Step 5: Commit, re-review, and repeat full verification**
 
 Commit the race fix, request an independent review of the new range, then rerun the
 focused six-file suite, all tests, production build, helper shell syntax, and diff
