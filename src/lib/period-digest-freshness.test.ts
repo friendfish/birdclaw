@@ -222,7 +222,11 @@ describe("period digest freshness", () => {
 				retryCount: index + 1,
 				retryAt: retryAt.toISOString(),
 			})),
-			{ status: "failed", retryCount: 3, retryAt: undefined },
+			{
+				status: "failed",
+				retryCount: 3,
+				retryAt: expectedRetryAt.at(-1)?.toISOString(),
+			},
 		]);
 		expect(install).toHaveBeenCalledTimes(3);
 	});
