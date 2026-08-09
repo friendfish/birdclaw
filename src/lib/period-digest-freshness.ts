@@ -88,6 +88,7 @@ const FRESHNESS_RETRY_DELAYS_MS = [
 ] as const;
 const FRESHNESS_RUNNING_LEASE_MS = 15 * 60_000;
 const FRESHNESS_RELOADER_WAIT_SECONDS = 6 * 60 * 60;
+const FRESHNESS_LAUNCH_AGENT_MIN_LEAD_MS = 60_000;
 
 function periodDigestFreshnessLaunchAgentLabel(
 	period: CurrentPeriodDigestPeriod,
@@ -113,11 +114,14 @@ function roundUpToMinute(value: Date) {
 }
 
 function resolveLaunchAgentFireAt(desiredAt: Date, now: Date) {
-	const fireAt = roundUpToMinute(
-		desiredAt.getTime() <= now.getTime()
-			? new Date(now.getTime() + 1)
-			: desiredAt,
+	const desiredFireAt = roundUpToMinute(desiredAt);
+	const minimumFireAt = roundUpToMinute(
+		new Date(now.getTime() + FRESHNESS_LAUNCH_AGENT_MIN_LEAD_MS),
 	);
+	const fireAt =
+		desiredFireAt.getTime() >= minimumFireAt.getTime()
+			? desiredFireAt
+			: minimumFireAt;
 	return sameLocalDay(fireAt, now) ? fireAt : undefined;
 }
 
@@ -632,24 +636,24 @@ export async function activatePeriodDigestFreshnessRetry({
 				fireAt: activationAt.toISOString(),
 				updatedAt: schedulingNow.toISOString(),
 			};
-			await writeStateFile(statePath, activationState);
-			const installNow = currentTime();
-			const installationFireAt = resolveSameDayLaunchAgentFireAt({
-				dueAt,
-				desiredAt: desiredActivationAt,
-				now: installNow,
-			});
-			if (!installationFireAt) {
-				return disable(installNow);
-			}
-			if (installationFireAt.getTime() !== activationAt.getTime()) {
+			while (true) {
+				await writeStateFile(statePath, activationState);
+				const installNow = currentTime();
+				const installationFireAt = resolveSameDayLaunchAgentFireAt({
+					dueAt,
+					desiredAt: desiredActivationAt,
+					now: installNow,
+				});
+				if (!installationFireAt) {
+					return disable(installNow);
+				}
+				if (installationFireAt.getTime() === activationAt.getTime()) break;
 				activationAt = installationFireAt;
 				activationState = {
 					...activationState,
 					fireAt: activationAt.toISOString(),
 					updatedAt: installNow.toISOString(),
 				};
-				await writeStateFile(statePath, activationState);
 			}
 			const execution = resolveDigestLaunchdExecution();
 			const agent = buildPeriodDigestFreshnessLaunchAgent({
@@ -845,8 +849,8 @@ export async function completePeriodDigestFreshnessAttempt({
 export async function triggerDuePeriodDigestFreshness({
 	period,
 	origin,
-	now = new Date(),
-	clock = () => new Date(),
+	now,
+	clock,
 	requestRun,
 	completeAttempt = completePeriodDigestFreshnessAttempt,
 }: {
@@ -865,10 +869,17 @@ export async function triggerDuePeriodDigestFreshness({
 	}>;
 	completeAttempt?: typeof completePeriodDigestFreshnessAttempt;
 }) {
+	const effectiveNow = now ?? new Date();
+	const currentTime = clock ?? (now ? () => now : () => new Date());
 	let state = await readPeriodDigestFreshnessState(period);
 	if (!state) {
-		state = (await reconcilePeriodDigestFreshness({ period, now, clock }))
-			.state;
+		state = (
+			await reconcilePeriodDigestFreshness({
+				period,
+				now: effectiveNow,
+				clock: currentTime,
+			})
+		).state;
 	}
 	if (state.status === "disabled") {
 		return { triggered: false as const, reason: "disabled" as const };
@@ -877,7 +888,7 @@ export async function triggerDuePeriodDigestFreshness({
 		period,
 		attemptToken: state.attemptToken,
 		origin,
-		now,
+		now: effectiveNow,
 	});
 	if (!attempt.valid) {
 		return {
@@ -1103,26 +1114,26 @@ async function reconcilePeriodDigestFreshnessInternal({
 		suppressedSourceIdentities,
 		...retainedAttemptFields,
 	};
-	await writePeriodDigestFreshnessState(state);
-	const installNow = currentTime();
-	const installationFireAt = resolveSameDayLaunchAgentFireAt({
-		dueAt,
-		desiredAt: desiredFireAt,
-		now: installNow,
-	});
-	if (!installationFireAt) {
-		const disabled = disabledState(installNow);
-		await writePeriodDigestFreshnessState(disabled);
-		return { state: disabled, installResult: null };
-	}
-	if (installationFireAt.getTime() !== fireAt.getTime()) {
+	while (true) {
+		await writePeriodDigestFreshnessState(state);
+		const installNow = currentTime();
+		const installationFireAt = resolveSameDayLaunchAgentFireAt({
+			dueAt,
+			desiredAt: desiredFireAt,
+			now: installNow,
+		});
+		if (!installationFireAt) {
+			const disabled = disabledState(installNow);
+			await writePeriodDigestFreshnessState(disabled);
+			return { state: disabled, installResult: null };
+		}
+		if (installationFireAt.getTime() === fireAt.getTime()) break;
 		fireAt = installationFireAt;
 		state = {
 			...state,
 			fireAt: fireAt.toISOString(),
 			updatedAt: installNow.toISOString(),
 		};
-		await writePeriodDigestFreshnessState(state);
 	}
 	const execution = resolveDigestLaunchdExecution();
 	const launchdCallerPid = validProcessId(previous?.launchdCallerPid)
@@ -1155,7 +1166,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 			...state,
 			status: "error",
 			installError: error instanceof Error ? error.message : String(error),
-			updatedAt: new Date().toISOString(),
+			updatedAt: currentTime().toISOString(),
 		};
 		await writePeriodDigestFreshnessState(failed);
 		return { state: failed, installResult: null };

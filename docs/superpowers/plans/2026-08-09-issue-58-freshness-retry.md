@@ -1432,9 +1432,11 @@ Expected: activation retains `10:31` instead of `10:32`, and reconciliation rema
 
 Add an injectable clock while preserving fixed `now` behavior for existing callers
 and tests. Activation and reconciliation must re-read the clock after their async
-decision work, persist the resolved time, then check once more immediately before
-building the LaunchAgent. The page-created initial reconciliation must pass a live
-clock instead of reusing the request timestamp.
+decision work, persist the resolved time, then loop until a post-write check produces
+the same fire time. The selected time is at least 60 seconds ahead before minute
+rounding, leaving margin for plist and `launchctl` work. The page-created initial
+reconciliation uses a live clock only when the caller did not explicitly fix `now`;
+install-error timestamps use the same injected clock.
 
 - [x] **Step 4: Verify focused tests and repository checks**
 

@@ -492,12 +492,13 @@ describe("period digest freshness", () => {
 		});
 	});
 
-	it("refreshes deferred activation time immediately before installation", async () => {
+	it("stabilizes deferred activation with a full-minute margin", async () => {
 		const dueAt = new Date(2026, 7, 6, 10, 0, 0);
 		const desiredFireAt = new Date(2026, 7, 6, 10, 31, 0);
 		const initialNow = new Date(2026, 7, 6, 10, 30, 59, 900);
 		const installNow = new Date(2026, 7, 6, 10, 31, 0, 100);
-		const expectedFireAt = new Date(2026, 7, 6, 10, 32, 0);
+		const secondInstallNow = new Date(2026, 7, 6, 10, 32, 0, 100);
+		const expectedFireAt = new Date(2026, 7, 6, 10, 34, 0);
 		await writePeriodDigestFreshnessState({
 			schemaVersion: 1,
 			period: "today",
@@ -510,7 +511,8 @@ describe("period digest freshness", () => {
 		const clock = vi
 			.fn<() => Date>()
 			.mockReturnValueOnce(initialNow)
-			.mockReturnValue(installNow);
+			.mockReturnValueOnce(installNow)
+			.mockReturnValue(secondInstallNow);
 		const install = vi.fn(
 			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
 		);
@@ -533,7 +535,7 @@ describe("period digest freshness", () => {
 			month: 8,
 			day: 6,
 			hour: 10,
-			minute: 32,
+			minute: 34,
 		});
 		expect(await readPeriodDigestFreshnessState("today")).toMatchObject({
 			fireAt: expectedFireAt.toISOString(),
@@ -1744,9 +1746,10 @@ describe("period digest freshness", () => {
 	});
 
 	it("persists non-Error launchd installation failures", async () => {
+		const now = new Date(2026, 7, 6, 10, 0, 0);
 		const reconciled = await reconcilePeriodDigestFreshness({
 			period: "today",
-			now: new Date(2026, 7, 6, 10, 0, 0),
+			now,
 			freshnessSeconds: 60 * 60,
 			schedule: { hour: 8, minute: 0 },
 			install: vi.fn(async () => Promise.reject("launchctl denied")),
@@ -1754,6 +1757,7 @@ describe("period digest freshness", () => {
 		expect(reconciled.state).toMatchObject({
 			status: "error",
 			installError: "launchctl denied",
+			updatedAt: now.toISOString(),
 		});
 	});
 });
