@@ -13,7 +13,9 @@ export class DigestArchiveRequestError extends Error {
 	}
 }
 
-export function digestArchiveRequestErrorMessage(error: unknown): string {
+export function digestArchiveRequestErrorMessageOrRethrow(
+	error: unknown,
+): string {
 	if (!(error instanceof DigestArchiveRequestError)) throw error;
 	return error.message;
 }

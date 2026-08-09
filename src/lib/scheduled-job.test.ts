@@ -87,6 +87,27 @@ describe("scheduled job runtime", () => {
 		await staleRelease?.();
 	});
 
+	it("ignores a formatted but impossible run date in lock metadata", async () => {
+		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
+		mkdirSync(path.dirname(lockPath), { recursive: true });
+		writeFileSync(
+			lockPath,
+			`${JSON.stringify({
+				ownerId: "invalid-run-date-owner",
+				startedAt: new Date().toISOString(),
+				host: os.hostname(),
+				pid: process.pid,
+				runDate: "2026-02-30",
+			})}\n`,
+			"utf8",
+		);
+
+		const metadata = await peekScheduledJobLockMetadata(lockPath, 60_000);
+
+		expect(metadata).toBeDefined();
+		expect(metadata).not.toHaveProperty("runDate");
+	});
+
 	it("keeps a lock whose heartbeat expired while its pid is still alive", async () => {
 		const lockPath = path.join(makeTempDir(), "locks", "job.lock");
 		mkdirSync(path.dirname(lockPath), { recursive: true });

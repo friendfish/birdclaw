@@ -1360,6 +1360,33 @@ describe("cli", () => {
 		);
 	});
 
+	it.each(["", "2026-02-30", "foo"])(
+		"rejects invalid archive run date %s before starting a job",
+		async (runDate) => {
+			runDigestArchiveJobMock.mockResolvedValue({ ok: true });
+			const { runCli } = await loadCli();
+
+			await runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"run-digest-archive",
+				"--period",
+				"week",
+				"--run-date",
+				runDate,
+			]);
+
+			expect(runDigestArchiveJobMock).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleLogMock.mock.lastCall?.[0] as string)).toEqual({
+				ok: false,
+				status: "failed",
+				error: "--run-date must be a real date in YYYY-MM-DD format",
+			});
+			expect(process.exitCode).toBe(1);
+		},
+	);
+
 	it("rejects invalid account and bookmark job modes before dispatch", async () => {
 		const { runCli } = await loadCli();
 		const cases = [

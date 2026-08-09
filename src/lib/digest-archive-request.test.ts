@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	DigestArchiveRequestError,
-	digestArchiveRequestErrorMessage,
+	digestArchiveRequestErrorMessageOrRethrow,
 	parseDigestArchiveContentSource,
 	parseDigestArchiveDate,
 	parseDigestArchivePeriod,
@@ -81,11 +81,11 @@ describe("digest archive request validation", () => {
 		const requestError = new DigestArchiveRequestError("invalid request");
 		const unexpectedError = new Error("unexpected parser failure");
 
-		expect(digestArchiveRequestErrorMessage(requestError)).toBe(
+		expect(digestArchiveRequestErrorMessageOrRethrow(requestError)).toBe(
 			"invalid request",
 		);
-		expect(() => digestArchiveRequestErrorMessage(unexpectedError)).toThrow(
-			unexpectedError,
-		);
+		expect(() =>
+			digestArchiveRequestErrorMessageOrRethrow(unexpectedError),
+		).toThrow(unexpectedError);
 	});
 });

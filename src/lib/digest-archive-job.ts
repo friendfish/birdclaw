@@ -42,6 +42,7 @@ import {
 	peekScheduledJobLockMetadata,
 	peekScheduledJobLockMetadataEffect,
 	startScheduledJobRun,
+	type ScheduledJobLockMetadata,
 } from "./scheduled-job";
 import {
 	normalizeDigestLanguage,
@@ -216,6 +217,16 @@ export function formatDigestArchiveRunDate(date: Date) {
 	const runDate = `${yyyy}-${mm}-${dd}`;
 	if (!isCalendarDateString(runDate)) throw new Error(ARCHIVE_RUN_DATE_ERROR);
 	return runDate;
+}
+
+function digestArchiveRunDateFromLockMetadata(
+	metadata: ScheduledJobLockMetadata,
+) {
+	// The lock reader validates and ISO-normalizes startedAt, including its
+	// filesystem-mtime fallback for legacy or partially written locks.
+	return (
+		metadata.runDate ?? formatDigestArchiveRunDate(new Date(metadata.startedAt))
+	);
 }
 
 export function resolveDigestArchiveLanguage(requested?: string) {
@@ -1304,9 +1315,7 @@ export async function peekDigestArchiveRunningRuns(): Promise<
 		if (metadata) {
 			running.push({
 				period,
-				runDate:
-					metadata.runDate ??
-					formatDigestArchiveRunDate(new Date(metadata.startedAt)),
+				runDate: digestArchiveRunDateFromLockMetadata(metadata),
 				totalSources: metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 			});
 		}
@@ -1337,9 +1346,7 @@ export function peekDigestArchiveRunningRunsEffect(): Effect.Effect<
 					metadata
 						? {
 								period,
-								runDate:
-									metadata.runDate ??
-									formatDigestArchiveRunDate(new Date(metadata.startedAt)),
+								runDate: digestArchiveRunDateFromLockMetadata(metadata),
 								totalSources:
 									metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 							}
@@ -1480,9 +1487,7 @@ export async function getDigestArchiveStatus(): Promise<DigestArchiveStatusSnaps
 		}
 		activeRuns.push({
 			period,
-			runDate:
-				metadata.runDate ??
-				formatDigestArchiveRunDate(new Date(metadata.startedAt)),
+			runDate: digestArchiveRunDateFromLockMetadata(metadata),
 			totalSources: metadata.totalSources ?? DEFAULT_CONTENT_SOURCES.length,
 			phase: "pre-sync",
 			startedAt: metadata.startedAt,

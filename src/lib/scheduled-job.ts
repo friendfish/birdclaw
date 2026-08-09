@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
+import { isCalendarDateString } from "./calendar-date";
 import { tryPromise } from "./effect-runtime";
 
 export interface ScheduledJobRunMetadata {
@@ -305,8 +306,7 @@ export async function peekScheduledJobLockMetadata(
 			startedAt: startedAt.toISOString(),
 			host: parsed.host,
 			pid: parsed.pid,
-			...(typeof parsed.runDate === "string" &&
-			/^\d{4}-\d{2}-\d{2}$/.test(parsed.runDate)
+			...(isCalendarDateString(parsed.runDate)
 				? { runDate: parsed.runDate }
 				: {}),
 			...(typeof parsed.totalSources === "number" &&

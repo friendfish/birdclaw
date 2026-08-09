@@ -10,7 +10,8 @@ outside the configured archive directory.
 
 This change delivers only action 1 from issue #54. Archive schema validation,
 read-error classification, metadata consistency checks, launchd cancellation,
-fault-injection coverage, and structural refactoring remain separate actions.
+broader fault-injection coverage, and structural refactoring remain separate
+actions.
 
 ## Goals
 
@@ -18,6 +19,8 @@ fault-injection coverage, and structural refactoring remain separate actions.
 - Preserve the existing defaults when period or content source is omitted.
 - Require the archive entry date to be a real calendar date in `YYYY-MM-DD`
   form.
+- Apply the same rule to explicit CLI backfill dates and dates read from active
+  job locks.
 - Apply the same real-date rule to archive dates restored from route search.
 - Prevent archive path construction from escaping the configured archive
   directory.
@@ -41,10 +44,11 @@ fault-injection coverage, and structural refactoring remain separate actions.
 
 Add a neutral calendar-date module that owns the non-throwing real-date
 predicate used by route-search normalization, request parsing, directory
-enumeration, and path construction. A separate request-validation module
-exposes focused parsers for archive period, content source, and entry date. The
-parsers throw a dedicated request-validation error with stable, non-sensitive
-messages; a shared error-classification function lets each route map only that
+enumeration, CLI backfills, lock metadata, and path construction. A separate
+request-validation module exposes focused parsers for archive period, content
+source, and entry date. The parsers throw a dedicated request-validation error
+with stable, non-sensitive messages; a shared error-classification function
+whose name explicitly states that it can rethrow lets each route map only that
 error to its existing JSON error shape with HTTP 400.
 
 The shared rules are:
@@ -65,6 +69,18 @@ The shared rules are:
 Route-search normalization uses the same predicate. A malformed or impossible
 `archiveDate` becomes the existing empty selection instead of reaching the API
 and turning the archive view into a hard fetch error.
+
+For archived periods, `jobs run-digest-archive --run-date` checks the raw option
+before constructing a JavaScript `Date`, preventing values such as
+`2026-02-30` from being silently normalized to a different day. An invalid
+option prints a structured failure object, sets exit code 1, and does not start
+or audit a job that has no valid run date. Current-view periods continue to
+report this archive-only option as ignored.
+
+The scheduled-job lock reader also uses the shared predicate, so formatted but
+impossible legacy `runDate` values are omitted and status callers fall back to
+the lock's validated, ISO-normalized `startedAt`. That normalization includes
+the existing filesystem-mtime fallback for legacy or partially written locks.
 
 The dates-list route validates only `period`. The archive-entry route validates
 all three parameters before resolving the archive directory or reading a file.
@@ -123,7 +139,8 @@ Use a red-green test sequence covering:
 - direct parser coverage for accepted content sources, years 0001 and 9999,
   leap-century behavior, current-view messages, and explicit empty values;
 - route-search normalization rejecting impossible dates;
-- unexpected parser failures not being classified as HTTP 400;
+- a route-level fault-injection test proving unexpected parser failures are not
+  classified as HTTP 400;
 - traversal attempts returning HTTP 400 without reading outside the archive;
 - `resolveDigestArchivePaths` rejecting parent and absolute escapes, including
   a sibling directory whose name shares the archive root prefix;
@@ -134,7 +151,10 @@ Use a red-green test sequence covering:
   message;
 - boundary years being formatted with exactly four digits;
 - the shared request-error classifier returning dedicated messages and
-  rethrowing unexpected failures.
+  rethrowing unexpected failures;
+- CLI backfill dates rejecting impossible or malformed input before job
+  dispatch while returning structured failure output;
+- lock metadata omitting formatted but impossible run dates.
 
 After targeted tests pass, run formatting and lint checks, type checking, the
 full test suite, and the production build.

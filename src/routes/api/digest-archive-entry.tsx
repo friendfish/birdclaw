@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { resolveDigestArchiveDir } from "#/lib/config";
 import { readDigestArchiveEntryEffect } from "#/lib/digest-archive-job";
 import {
-	digestArchiveRequestErrorMessage,
+	digestArchiveRequestErrorMessageOrRethrow,
 	parseDigestArchiveEntryRequest,
 } from "#/lib/digest-archive-request";
 import {
@@ -29,7 +29,7 @@ export const Route = createFileRoute("/api/digest-archive-entry")({
 							return jsonResponse(
 								{
 									ok: false,
-									error: digestArchiveRequestErrorMessage(error),
+									error: digestArchiveRequestErrorMessageOrRethrow(error),
 								},
 								{ status: 400 },
 							);
