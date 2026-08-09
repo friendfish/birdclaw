@@ -19,6 +19,7 @@ import {
 } from "#/lib/config";
 import type { PeriodDigestPreset } from "#/lib/period-digest";
 import {
+	activatePeriodDigestFreshnessRetry,
 	completePeriodDigestFreshnessAttempt,
 	consumePeriodDigestFreshnessAttempt,
 } from "#/lib/period-digest-freshness";
@@ -235,6 +236,35 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		});
 
 	jobsCommand
+		.command("activate-period-digest-freshness-retry", { hidden: true })
+		.requiredOption("--period <period>", "today or 24h")
+		.requiredOption("--attempt-token <token>", "Freshness attempt token")
+		.option("--launch-agents-dir <path>", "LaunchAgents directory")
+		.action(async (options) => {
+			const period = parseCurrentPeriod(options.period);
+			const result = await activatePeriodDigestFreshnessRetry({
+				period,
+				attemptToken: options.attemptToken,
+				...(options.launchAgentsDir
+					? {
+							installOptions: {
+								launchAgentsDir: options.launchAgentsDir,
+							},
+						}
+					: {}),
+			});
+			print(
+				{
+					ok: result.state?.status !== "error",
+					period,
+					...result,
+				},
+				true,
+			);
+			if (result.state?.status === "error") process.exitCode = 1;
+		});
+
+	jobsCommand
 		.command("run-period-digest")
 		.description("Generate and publish the current Today or 24h digest batch")
 		.requiredOption("--period <period>", "today or 24h")
@@ -306,6 +336,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 					await completePeriodDigestFreshnessAttempt({
 						period,
 						attemptToken: freshnessAttemptToken,
+						origin,
 						outcome: "failed",
 					}).catch(() => undefined);
 				}
@@ -315,6 +346,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				await completePeriodDigestFreshnessAttempt({
 					period,
 					attemptToken: freshnessAttemptToken,
+					origin,
 					outcome: state.phase === "failed" ? "failed" : "published",
 				});
 			}

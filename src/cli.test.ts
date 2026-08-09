@@ -84,6 +84,7 @@ const runDigestArchiveJobMock = vi.hoisted(() => vi.fn());
 const installDigestArchiveLaunchAgentMock = vi.hoisted(() => vi.fn());
 const installAllDigestArchiveLaunchAgentsMock = vi.hoisted(() => vi.fn());
 const requestPeriodDigestRunMock = vi.hoisted(() => vi.fn());
+const activatePeriodDigestFreshnessRetryMock = vi.hoisted(() => vi.fn());
 const consumePeriodDigestFreshnessAttemptMock = vi.hoisted(() => vi.fn());
 const completePeriodDigestFreshnessAttemptMock = vi.hoisted(() => vi.fn());
 const reconcileAllPeriodDigestFreshnessMock = vi.hoisted(() => vi.fn());
@@ -167,6 +168,8 @@ vi.mock("#/lib/period-digest-orchestrator", () => ({
 }));
 
 vi.mock("#/lib/period-digest-freshness", () => ({
+	activatePeriodDigestFreshnessRetry: (...args: unknown[]) =>
+		activatePeriodDigestFreshnessRetryMock(...args),
 	consumePeriodDigestFreshnessAttempt: (...args: unknown[]) =>
 		consumePeriodDigestFreshnessAttemptMock(...args),
 	completePeriodDigestFreshnessAttempt: (...args: unknown[]) =>
@@ -490,6 +493,12 @@ describe("cli", () => {
 		installDigestArchiveLaunchAgentMock.mockReset();
 		installAllDigestArchiveLaunchAgentsMock.mockReset();
 		requestPeriodDigestRunMock.mockReset();
+		activatePeriodDigestFreshnessRetryMock.mockReset();
+		activatePeriodDigestFreshnessRetryMock.mockResolvedValue({
+			activated: true,
+			state: { status: "retryable" },
+			installResult: { ok: true },
+		});
 		consumePeriodDigestFreshnessAttemptMock.mockReset();
 		consumePeriodDigestFreshnessAttemptMock.mockResolvedValue({ valid: true });
 		completePeriodDigestFreshnessAttemptMock.mockReset();
@@ -1268,6 +1277,7 @@ describe("cli", () => {
 		expect(completePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
 			period: "today",
 			attemptToken: "valid-token",
+			origin: "launchd",
 			outcome: "failed",
 		});
 		expect(requestPeriodDigestRunMock).toHaveBeenCalledOnce();
@@ -1300,7 +1310,31 @@ describe("cli", () => {
 		expect(completePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
 			period: "today",
 			attemptToken: "startup-error-token",
+			origin: "launchd",
 			outcome: "failed",
+		});
+	});
+
+	it("activates a deferred freshness retry through the hidden helper command", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"activate-period-digest-freshness-retry",
+			"--period",
+			"24h",
+			"--attempt-token",
+			"deferred-token",
+			"--launch-agents-dir",
+			"/tmp/birdclaw-agents",
+		]);
+
+		expect(activatePeriodDigestFreshnessRetryMock).toHaveBeenCalledWith({
+			period: "24h",
+			attemptToken: "deferred-token",
+			installOptions: { launchAgentsDir: "/tmp/birdclaw-agents" },
 		});
 	});
 

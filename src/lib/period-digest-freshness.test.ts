@@ -4,7 +4,9 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { useTestHome } from "../test/test-home";
 import {
+	activatePeriodDigestFreshnessRetry,
 	buildPeriodDigestFreshnessLaunchAgent,
+	buildPeriodDigestFreshnessRetryReloaderLaunchAgent,
 	calculatePeriodDigestFreshnessDeadline,
 	completePeriodDigestFreshnessAttempt,
 	consumePeriodDigestFreshnessAttempt,
@@ -16,7 +18,7 @@ import {
 	writePeriodDigestFreshnessState,
 } from "./period-digest-freshness";
 import { acquireScheduledJobLock } from "./scheduled-job";
-import type { LaunchAgentInstallResult } from "./launchd";
+import type { LaunchAgent, LaunchAgentInstallResult } from "./launchd";
 
 const testHome = useTestHome({ prefix: "birdclaw-digest-freshness-" });
 
@@ -116,6 +118,38 @@ describe("period digest freshness", () => {
 		}
 	});
 
+	it("builds a separate reloader that waits for the launchd caller to exit", () => {
+		const launchAgentsDir = path.join(testHome().root, "LaunchAgents");
+		const agent = buildPeriodDigestFreshnessRetryReloaderLaunchAgent({
+			period: "today",
+			attemptToken: "retry-token",
+			parentPid: 4242,
+			program: "/opt/homebrew/bin/birdclaw",
+			envFile: "~/.config/bird/env.sh",
+			launchAgentsDir,
+		});
+
+		expect(agent.label).toBe(
+			"com.steipete.birdclaw.period-digest-freshness-today-reloader",
+		);
+		expect(agent.runAtLoad).toBe(true);
+		expect(agent.schedule).toEqual({
+			kind: "interval",
+			intervalSeconds: 86400,
+		});
+		const command = agent.programArguments.join(" ");
+		for (const expected of [
+			"4242",
+			"activate-period-digest-freshness-retry",
+			"retry-token",
+			launchAgentsDir,
+			"launchctl remove",
+		]) {
+			expect(command).toContain(expected);
+		}
+		expect(command).not.toContain("run-period-digest");
+	});
+
 	it("starts the matching same-day attempt once and rejects stale tokens", async () => {
 		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
 		await writePeriodDigestFreshnessState({
@@ -161,7 +195,7 @@ describe("period digest freshness", () => {
 
 	it("moves a failed running attempt through bounded retry backoff", async () => {
 		const install = vi.fn(
-			async () => ({ ok: true }) as LaunchAgentInstallResult,
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
 		);
 		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
 		await writePeriodDigestFreshnessState({
@@ -203,6 +237,7 @@ describe("period digest freshness", () => {
 			const completed = await completePeriodDigestFreshnessAttempt({
 				period: "today",
 				attemptToken: "retry-token",
+				origin: "launchd",
 				outcome: "failed",
 				now,
 				install,
@@ -229,6 +264,98 @@ describe("period digest freshness", () => {
 			},
 		]);
 		expect(install).toHaveBeenCalledTimes(3);
+		for (const [agent] of install.mock.calls) {
+			expect(agent.label).toBe(
+				"com.steipete.birdclaw.period-digest-freshness-today-reloader",
+			);
+		}
+	});
+
+	it("activates a deferred retry only while the token remains retryable", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		const retryAt = new Date(2026, 7, 6, 10, 46, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "deferred-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: retryAt.toISOString(),
+			status: "retryable",
+			retryCount: 1,
+			retryAt: retryAt.toISOString(),
+			updatedAt: dueAt.toISOString(),
+		});
+		const install = vi.fn(
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+
+		const activated = await activatePeriodDigestFreshnessRetry({
+			period: "today",
+			attemptToken: "deferred-token",
+			now: new Date(2026, 7, 6, 10, 32, 0),
+			install,
+			program: "/opt/homebrew/bin/birdclaw",
+		});
+
+		expect(activated.activated).toBe(true);
+		expect(install).toHaveBeenCalledOnce();
+		expect(install.mock.calls[0]?.[0]).toMatchObject({
+			label: "com.steipete.birdclaw.period-digest-freshness-today",
+			schedule: {
+				kind: "calendar",
+				year: 2026,
+				month: 8,
+				day: 6,
+				hour: 10,
+				minute: 46,
+			},
+		});
+		expect(await readPeriodDigestFreshnessState("today")).toMatchObject({
+			status: "retryable",
+			attemptToken: "deferred-token",
+		});
+
+		await writePeriodDigestFreshnessState({
+			...(await readPeriodDigestFreshnessState("today"))!,
+			status: "failed",
+		});
+		await expect(
+			activatePeriodDigestFreshnessRetry({
+				period: "today",
+				attemptToken: "deferred-token",
+				install,
+			}),
+		).resolves.toMatchObject({ activated: false, reason: "not-retryable" });
+		expect(install).toHaveBeenCalledOnce();
+	});
+
+	it("persists deferred retry activation failures", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		const retryAt = new Date(2026, 7, 6, 10, 46, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "24h",
+			attemptToken: "deferred-error-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: retryAt.toISOString(),
+			status: "retryable",
+			retryCount: 1,
+			retryAt: retryAt.toISOString(),
+			updatedAt: dueAt.toISOString(),
+		});
+
+		const activated = await activatePeriodDigestFreshnessRetry({
+			period: "24h",
+			attemptToken: "deferred-error-token",
+			now: new Date(2026, 7, 6, 10, 32, 0),
+			install: vi.fn(async () => Promise.reject(new Error("launchctl denied"))),
+		});
+
+		expect(activated.activated).toBe(false);
+		expect(activated.state).toMatchObject({
+			status: "error",
+			installError: "launchctl denied",
+		});
 	});
 
 	it("uses the scheduled token for a page fallback and starts one freshness batch", async () => {
@@ -308,6 +435,7 @@ describe("period digest freshness", () => {
 			expect(completeAttempt).toHaveBeenCalledWith({
 				period: "today",
 				attemptToken: "failed-page-token",
+				origin: "page",
 				outcome: "failed",
 			});
 		});
@@ -345,6 +473,7 @@ describe("period digest freshness", () => {
 		expect(completeAttempt).toHaveBeenCalledWith({
 			period: "today",
 			attemptToken: "startup-error-token",
+			origin: "page",
 			outcome: "failed",
 		});
 	});
@@ -389,6 +518,7 @@ describe("period digest freshness", () => {
 			expect(completeAttempt).toHaveBeenCalledWith({
 				period: "today",
 				attemptToken: "rejected-completion-token",
+				origin: "page",
 				outcome: "failed",
 			});
 		});
@@ -417,6 +547,7 @@ describe("period digest freshness", () => {
 		await completePeriodDigestFreshnessAttempt({
 			period: "today",
 			attemptToken: "dark-wake-token",
+			origin: "launchd",
 			outcome: "failed",
 			now: new Date(2026, 7, 6, 10, 31, 0),
 			install,
@@ -553,6 +684,7 @@ describe("period digest freshness", () => {
 		await completePeriodDigestFreshnessAttempt({
 			period: "today",
 			attemptToken: first.state.attemptToken,
+			origin: "cli",
 			outcome: "published",
 			now,
 		});
@@ -672,6 +804,7 @@ describe("period digest freshness", () => {
 		await completePeriodDigestFreshnessAttempt({
 			period: "today",
 			attemptToken: "page-recovery",
+			origin: "page",
 			outcome: "failed",
 			now: new Date(2026, 7, 6, 16, 1, 0),
 			install,
@@ -736,6 +869,7 @@ describe("period digest freshness", () => {
 		const result = await completePeriodDigestFreshnessAttempt({
 			period: "today",
 			attemptToken: "late-token",
+			origin: "launchd",
 			outcome: "failed",
 			now: new Date(2026, 7, 6, 23, 55, 0),
 			install,
@@ -763,12 +897,14 @@ describe("period digest freshness", () => {
 		const first = await completePeriodDigestFreshnessAttempt({
 			period: "today",
 			attemptToken: "completed-token",
+			origin: "cli",
 			outcome: "published",
 			now: new Date(2026, 7, 6, 11, 0, 0),
 		});
 		const duplicate = await completePeriodDigestFreshnessAttempt({
 			period: "today",
 			attemptToken: "completed-token",
+			origin: "cli",
 			outcome: "published",
 			now: new Date(2026, 7, 6, 11, 1, 0),
 		});
@@ -780,6 +916,7 @@ describe("period digest freshness", () => {
 		const replaced = await completePeriodDigestFreshnessAttempt({
 			period: "today",
 			attemptToken: "completed-token",
+			origin: "cli",
 			outcome: "failed",
 			now: new Date(2026, 7, 6, 11, 2, 0),
 		});
