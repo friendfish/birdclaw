@@ -85,6 +85,7 @@ const installDigestArchiveLaunchAgentMock = vi.hoisted(() => vi.fn());
 const installAllDigestArchiveLaunchAgentsMock = vi.hoisted(() => vi.fn());
 const requestPeriodDigestRunMock = vi.hoisted(() => vi.fn());
 const consumePeriodDigestFreshnessAttemptMock = vi.hoisted(() => vi.fn());
+const completePeriodDigestFreshnessAttemptMock = vi.hoisted(() => vi.fn());
 const reconcileAllPeriodDigestFreshnessMock = vi.hoisted(() => vi.fn());
 const syncHomeTimelineMock = vi.hoisted(() => vi.fn());
 const syncXListsMock = vi.hoisted(() => vi.fn());
@@ -168,6 +169,8 @@ vi.mock("#/lib/period-digest-orchestrator", () => ({
 vi.mock("#/lib/period-digest-freshness", () => ({
 	consumePeriodDigestFreshnessAttempt: (...args: unknown[]) =>
 		consumePeriodDigestFreshnessAttemptMock(...args),
+	completePeriodDigestFreshnessAttempt: (...args: unknown[]) =>
+		completePeriodDigestFreshnessAttemptMock(...args),
 	reconcileAllPeriodDigestFreshness: (...args: unknown[]) =>
 		reconcileAllPeriodDigestFreshnessMock(...args),
 }));
@@ -489,6 +492,8 @@ describe("cli", () => {
 		requestPeriodDigestRunMock.mockReset();
 		consumePeriodDigestFreshnessAttemptMock.mockReset();
 		consumePeriodDigestFreshnessAttemptMock.mockResolvedValue({ valid: true });
+		completePeriodDigestFreshnessAttemptMock.mockReset();
+		completePeriodDigestFreshnessAttemptMock.mockResolvedValue(undefined);
 		reconcileAllPeriodDigestFreshnessMock.mockReset();
 		reconcileAllPeriodDigestFreshnessMock.mockResolvedValue({});
 		syncHomeTimelineMock.mockReset();
@@ -1121,8 +1126,10 @@ describe("cli", () => {
 		expect(consumePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
 			period: "24h",
 			attemptToken: "obsolete-token",
+			origin: "launchd",
 		});
 		expect(requestPeriodDigestRunMock).not.toHaveBeenCalled();
+		expect(completePeriodDigestFreshnessAttemptMock).not.toHaveBeenCalled();
 		expect(consoleLogMock).toHaveBeenCalledWith(
 			expect.stringContaining('"skipped": "token-mismatch"'),
 		);
@@ -1256,6 +1263,12 @@ describe("cli", () => {
 		expect(consumePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
 			period: "today",
 			attemptToken: "valid-token",
+			origin: "launchd",
+		});
+		expect(completePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
+			period: "today",
+			attemptToken: "valid-token",
+			outcome: "failed",
 		});
 		expect(requestPeriodDigestRunMock).toHaveBeenCalledOnce();
 		expect(process.exitCode).toBe(1);
