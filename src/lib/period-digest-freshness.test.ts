@@ -422,6 +422,85 @@ describe("period digest freshness", () => {
 		expect(install).toHaveBeenCalledOnce();
 	});
 
+	it("moves an expired deferred activation to the next minute", async () => {
+		const dueAt = new Date(2026, 7, 6, 12, 0, 0);
+		const retryAt = new Date(2026, 7, 6, 13, 0, 0);
+		const now = new Date(2026, 7, 6, 18, 0, 0);
+		const expectedFireAt = new Date(2026, 7, 6, 18, 1, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "late-activation-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: retryAt.toISOString(),
+			status: "retryable",
+			retryCount: 1,
+			retryAt: retryAt.toISOString(),
+			updatedAt: retryAt.toISOString(),
+		});
+		const install = vi.fn(
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+
+		const activated = await activatePeriodDigestFreshnessRetry({
+			period: "today",
+			attemptToken: "late-activation-token",
+			now,
+			install,
+		});
+
+		expect(activated.activated).toBe(true);
+		expect(install).toHaveBeenCalledOnce();
+		expect(install.mock.calls[0]?.[0].schedule).toMatchObject({
+			kind: "calendar",
+			year: 2026,
+			month: 8,
+			day: 6,
+			hour: 18,
+			minute: 1,
+		});
+		expect(activated.state).toMatchObject({
+			status: "retryable",
+			fireAt: expectedFireAt.toISOString(),
+			retryAt: retryAt.toISOString(),
+		});
+		expect(await readPeriodDigestFreshnessState("today")).toMatchObject({
+			fireAt: expectedFireAt.toISOString(),
+		});
+	});
+
+	it("disables a deferred activation when the next minute crosses days", async () => {
+		const dueAt = new Date(2026, 7, 6, 22, 0, 0);
+		const retryAt = new Date(2026, 7, 6, 23, 0, 0);
+		const now = new Date(2026, 7, 6, 23, 59, 59);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "24h",
+			attemptToken: "cross-day-activation-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: retryAt.toISOString(),
+			status: "retryable",
+			retryCount: 1,
+			retryAt: retryAt.toISOString(),
+			updatedAt: retryAt.toISOString(),
+		});
+		const install = vi.fn();
+
+		const activated = await activatePeriodDigestFreshnessRetry({
+			period: "24h",
+			attemptToken: "cross-day-activation-token",
+			now,
+			install,
+		});
+
+		expect(activated).toMatchObject({
+			activated: false,
+			reason: "cross-day",
+			state: { status: "disabled", fireAt: "" },
+		});
+		expect(install).not.toHaveBeenCalled();
+	});
+
 	it("activates a deferred next-generation schedule after its caller exits", async () => {
 		const dueAt = new Date(2026, 7, 6, 12, 30, 0);
 		await writePeriodDigestFreshnessState({
@@ -742,6 +821,24 @@ describe("period digest freshness", () => {
 		});
 		expect(second.state.status).toBe("scheduled");
 		expect(maximumActiveInstalls).toBe(1);
+	});
+
+	it("disables reconciliation when the next-minute fire time crosses days", async () => {
+		const install = vi.fn();
+
+		const reconciled = await reconcilePeriodDigestFreshness({
+			period: "24h",
+			now: new Date(2026, 7, 6, 23, 59, 59),
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		});
+
+		expect(reconciled.state).toMatchObject({
+			status: "disabled",
+			fireAt: "",
+		});
+		expect(install).not.toHaveBeenCalled();
 	});
 
 	it("installs a reloader instead of replacing a running launchd freshness agent", async () => {

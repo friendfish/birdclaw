@@ -112,6 +112,15 @@ function roundUpToMinute(value: Date) {
 	return rounded;
 }
 
+function resolveLaunchAgentFireAt(desiredAt: Date, now: Date) {
+	const fireAt = roundUpToMinute(
+		desiredAt.getTime() <= now.getTime()
+			? new Date(now.getTime() + 1)
+			: desiredAt,
+	);
+	return sameLocalDay(fireAt, now) ? fireAt : undefined;
+}
+
 function runningLeaseEligibleAt(state: PeriodDigestFreshnessStateV1) {
 	const startedAt = new Date(state.startedAt ?? state.updatedAt);
 	return Number.isFinite(startedAt.getTime())
@@ -557,15 +566,18 @@ export async function activatePeriodDigestFreshnessRetry({
 				};
 			}
 			const dueAt = new Date(state.dueAt);
-			const activationAt = new Date(
+			const desiredActivationAt = new Date(
 				state.status === "retryable"
 					? (state.retryAt ?? state.fireAt)
 					: state.fireAt,
 			);
+			const activationAt = Number.isFinite(desiredActivationAt.getTime())
+				? resolveLaunchAgentFireAt(desiredActivationAt, now)
+				: undefined;
 			if (
-				!Number.isFinite(activationAt.getTime()) ||
+				!activationAt ||
 				!sameLocalDay(dueAt, now) ||
-				!sameLocalDay(activationAt, now)
+				!sameLocalDay(desiredActivationAt, now)
 			) {
 				const disabled: PeriodDigestFreshnessStateV1 = {
 					...state,
@@ -582,6 +594,12 @@ export async function activatePeriodDigestFreshnessRetry({
 				};
 			}
 
+			const activationState: PeriodDigestFreshnessStateV1 = {
+				...state,
+				fireAt: activationAt.toISOString(),
+				updatedAt: now.toISOString(),
+			};
+			await writeStateFile(statePath, activationState);
 			const execution = resolveDigestLaunchdExecution();
 			const agent = buildPeriodDigestFreshnessLaunchAgent({
 				period,
@@ -594,12 +612,12 @@ export async function activatePeriodDigestFreshnessRetry({
 				const installResult = await install(agent, installOptions);
 				return {
 					activated: true as const,
-					state,
+					state: activationState,
 					installResult,
 				};
 			} catch (error) {
 				const failedInstall: PeriodDigestFreshnessStateV1 = {
-					...state,
+					...activationState,
 					status: "error",
 					installError: error instanceof Error ? error.message : String(error),
 					updatedAt: now.toISOString(),
@@ -979,11 +997,33 @@ async function reconcilePeriodDigestFreshnessInternal({
 		sameAttempt && previous.status === "error" && Boolean(previous.retryAt);
 	const desiredFireAt =
 		restoringRetry && previous.retryAt ? new Date(previous.retryAt) : dueAt;
-	const fireAt = roundUpToMinute(
-		desiredFireAt.getTime() <= now.getTime()
-			? new Date(now.getTime() + 1)
-			: desiredFireAt,
-	);
+	const fireAt = resolveLaunchAgentFireAt(desiredFireAt, now);
+	const retainedAttemptFields = {
+		...(sameAttempt && previous.retryCount !== undefined
+			? { retryCount: previous.retryCount }
+			: {}),
+		...(sameAttempt && previous.retryAt ? { retryAt: previous.retryAt } : {}),
+		...(sameAttempt && previous.pageRecoveryUsedAt
+			? { pageRecoveryUsedAt: previous.pageRecoveryUsedAt }
+			: {}),
+	};
+	if (!fireAt) {
+		const disabled: PeriodDigestFreshnessStateV1 = {
+			schemaVersion: 1,
+			period,
+			attemptToken,
+			dueAt: dueAt.toISOString(),
+			fireAt: "",
+			status: "disabled",
+			updatedAt: now.toISOString(),
+			freshnessSeconds,
+			sourceIdentities,
+			suppressedSourceIdentities,
+			...retainedAttemptFields,
+		};
+		await writePeriodDigestFreshnessState(disabled);
+		return { state: disabled, installResult: null };
+	}
 	const state: PeriodDigestFreshnessStateV1 = {
 		schemaVersion: 1,
 		period,
@@ -995,13 +1035,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 		freshnessSeconds,
 		sourceIdentities,
 		suppressedSourceIdentities,
-		...(sameAttempt && previous.retryCount !== undefined
-			? { retryCount: previous.retryCount }
-			: {}),
-		...(sameAttempt && previous.retryAt ? { retryAt: previous.retryAt } : {}),
-		...(sameAttempt && previous.pageRecoveryUsedAt
-			? { pageRecoveryUsedAt: previous.pageRecoveryUsedAt }
-			: {}),
+		...retainedAttemptFields,
 	};
 	await writePeriodDigestFreshnessState(state);
 	const execution = resolveDigestLaunchdExecution();
