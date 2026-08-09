@@ -1126,3 +1126,281 @@ PR review follow-up closed the remaining recovery and presentation edges:
 - [x] Keep legacy `consumed` recovery because it repairs pre-upgrade attempts that were marked consumed before their run completed; require both stale metadata and a due same-day attempt to avoid eager reruns.
 
 The final verification commands above must be rerun after these hardening commits.
+
+## Third-Round Review Plan
+
+### Task 7: Normalize Deferred Launch Times
+
+**Files:**
+- Modify: `src/lib/period-digest-freshness.ts`
+- Test: `src/lib/period-digest-freshness.test.ts`
+
+- [ ] **Step 1: Write failing tests for delayed activation**
+
+Add one test with `retryAt` in the past and `now` at 18:00. The installed target agent
+must use 18:01 and the persisted state must expose that actual `fireAt`:
+
+```ts
+it("moves an expired deferred activation to the next minute", async () => {
+	const retryAt = new Date(2026, 7, 6, 13, 0, 0);
+	const now = new Date(2026, 7, 6, 18, 0, 0);
+	await writePeriodDigestFreshnessState({
+		schemaVersion: 1,
+		period: "today",
+		attemptToken: "late-activation-token",
+		dueAt: new Date(2026, 7, 6, 12, 0, 0).toISOString(),
+		fireAt: retryAt.toISOString(),
+		status: "retryable",
+		retryAt: retryAt.toISOString(),
+		updatedAt: retryAt.toISOString(),
+	});
+	const install = vi.fn(async () => ({ ok: true }) as LaunchAgentInstallResult);
+
+	const result = await activatePeriodDigestFreshnessRetry({
+		period: "today",
+		attemptToken: "late-activation-token",
+		now,
+		install,
+	});
+
+	expect(result.activated).toBe(true);
+	expect(install.mock.calls[0]?.[0].schedule).toMatchObject({
+		hour: 18,
+		minute: 1,
+	});
+	expect(await readPeriodDigestFreshnessState("today")).toMatchObject({
+		fireAt: new Date(2026, 7, 6, 18, 1, 0).toISOString(),
+	});
+});
+```
+
+Add a second test with `now = 23:59:59`; clamping to the next minute crosses the
+local day, so activation must return `cross-day`, persist `disabled`, and never call
+`install`.
+
+- [ ] **Step 2: Run the activation tests and verify RED**
+
+```bash
+pnpm exec vitest run src/lib/period-digest-freshness.test.ts -t "deferred activation"
+```
+
+Expected: the past-time test installs the old 13:00 calendar entry, and the 23:59
+test installs a next-day entry instead of disabling it.
+
+- [ ] **Step 3: Add one shared fire-time resolver**
+
+Use the same helper from activation and reconciliation:
+
+```ts
+function resolveLaunchAgentFireAt(desiredAt: Date, now: Date) {
+	const fireAt = roundUpToMinute(
+		desiredAt.getTime() <= now.getTime()
+			? new Date(now.getTime() + 1)
+			: desiredAt,
+	);
+	return sameLocalDay(fireAt, now) ? fireAt : undefined;
+}
+```
+
+Activation first validates the stored date and due-day identity, then resolves the
+actual fire time. If it is undefined, persist `disabled`. Otherwise persist the
+resolved `fireAt` before installing and return that updated state on success or in an
+installation error. Reconciliation uses the same helper and writes `disabled` when a
+clamped schedule crosses the local day.
+
+- [ ] **Step 4: Run the focused tests and verify GREEN**
+
+```bash
+pnpm exec vitest run src/lib/period-digest-freshness.test.ts
+```
+
+Expected: all freshness tests pass, including past-time and cross-day activation.
+
+- [ ] **Step 5: Commit normalized launch times**
+
+```bash
+git add src/lib/period-digest-freshness.ts src/lib/period-digest-freshness.test.ts
+git commit -m "fix: schedule deferred freshness in the future"
+```
+
+### Task 8: Make Eligibility State-Aware
+
+**Files:**
+- Modify: `src/lib/period-digest-freshness.ts`
+- Test: `src/lib/period-digest-freshness.test.ts`
+
+- [ ] **Step 1: Write a failing scheduled-state eligibility test**
+
+Persist `status: "scheduled"` with a past `dueAt` and a future stale `retryAt`, then
+consume it at the current time:
+
+```ts
+it("ignores stale retryAt on a scheduled attempt", async () => {
+	const dueAt = new Date(2026, 7, 6, 10, 0, 0);
+	await writePeriodDigestFreshnessState({
+		schemaVersion: 1,
+		period: "today",
+		attemptToken: "scheduled-with-stale-retry",
+		dueAt: dueAt.toISOString(),
+		fireAt: dueAt.toISOString(),
+		status: "scheduled",
+		retryAt: new Date(2026, 7, 7, 0, 15, 0).toISOString(),
+		updatedAt: dueAt.toISOString(),
+	});
+
+	await expect(
+		consumePeriodDigestFreshnessAttempt({
+			period: "today",
+			attemptToken: "scheduled-with-stale-retry",
+			origin: "page",
+			now: new Date(2026, 7, 6, 23, 50, 0),
+		}),
+	).resolves.toEqual({ valid: true });
+});
+```
+
+- [ ] **Step 2: Write a failing reconciliation cleanup test**
+
+Create an initial state through `reconcilePeriodDigestFreshness`, overwrite that same
+token as `disabled` with `retryCount: 1` and a next-day `retryAt`, then reconcile the
+same inputs again. Expect `status: "scheduled"`, preserved `retryCount: 1`, and no
+`retryAt` property.
+
+- [ ] **Step 3: Run both tests and verify RED**
+
+```bash
+pnpm exec vitest run src/lib/period-digest-freshness.test.ts -t "stale retryAt"
+```
+
+Expected: consume returns `not-due`, and reconciled scheduled state still contains
+`retryAt`.
+
+- [ ] **Step 4: Implement state-derived eligibility and cleanup**
+
+```ts
+function freshnessEligibilityAt(state: PeriodDigestFreshnessStateV1) {
+	const retryAt =
+		(state.status === "retryable" || state.status === "error") && state.retryAt
+			? state.retryAt
+			: undefined;
+	return new Date(retryAt ?? state.dueAt);
+}
+```
+
+Use this helper in consume. When reconciliation creates a state, only carry `retryAt`
+when `restoringRetry` is true; keep the existing same-attempt `retryCount` behavior.
+
+- [ ] **Step 5: Run freshness tests and verify GREEN**
+
+```bash
+pnpm exec vitest run src/lib/period-digest-freshness.test.ts
+```
+
+Expected: all freshness tests pass and scheduled attempts are governed by `dueAt`.
+
+- [ ] **Step 6: Commit state-aware eligibility**
+
+```bash
+git add src/lib/period-digest-freshness.ts src/lib/period-digest-freshness.test.ts
+git commit -m "fix: derive freshness eligibility from state"
+```
+
+### Task 9: Require a Real PID for Joined-Owner Deferral
+
+**Files:**
+- Modify: `src/lib/period-digest-freshness.ts`
+- Test: `src/lib/period-digest-freshness.test.ts`
+
+- [ ] **Step 1: Write the failing legacy-state test**
+
+Create a `running` state with `runningOrigin: "launchd"` but no
+`launchdCallerPid`. Reconcile a new token with `replaceRunningAttempt: true` and no
+explicit `deferLaunchAgentReload`. Expect the normal freshness agent label, not the
+reloader label.
+
+- [ ] **Step 2: Run the test and verify RED**
+
+```bash
+pnpm exec vitest run src/lib/period-digest-freshness.test.ts -t "without caller pid"
+```
+
+Expected: the current implementation installs the reloader because it trusts
+`runningOrigin` alone.
+
+- [ ] **Step 3: Narrow the deferral condition**
+
+```ts
+const shouldDeferLaunchAgentReload =
+	deferLaunchAgentReload ||
+	(replacingRunningAttempt && launchdCallerPid !== undefined);
+```
+
+Keep passing `launchdCallerPid` to the reloader. Existing tests must continue proving
+that a real joined launchd PID is waited on, and that explicit launchd reconciliation
+falls back to the current process PID.
+
+- [ ] **Step 4: Run freshness and orchestrator tests and verify GREEN**
+
+```bash
+pnpm exec vitest run \
+	src/lib/period-digest-freshness.test.ts \
+	src/lib/period-digest-orchestrator.test.ts
+```
+
+Expected: all selected tests pass.
+
+- [ ] **Step 5: Commit PID-gated deferral**
+
+```bash
+git add src/lib/period-digest-freshness.ts src/lib/period-digest-freshness.test.ts
+git commit -m "fix: require a caller pid for deferred reload"
+```
+
+### Task 10: Third-Round Verification and PR Follow-Up
+
+**Files:**
+- Modify: `docs/superpowers/plans/2026-08-09-issue-58-freshness-retry.md`
+- Verify: all files changed since `e306e4a`
+
+- [ ] **Step 1: Mark Tasks 7-9 complete and run the focused suite**
+
+```bash
+pnpm exec vitest run \
+	src/lib/period-digest-freshness.test.ts \
+	src/lib/period-digest-orchestrator.test.ts \
+	src/cli.test.ts \
+	src/routes/api/period-digest-freshness.test.ts \
+	src/routes/today.test.tsx \
+	src/routes/config.test.tsx
+```
+
+Expected: all selected files pass.
+
+- [ ] **Step 2: Run repository verification**
+
+```bash
+pnpm run check
+pnpm test
+pnpm run build
+```
+
+Expected: check, all tests, and production build exit zero.
+
+- [ ] **Step 3: Validate the generated helper script and diff**
+
+```bash
+pnpm exec tsx -e 'import { buildPeriodDigestFreshnessRetryReloaderLaunchAgent } from "./src/lib/period-digest-freshness.ts"; const agent = buildPeriodDigestFreshnessRetryReloaderLaunchAgent({ period: "today", attemptToken: "syntax-token", parentPid: 4242, program: "/opt/homebrew/bin/birdclaw" }); process.stdout.write(agent.programArguments.at(-1) ?? "");' | /bin/bash -n
+git diff --check e306e4a..HEAD
+```
+
+Expected: bash syntax and diff checks exit zero.
+
+- [ ] **Step 4: Request independent review**
+
+Review the exact range `e306e4a..HEAD` against the third-round review requirements.
+Fix every valid Critical, Important, and Minor finding before proceeding.
+
+- [ ] **Step 5: Push and reply to the third-round review**
+
+Push `codex/issue-58-freshness-retry`, post a PR comment summarizing all three fixes
+and verification evidence, then wait for the new-head GitHub `validate` check.
