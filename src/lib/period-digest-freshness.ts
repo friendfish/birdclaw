@@ -30,16 +30,30 @@ export interface PeriodDigestFreshnessStateV1 {
 	attemptToken: string;
 	dueAt: string;
 	fireAt: string;
-	status: "scheduled" | "consumed" | "disabled" | "error";
+	status:
+		| "scheduled"
+		| "running"
+		| "retryable"
+		| "failed"
+		| "consumed"
+		| "disabled"
+		| "error";
 	updatedAt: string;
 	consumedAt?: string;
+	startedAt?: string;
+	failedAt?: string;
 	installError?: string;
+	retryCount?: number;
+	retryAt?: string;
+	pageRecoveryUsedAt?: string;
 	freshnessSeconds?: number;
 	sourceIdentities?: Partial<Record<PeriodDigestContentSource, string>>;
 	suppressedSourceIdentities?: Partial<
 		Record<PeriodDigestContentSource, string>
 	>;
 }
+
+export type PeriodDigestFreshnessOrigin = "launchd" | "page" | "cli";
 
 export interface CalculateFreshnessDeadlineInput {
 	now: Date;
@@ -59,6 +73,11 @@ const reconcileQueues = new Map<CurrentPeriodDigestPeriod, Promise<void>>();
 const FRESHNESS_SCHEDULER_LOCK_STALE_MS = 60_000;
 const FRESHNESS_SCHEDULER_LOCK_MAX_AGE_MS = 10 * 60_000;
 const FRESHNESS_SCHEDULER_LOCK_WAIT_MS = 30_000;
+const FRESHNESS_RETRY_DELAYS_MS = [
+	15 * 60_000,
+	60 * 60_000,
+	4 * 60 * 60_000,
+] as const;
 
 function sameLocalDay(left: Date, right: Date) {
 	return (
@@ -290,20 +309,24 @@ export function buildPeriodDigestFreshnessLaunchAgent({
 export async function consumePeriodDigestFreshnessAttempt({
 	period,
 	attemptToken,
+	origin,
 	now = new Date(),
 }: {
 	period: CurrentPeriodDigestPeriod;
 	attemptToken: string;
+	origin: PeriodDigestFreshnessOrigin;
 	now?: Date;
 }): Promise<
 	| { valid: true }
 	| {
 			valid: false;
 			reason:
-				| "missing-state"
-				| "token-mismatch"
-				| "already-consumed"
-				| "not-due"
+					| "missing-state"
+					| "token-mismatch"
+					| "already-consumed"
+					| "already-running"
+					| "disabled"
+					| "not-due"
 				| "cross-day";
 	  }
 > {
@@ -315,23 +338,188 @@ export async function consumePeriodDigestFreshnessAttempt({
 			if (state.attemptToken !== attemptToken) {
 				return { valid: false, reason: "token-mismatch" } as const;
 			}
-			if (state.status === "consumed") {
+			if (state.status === "disabled") {
+				return { valid: false, reason: "disabled" } as const;
+			}
+			if (state.status === "running") {
+				return { valid: false, reason: "already-running" } as const;
+			}
+			const terminal =
+				state.status === "failed" ||
+				state.status === "consumed" ||
+				state.status === "error";
+			const pageRecovery =
+				origin === "page" && terminal && !state.pageRecoveryUsedAt;
+			if (terminal && !pageRecovery) {
 				return { valid: false, reason: "already-consumed" } as const;
 			}
 			const dueAt = new Date(state.dueAt);
 			if (!sameLocalDay(dueAt, now)) {
 				return { valid: false, reason: "cross-day" } as const;
 			}
-			if (now.getTime() < dueAt.getTime()) {
+			const eligibleAt = new Date(
+				state.status === "retryable" ? (state.retryAt ?? "") : state.dueAt,
+			);
+			if (
+				!pageRecovery &&
+				(!Number.isFinite(eligibleAt.getTime()) ||
+					now.getTime() < eligibleAt.getTime())
+			) {
 				return { valid: false, reason: "not-due" } as const;
 			}
 			await writeStateFile(statePath, {
 				...state,
-				status: "consumed",
-				consumedAt: now.toISOString(),
+				status: "running",
+				startedAt: now.toISOString(),
 				updatedAt: now.toISOString(),
+				...(pageRecovery
+					? { pageRecoveryUsedAt: now.toISOString() }
+					: {}),
 			});
 			return { valid: true } as const;
+		}),
+	);
+}
+
+export async function completePeriodDigestFreshnessAttempt({
+	period,
+	attemptToken,
+	outcome,
+	now = new Date(),
+	install = installLaunchAgent,
+	installOptions,
+	program,
+	envFile,
+}: {
+	period: CurrentPeriodDigestPeriod;
+	attemptToken: string;
+	outcome: "published" | "failed";
+	now?: Date;
+	install?: (
+		agent: LaunchAgent,
+		options?: LaunchAgentInstallOptions,
+	) => Promise<LaunchAgentInstallResult>;
+	installOptions?: LaunchAgentInstallOptions;
+	program?: string;
+	envFile?: string;
+}) {
+	const statePath = periodDigestFreshnessStatePath(period);
+	return withFreshnessSchedulerLease(period, () =>
+		serializeState(statePath, async () => {
+			const state = await readPeriodDigestFreshnessState(period);
+			if (
+				!state ||
+				state.attemptToken !== attemptToken ||
+				state.status !== "running"
+			) {
+				return { state, installResult: null, updated: false as const };
+			}
+
+			if (outcome === "published") {
+				const consumed: PeriodDigestFreshnessStateV1 = {
+					...state,
+					status: "consumed",
+					consumedAt: now.toISOString(),
+					updatedAt: now.toISOString(),
+				};
+				await writeStateFile(statePath, consumed);
+				return {
+					state: consumed,
+					installResult: null,
+					updated: true as const,
+				};
+			}
+
+			if (state.pageRecoveryUsedAt) {
+				const failed: PeriodDigestFreshnessStateV1 = {
+					...state,
+					status: "failed",
+					failedAt: now.toISOString(),
+					updatedAt: now.toISOString(),
+				};
+				await writeStateFile(statePath, failed);
+				return {
+					state: failed,
+					installResult: null,
+					updated: true as const,
+				};
+			}
+
+			const retryCount = state.retryCount ?? 0;
+			const retryDelay = FRESHNESS_RETRY_DELAYS_MS[retryCount];
+			if (retryDelay === undefined) {
+				const failed: PeriodDigestFreshnessStateV1 = {
+					...state,
+					status: "failed",
+					failedAt: now.toISOString(),
+					updatedAt: now.toISOString(),
+				};
+				await writeStateFile(statePath, failed);
+				return {
+					state: failed,
+					installResult: null,
+					updated: true as const,
+				};
+			}
+
+			const retryAt = roundUpToMinute(
+				new Date(now.getTime() + retryDelay),
+			);
+			if (!sameLocalDay(retryAt, now)) {
+				const disabled: PeriodDigestFreshnessStateV1 = {
+					...state,
+					status: "disabled",
+					retryCount: retryCount + 1,
+					retryAt: retryAt.toISOString(),
+					fireAt: "",
+					updatedAt: now.toISOString(),
+				};
+				await writeStateFile(statePath, disabled);
+				return {
+					state: disabled,
+					installResult: null,
+					updated: true as const,
+				};
+			}
+
+			const retryable: PeriodDigestFreshnessStateV1 = {
+				...state,
+				status: "retryable",
+				retryCount: retryCount + 1,
+				retryAt: retryAt.toISOString(),
+				fireAt: retryAt.toISOString(),
+				updatedAt: now.toISOString(),
+			};
+			await writeStateFile(statePath, retryable);
+			const execution = resolveDigestLaunchdExecution();
+			const agent = buildPeriodDigestFreshnessLaunchAgent({
+				period,
+				fireAt: retryAt,
+				attemptToken,
+				program: program ?? execution.program,
+				envFile: envFile ?? execution.envFile,
+			});
+			try {
+				const installResult = await install(agent, installOptions);
+				return {
+					state: retryable,
+					installResult,
+					updated: true as const,
+				};
+			} catch (error) {
+				const failedInstall: PeriodDigestFreshnessStateV1 = {
+					...retryable,
+					status: "error",
+					installError: error instanceof Error ? error.message : String(error),
+					updatedAt: now.toISOString(),
+				};
+				await writeStateFile(statePath, failedInstall);
+				return {
+					state: failedInstall,
+					installResult: null,
+					updated: true as const,
+				};
+			}
 		}),
 	);
 }
@@ -481,12 +669,22 @@ async function reconcilePeriodDigestFreshnessInternal({
 	}
 	if (
 		previous?.attemptToken === attemptToken &&
-		previous.status === "consumed"
+		(previous.status === "running" ||
+			previous.status === "retryable" ||
+			previous.status === "failed" ||
+			previous.status === "consumed")
 	) {
 		return { state: previous, installResult: null };
 	}
+	const sameAttempt = previous?.attemptToken === attemptToken;
+	const desiredFireAt =
+		sameAttempt && previous.status === "error" && previous.retryAt
+			? new Date(previous.retryAt)
+			: dueAt;
 	const fireAt = roundUpToMinute(
-		dueAt.getTime() <= now.getTime() ? new Date(now.getTime() + 1) : dueAt,
+		desiredFireAt.getTime() <= now.getTime()
+			? new Date(now.getTime() + 1)
+			: desiredFireAt,
 	);
 	const state: PeriodDigestFreshnessStateV1 = {
 		schemaVersion: 1,
@@ -499,6 +697,15 @@ async function reconcilePeriodDigestFreshnessInternal({
 		freshnessSeconds,
 		sourceIdentities,
 		suppressedSourceIdentities,
+		...(sameAttempt && previous.retryCount !== undefined
+			? { retryCount: previous.retryCount }
+			: {}),
+		...(sameAttempt && previous.retryAt
+			? { retryAt: previous.retryAt }
+			: {}),
+		...(sameAttempt && previous.pageRecoveryUsedAt
+			? { pageRecoveryUsedAt: previous.pageRecoveryUsedAt }
+			: {}),
 	};
 	await writePeriodDigestFreshnessState(state);
 	const agent = buildPeriodDigestFreshnessLaunchAgent({

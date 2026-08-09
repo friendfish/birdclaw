@@ -6,11 +6,13 @@ import { useTestHome } from "../test/test-home";
 import {
 	buildPeriodDigestFreshnessLaunchAgent,
 	calculatePeriodDigestFreshnessDeadline,
+	completePeriodDigestFreshnessAttempt,
 	consumePeriodDigestFreshnessAttempt,
 	periodDigestFreshnessStatePath,
 	readPeriodDigestFreshnessState,
 	reconcilePeriodDigestFreshness,
 	triggerDuePeriodDigestFreshness,
+	type PeriodDigestFreshnessStateV1,
 	writePeriodDigestFreshnessState,
 } from "./period-digest-freshness";
 import { acquireScheduledJobLock } from "./scheduled-job";
@@ -114,7 +116,7 @@ describe("period digest freshness", () => {
 		}
 	});
 
-	it("consumes the matching same-day attempt once and rejects stale tokens", async () => {
+	it("starts the matching same-day attempt once and rejects stale tokens", async () => {
 		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
 		await writePeriodDigestFreshnessState({
 			schemaVersion: 1,
@@ -130,6 +132,7 @@ describe("period digest freshness", () => {
 			consumePeriodDigestFreshnessAttempt({
 				period: "24h",
 				attemptToken: "old-token",
+				origin: "launchd",
 				now: new Date(2026, 7, 6, 10, 31, 0),
 			}),
 		).resolves.toMatchObject({ valid: false, reason: "token-mismatch" });
@@ -137,18 +140,86 @@ describe("period digest freshness", () => {
 			consumePeriodDigestFreshnessAttempt({
 				period: "24h",
 				attemptToken: "current-token",
+				origin: "launchd",
 				now: new Date(2026, 7, 6, 10, 31, 0),
 			}),
 		).resolves.toEqual({ valid: true });
+		expect(await readPeriodDigestFreshnessState("24h")).toMatchObject({
+			status: "running",
+		});
 		await expect(
 			consumePeriodDigestFreshnessAttempt({
 				period: "24h",
 				attemptToken: "current-token",
+				origin: "launchd",
 				now: new Date(2026, 7, 6, 10, 32, 0),
 			}),
-		).resolves.toMatchObject({ valid: false, reason: "already-consumed" });
+		).resolves.toMatchObject({ valid: false, reason: "already-running" });
 
 		expect(testHome().root).toBeTruthy();
+	});
+
+	it("moves a failed running attempt through bounded retry backoff", async () => {
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "retry-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "scheduled",
+			updatedAt: dueAt.toISOString(),
+		});
+
+		const failureTimes = [
+			new Date(2026, 7, 6, 10, 31, 0),
+			new Date(2026, 7, 6, 10, 47, 0),
+			new Date(2026, 7, 6, 11, 48, 0),
+			new Date(2026, 7, 6, 15, 49, 0),
+		];
+		const expectedRetryAt = [
+			new Date(2026, 7, 6, 10, 46, 0),
+			new Date(2026, 7, 6, 11, 47, 0),
+			new Date(2026, 7, 6, 15, 48, 0),
+		];
+
+		for (const [index, now] of failureTimes.entries()) {
+			await expect(
+				consumePeriodDigestFreshnessAttempt({
+					period: "today",
+					attemptToken: "retry-token",
+					origin: "launchd",
+					now,
+				}),
+			).resolves.toEqual({ valid: true });
+			expect((await readPeriodDigestFreshnessState("today"))?.status).toBe(
+				"running",
+			);
+
+			const completed = await completePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: "retry-token",
+				outcome: "failed",
+				now,
+				install,
+			});
+			if (index < expectedRetryAt.length) {
+				expect(completed.state).toMatchObject({
+					status: "retryable",
+					retryCount: index + 1,
+					retryAt: expectedRetryAt[index]?.toISOString(),
+				});
+			} else {
+				expect(completed.state).toMatchObject({
+					status: "failed",
+					retryCount: 3,
+				});
+			}
+		}
+		expect(install).toHaveBeenCalledTimes(3);
 	});
 
 	it("uses the scheduled token for a page fallback and starts one freshness batch", async () => {
@@ -190,7 +261,7 @@ describe("period digest freshness", () => {
 			}),
 		).resolves.toMatchObject({
 			triggered: false,
-			reason: "already-consumed",
+			reason: "already-running",
 		});
 		expect(requestRun).toHaveBeenCalledTimes(1);
 	});
@@ -229,7 +300,7 @@ describe("period digest freshness", () => {
 		expect(maximumActiveInstalls).toBe(1);
 	});
 
-	it("derives a stable token and preserves its consumed state across reconciliation", async () => {
+	it("derives a stable token and preserves its lifecycle across reconciliation", async () => {
 		const now = new Date(2026, 7, 6, 10, 0, 0);
 		const install = vi.fn(
 			async () => ({ ok: true }) as LaunchAgentInstallResult,
@@ -246,6 +317,7 @@ describe("period digest freshness", () => {
 			consumePeriodDigestFreshnessAttempt({
 				period: "today",
 				attemptToken: first.state.attemptToken,
+				origin: "launchd",
 				now,
 			}),
 		).resolves.toEqual({ valid: true });
@@ -253,7 +325,15 @@ describe("period digest freshness", () => {
 		const second = await reconcilePeriodDigestFreshness(input);
 
 		expect(second.state.attemptToken).toBe(first.state.attemptToken);
-		expect(second.state.status).toBe("consumed");
+		expect(second.state.status).toBe("running");
+		await completePeriodDigestFreshnessAttempt({
+			period: "today",
+			attemptToken: first.state.attemptToken,
+			outcome: "published",
+			now,
+		});
+		const third = await reconcilePeriodDigestFreshness(input);
+		expect(third.state.status).toBe("consumed");
 		expect(install).toHaveBeenCalledTimes(1);
 	});
 
@@ -337,11 +417,197 @@ describe("period digest freshness", () => {
 		}
 	});
 
+	it("allows one same-day page recovery after automatic retries are exhausted", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "page-recovery",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "failed",
+			retryCount: 3,
+			updatedAt: new Date(2026, 7, 6, 15, 0, 0).toISOString(),
+		});
+		const now = new Date(2026, 7, 6, 16, 0, 0);
+
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: "page-recovery",
+				origin: "page",
+				now,
+			}),
+		).resolves.toEqual({ valid: true });
+		expect(await readPeriodDigestFreshnessState("today")).toMatchObject({
+			status: "running",
+			pageRecoveryUsedAt: now.toISOString(),
+		});
+
+		const install = vi.fn();
+		await completePeriodDigestFreshnessAttempt({
+			period: "today",
+			attemptToken: "page-recovery",
+			outcome: "failed",
+			now: new Date(2026, 7, 6, 16, 1, 0),
+			install,
+		});
+		expect(await readPeriodDigestFreshnessState("today")).toMatchObject({
+			status: "failed",
+			retryCount: 3,
+		});
+		expect(install).not.toHaveBeenCalled();
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: "page-recovery",
+				origin: "page",
+				now: new Date(2026, 7, 6, 16, 2, 0),
+			}),
+		).resolves.toEqual({ valid: false, reason: "already-consumed" });
+	});
+
+	it.each(["consumed", "error"] as const)(
+		"recovers one legacy %s state from the page",
+		async (status) => {
+			const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+			await writePeriodDigestFreshnessState({
+				schemaVersion: 1,
+				period: "24h",
+				attemptToken: `legacy-${status}`,
+				dueAt: dueAt.toISOString(),
+				fireAt: dueAt.toISOString(),
+				status,
+				updatedAt: dueAt.toISOString(),
+			});
+
+			await expect(
+				consumePeriodDigestFreshnessAttempt({
+					period: "24h",
+					attemptToken: `legacy-${status}`,
+					origin: "page",
+					now: new Date(2026, 7, 6, 12, 0, 0),
+				}),
+			).resolves.toEqual({ valid: true });
+			expect(await readPeriodDigestFreshnessState("24h")).toMatchObject({
+				status: "running",
+				pageRecoveryUsedAt: new Date(
+					2026,
+					7,
+					6,
+					12,
+					0,
+					0,
+				).toISOString(),
+			});
+		},
+	);
+
+	it("disables a retry whose retryAt crosses the local day", async () => {
+		const dueAt = new Date(2026, 7, 6, 23, 0, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "late-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "running",
+			updatedAt: dueAt.toISOString(),
+		});
+		const install = vi.fn();
+
+		const result = await completePeriodDigestFreshnessAttempt({
+			period: "today",
+			attemptToken: "late-token",
+			outcome: "failed",
+			now: new Date(2026, 7, 6, 23, 55, 0),
+			install,
+		});
+
+		expect(result.state).toMatchObject({
+			status: "disabled",
+			retryCount: 1,
+			retryAt: new Date(2026, 7, 7, 0, 10, 0).toISOString(),
+		});
+		expect(install).not.toHaveBeenCalled();
+	});
+
+	it("ignores duplicate completion and completion for a replaced token", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "completed-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "running",
+			updatedAt: dueAt.toISOString(),
+		});
+		const first = await completePeriodDigestFreshnessAttempt({
+			period: "today",
+			attemptToken: "completed-token",
+			outcome: "published",
+			now: new Date(2026, 7, 6, 11, 0, 0),
+		});
+		const duplicate = await completePeriodDigestFreshnessAttempt({
+			period: "today",
+			attemptToken: "completed-token",
+			outcome: "published",
+			now: new Date(2026, 7, 6, 11, 1, 0),
+		});
+		await writePeriodDigestFreshnessState({
+			...(first.state as PeriodDigestFreshnessStateV1),
+			attemptToken: "replacement-token",
+			status: "scheduled",
+		});
+		const replaced = await completePeriodDigestFreshnessAttempt({
+			period: "today",
+			attemptToken: "completed-token",
+			outcome: "failed",
+			now: new Date(2026, 7, 6, 11, 2, 0),
+		});
+
+		expect(first.updated).toBe(true);
+		expect(duplicate.updated).toBe(false);
+		expect(replaced.updated).toBe(false);
+	});
+
+	it("lets only one concurrent caller move a token to running", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "24h",
+			attemptToken: "concurrent-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "scheduled",
+			updatedAt: dueAt.toISOString(),
+		});
+		const input = {
+			period: "24h" as const,
+			attemptToken: "concurrent-token",
+			origin: "launchd" as const,
+			now: new Date(2026, 7, 6, 10, 31, 0),
+		};
+
+		const results = await Promise.all([
+			consumePeriodDigestFreshnessAttempt(input),
+			consumePeriodDigestFreshnessAttempt(input),
+		]);
+		expect(results).toEqual(
+			expect.arrayContaining([
+				{ valid: true },
+				{ valid: false, reason: "already-running" },
+			]),
+		);
+	});
+
 	it("rejects missing, early, and cross-day freshness attempts", async () => {
 		await expect(
 			consumePeriodDigestFreshnessAttempt({
 				period: "today",
 				attemptToken: "missing",
+				origin: "launchd",
 				now: new Date(2026, 7, 6, 10, 0, 0),
 			}),
 		).resolves.toEqual({ valid: false, reason: "missing-state" });
@@ -360,6 +626,7 @@ describe("period digest freshness", () => {
 			consumePeriodDigestFreshnessAttempt({
 				period: "today",
 				attemptToken: "current",
+				origin: "launchd",
 				now: new Date(2026, 7, 6, 11, 0, 0),
 			}),
 		).resolves.toEqual({ valid: false, reason: "not-due" });
@@ -367,6 +634,7 @@ describe("period digest freshness", () => {
 			consumePeriodDigestFreshnessAttempt({
 				period: "today",
 				attemptToken: "current",
+				origin: "launchd",
 				now: new Date(2026, 7, 7, 12, 0, 0),
 			}),
 		).resolves.toEqual({ valid: false, reason: "cross-day" });
