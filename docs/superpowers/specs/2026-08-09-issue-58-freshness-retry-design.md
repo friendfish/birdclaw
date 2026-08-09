@@ -44,14 +44,17 @@ completedAt?: string;
 ```
 
 - `scheduled`：初次 freshness 已安装，等待 `dueAt`。
-- `running`：某个进程已原子取得该 token；其他进程只能跳过或加入现有摘要批次。
+- `running`：某个进程已原子取得该 token；状态带 15 分钟租约。租约内其他进程只能
+  跳过或加入现有摘要批次；租约过期且 period-run 心跳锁已失效时可重新调度。
 - `retryable`：上次批次全量失败，已保存并安装下一次 `retryAt`。
 - `failed`：三次后台重试均失败，不再自动调度；同日仍可使用一次页面恢复机会。
 - `consumed`：成功完成或从旧版本读取的终态。新版成功完成时写入 `completedAt`；
-  对于没有该字段的旧版同日 `consumed` 状态，页面可使用一次恢复机会，修复升级前
-  已卡住的用户。
+  对于没有该字段的旧版同日 `consumed` 状态，仅当摘要已 stale 且 `dueAt` 已到时，
+  页面可使用一次恢复机会，修复升级前已卡住的用户。成功发布会创建新 token，
+  未 stale 的摘要不会触发该兼容恢复。
 - `disabled`：freshness 截止时间或下一次重试跨日。
-- `error`：LaunchAgent 安装失败；页面仍可在同日直接恢复，不依赖该 agent。
+- `error`：LaunchAgent 安装失败；页面在 `retryAt`（若有）或 `dueAt` 到达后恢复，
+  不依赖该 agent。
 
 状态文件继续由现有进程内队列、跨进程 scheduler lease 和原子 rename 保护。
 attempt token 仍由 period、freshness 配置和来源版本身份生成；后台重试复用同一个
@@ -80,15 +83,20 @@ launchd 相同的 token 和调度锁，但在以下状态拥有恢复语义：
 
 - `retryable` 且已经到达 `retryAt`：可提前于或替代 launchd 取得本次后台重试；
 - `failed`：可消耗一次持久化页面恢复机会；
-- 旧版 `consumed` 或调度安装 `error`：可消耗一次持久化页面恢复机会。
+- 旧版 `consumed` 或初次调度安装 `error`：到达 `dueAt` 后可消耗一次持久化页面恢复机会；
+- 带 `retryAt` 的安装 `error`：到达 `retryAt` 后替代未安装成功的后台重试，不消耗
+  最终页面恢复额度，失败后仍继续剩余退避链。
+- 租约过期的 `running`：页面可重新取得同一 token；若真实摘要批次仍持有心跳锁，
+  请求只会加入该批次，不会重复生成。
 
 页面 freshness 去重 key 加入最终 run 的身份/完成时间。这样每次失败批次结束后，
 页面能重新评估服务端状态；同一批次的普通轮询仍只发送一次 POST。真正是否允许
 启动由持久化 state 和跨进程锁决定，React ref 不是正确性的唯一边界。
 
-若服务端返回 `not-due`，响应同时携带权威 `eligibleAt`。已打开的页面设置一次性
-计时器，到点后清除当前 key 的本地去重并重新请求，因此可在 launchd 未触发时接手
-已经到期的后台重试，同时不会在退避窗口内提前运行。
+若服务端返回 `not-due` 或租约内的 `already-running`，响应同时携带权威
+`eligibleAt`。已打开的页面设置一次性计时器，到点后清除当前 key 的本地去重并
+重新请求，因此可在 launchd 未触发或进程异常退出时接手，同时不会在退避窗口或
+running 租约内提前运行。
 
 ### 完成回写
 
@@ -109,13 +117,19 @@ origin 和最终 run phase。只有 state 仍匹配该 token 且处于 `running`
 - `retryAt` 向上取整到分钟，便于复用当前一次性 LaunchAgent 构造。
 - 若 `retryAt` 跨越本地自然日，不安装任务，状态改为 `disabled`。
 - 后台次数耗尽后只保留一次页面恢复机会；页面恢复失败不再自动重排。
-- 任何尚未到期、正在运行、token 不匹配或跨日的请求都不会启动新批次。
+- `running` 租约固定为 15 分钟；显式 reconciliation 还必须确认 period-run 心跳锁
+  已失效，才会安装新的 freshness agent，避免终止正常的长生成任务。
+- reloader 等待父 PID 最多 6 小时，与 period-run 最大寿命一致；PID 被复用时不会
+  无限期挂起，超时后仍须通过 token 和状态校验才能激活目标 agent。
+- 任何尚未到期、仍在 running 租约内、token 不匹配或跨日的请求都不会启动新批次。
 
 ## 错误处理与兼容性
 
 - LaunchAgent 安装失败保留 `error` 和 `installError`，不会伪装成已成功调度。
 - 同 token 的重试安装错误在 reconcile 后仍恢复为 `retryable`，保留原 `retryAt`；
   不会因为配置保存或状态读取而降回 `scheduled` 并绕过退避。
+- 页面处理带 `retryAt` 的安装错误时遵守原退避时间，并把它视为后台重试的替代执行，
+  不会提前消耗最终页面恢复额度。
 - reloader 激活目标 agent 前再次校验 token，以及 `scheduled` 或 `retryable` 状态；
   目标安装失败会把 attempt 回写为 `error`，随后删除 helper plist 并移除 helper label。
 - completion 回写失败不能改写摘要批次结果，但 CLI 会记录失败，页面后续仍可通过

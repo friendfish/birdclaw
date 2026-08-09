@@ -17,6 +17,7 @@ import {
 	type PeriodDigestFreshnessStateV1,
 	writePeriodDigestFreshnessState,
 } from "./period-digest-freshness";
+import { periodDigestRunLockPath } from "./period-digest-orchestrator";
 import { acquireScheduledJobLock } from "./scheduled-job";
 import type { LaunchAgent, LaunchAgentInstallResult } from "./launchd";
 
@@ -140,6 +141,9 @@ describe("period digest freshness", () => {
 		const command = agent.programArguments.join(" ");
 		for (const expected of [
 			"4242",
+			"remaining=21600",
+			'[ "$remaining" -gt 0 ]',
+			"remaining=$((remaining - 1))",
 			"activate-period-digest-freshness-retry",
 			"retry-token",
 			launchAgentsDir,
@@ -191,6 +195,48 @@ describe("period digest freshness", () => {
 		).resolves.toMatchObject({ valid: false, reason: "already-running" });
 
 		expect(testHome().root).toBeTruthy();
+	});
+
+	it("reclaims an orphaned running attempt after its lease expires", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		const startedAt = new Date(2026, 7, 6, 10, 31, 0);
+		const eligibleAt = new Date(2026, 7, 6, 10, 46, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "orphaned-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "running",
+			startedAt: startedAt.toISOString(),
+			updatedAt: startedAt.toISOString(),
+		});
+
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: "orphaned-token",
+				origin: "page",
+				now: new Date(2026, 7, 6, 10, 40, 0),
+			}),
+		).resolves.toEqual({
+			valid: false,
+			reason: "already-running",
+			eligibleAt: eligibleAt.toISOString(),
+		});
+
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: "orphaned-token",
+				origin: "page",
+				now: eligibleAt,
+			}),
+		).resolves.toEqual({ valid: true });
+		expect(await readPeriodDigestFreshnessState("today")).toMatchObject({
+			status: "running",
+			startedAt: eligibleAt.toISOString(),
+		});
 	});
 
 	it("moves a failed running attempt through bounded retry backoff", async () => {
@@ -641,7 +687,6 @@ describe("period digest freshness", () => {
 			schedule: { hour: 8, minute: 0 },
 			install,
 		};
-
 		const [first, second] = await Promise.all([
 			reconcilePeriodDigestFreshness(input),
 			reconcilePeriodDigestFreshness(input),
@@ -681,6 +726,68 @@ describe("period digest freshness", () => {
 		);
 	});
 
+	it("reschedules an expired running attempt after its digest lock is gone", async () => {
+		const now = new Date(2026, 7, 6, 10, 0, 0);
+		const install = vi.fn(
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const input = {
+			period: "today" as const,
+			now,
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		};
+		const initial = await reconcilePeriodDigestFreshness(input);
+		install.mockClear();
+		await writePeriodDigestFreshnessState({
+			...initial.state,
+			status: "running",
+			startedAt: new Date(now.getTime() - 16 * 60_000).toISOString(),
+			updatedAt: new Date(now.getTime() - 16 * 60_000).toISOString(),
+		});
+
+		const reconciled = await reconcilePeriodDigestFreshness(input);
+
+		expect(reconciled.state.status).toBe("scheduled");
+		expect(install).toHaveBeenCalledOnce();
+	});
+
+	it("preserves an expired running attempt while its digest lock is active", async () => {
+		const now = new Date(2026, 7, 6, 10, 0, 0);
+		const install = vi.fn(
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const input = {
+			period: "24h" as const,
+			now,
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		};
+		const initial = await reconcilePeriodDigestFreshness(input);
+		install.mockClear();
+		await writePeriodDigestFreshnessState({
+			...initial.state,
+			status: "running",
+			startedAt: new Date(now.getTime() - 16 * 60_000).toISOString(),
+			updatedAt: new Date(now.getTime() - 16 * 60_000).toISOString(),
+		});
+		const release = await acquireScheduledJobLock(
+			periodDigestRunLockPath("24h"),
+			60_000,
+		);
+		if (!release) throw new Error("Expected the digest lock to be acquired");
+
+		try {
+			const reconciled = await reconcilePeriodDigestFreshness(input);
+			expect(reconciled.state.status).toBe("running");
+			expect(install).not.toHaveBeenCalled();
+		} finally {
+			await release();
+		}
+	});
+
 	it("preserves retry eligibility when reconciling an install error", async () => {
 		const now = new Date(2026, 7, 6, 10, 0, 0);
 		const retryAt = new Date(2026, 7, 6, 11, 0, 0);
@@ -718,7 +825,11 @@ describe("period digest freshness", () => {
 				origin: "page",
 				now: new Date(2026, 7, 6, 10, 5, 0),
 			}),
-		).resolves.toEqual({ valid: false, reason: "not-due" });
+		).resolves.toEqual({
+			valid: false,
+			reason: "not-due",
+			eligibleAt: retryAt.toISOString(),
+		});
 	});
 
 	it("derives a stable token and preserves its lifecycle across reconciliation", async () => {
@@ -919,6 +1030,78 @@ describe("period digest freshness", () => {
 		},
 	);
 
+	it("does not recover a legacy consumed attempt before its due time", async () => {
+		const dueAt = new Date(2026, 7, 6, 12, 0, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "early-legacy-consumed",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "consumed",
+			consumedAt: new Date(2026, 7, 6, 10, 0, 0).toISOString(),
+			updatedAt: new Date(2026, 7, 6, 10, 0, 0).toISOString(),
+		});
+
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "today",
+				attemptToken: "early-legacy-consumed",
+				origin: "page",
+				now: new Date(2026, 7, 6, 11, 0, 0),
+			}),
+		).resolves.toEqual({
+			valid: false,
+			reason: "not-due",
+			eligibleAt: dueAt.toISOString(),
+		});
+	});
+
+	it("preserves retry backoff when a retry agent installation failed", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		const retryAt = new Date(2026, 7, 6, 11, 30, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "24h",
+			attemptToken: "retry-install-error",
+			dueAt: dueAt.toISOString(),
+			fireAt: retryAt.toISOString(),
+			status: "error",
+			retryCount: 1,
+			retryAt: retryAt.toISOString(),
+			installError: "launchctl denied",
+			updatedAt: dueAt.toISOString(),
+		});
+
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "24h",
+				attemptToken: "retry-install-error",
+				origin: "page",
+				now: new Date(2026, 7, 6, 11, 0, 0),
+			}),
+		).resolves.toEqual({
+			valid: false,
+			reason: "not-due",
+			eligibleAt: retryAt.toISOString(),
+		});
+
+		await expect(
+			consumePeriodDigestFreshnessAttempt({
+				period: "24h",
+				attemptToken: "retry-install-error",
+				origin: "page",
+				now: retryAt,
+			}),
+		).resolves.toEqual({ valid: true });
+		const running = await readPeriodDigestFreshnessState("24h");
+		expect(running).toMatchObject({
+			status: "running",
+			retryCount: 1,
+		});
+		expect(running).not.toHaveProperty("pageRecoveryUsedAt");
+	});
+
 	it("disables a retry whose retryAt crosses the local day", async () => {
 		const dueAt = new Date(2026, 7, 6, 23, 0, 0);
 		await writePeriodDigestFreshnessState({
@@ -1009,6 +1192,9 @@ describe("period digest freshness", () => {
 			origin: "launchd" as const,
 			now: new Date(2026, 7, 6, 10, 31, 0),
 		};
+		const runningEligibleAt = new Date(
+			input.now.getTime() + 15 * 60_000,
+		).toISOString();
 
 		const results = await Promise.all([
 			consumePeriodDigestFreshnessAttempt(input),
@@ -1017,7 +1203,11 @@ describe("period digest freshness", () => {
 		expect(results).toEqual(
 			expect.arrayContaining([
 				{ valid: true },
-				{ valid: false, reason: "already-running" },
+				{
+					valid: false,
+					reason: "already-running",
+					eligibleAt: runningEligibleAt,
+				},
 			]),
 		);
 	});
@@ -1049,7 +1239,11 @@ describe("period digest freshness", () => {
 				origin: "launchd",
 				now: new Date(2026, 7, 6, 11, 0, 0),
 			}),
-		).resolves.toEqual({ valid: false, reason: "not-due" });
+		).resolves.toEqual({
+			valid: false,
+			reason: "not-due",
+			eligibleAt: dueAt.toISOString(),
+		});
 		await expect(
 			consumePeriodDigestFreshnessAttempt({
 				period: "today",
@@ -1087,6 +1281,37 @@ describe("period digest freshness", () => {
 			triggered: false,
 			reason: "not-due",
 			eligibleAt: retryAt.toISOString(),
+		});
+		expect(requestRun).not.toHaveBeenCalled();
+	});
+
+	it("returns the running lease eligibility time for a page trigger", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		const startedAt = new Date(2026, 7, 6, 10, 31, 0);
+		const eligibleAt = new Date(2026, 7, 6, 10, 46, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "running-page-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "running",
+			startedAt: startedAt.toISOString(),
+			updatedAt: startedAt.toISOString(),
+		});
+		const requestRun = vi.fn();
+
+		await expect(
+			triggerDuePeriodDigestFreshness({
+				period: "today",
+				origin: "page",
+				now: new Date(2026, 7, 6, 10, 40, 0),
+				requestRun,
+			}),
+		).resolves.toEqual({
+			triggered: false,
+			reason: "already-running",
+			eligibleAt: eligibleAt.toISOString(),
 		});
 		expect(requestRun).not.toHaveBeenCalled();
 	});

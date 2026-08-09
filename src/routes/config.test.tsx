@@ -424,6 +424,39 @@ describe("config prompt panel", () => {
 		expect(screen.getByText(/24h.*今日刷新已结束/u)).toBeVisible();
 	});
 
+	it("distinguishes completed and disabled freshness schedules", async () => {
+		const schedule = {
+			...scheduleResponse(),
+			freshness: {
+				today: {
+					status: "consumed",
+					dueAt: "2026-08-06T10:00:00.000Z",
+					fireAt: "2026-08-06T10:00:00.000Z",
+					completedAt: "2026-08-06T10:30:00.000Z",
+				},
+				"24h": { status: "disabled", dueAt: "", fireAt: "" },
+			},
+		};
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/config") {
+					return jsonResponse(configResponse());
+				}
+				if (url.pathname === "/api/digest-schedule") {
+					return jsonResponse(schedule);
+				}
+				throw new Error(`Unexpected request: ${url.pathname}`);
+			}),
+		);
+
+		render(<ConfigRoute />);
+		fireEvent.click(await screen.findByRole("button", { name: "摘要调度" }));
+		expect(await screen.findByText(/Today.*今日超时更新已完成/u)).toBeVisible();
+		expect(screen.getByText(/24h.*今日不再触发超时更新/u)).toBeVisible();
+	});
+
 	it("renders defaults when config and schedule responses are not active", async () => {
 		vi.stubGlobal(
 			"fetch",

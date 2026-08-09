@@ -129,9 +129,7 @@ export function usePeriodDigestMetadata({
 		},
 		onSuccess: (result) => {
 			setFreshnessEligibleAt(
-				!result.triggered && result.reason === "not-due"
-					? (result.eligibleAt ?? null)
-					: null,
+				!result.triggered ? (result.eligibleAt ?? null) : null,
 			);
 			void query.refetch();
 		},

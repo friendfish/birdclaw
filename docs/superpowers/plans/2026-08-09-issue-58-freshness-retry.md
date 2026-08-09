@@ -1115,4 +1115,12 @@ Independent review identified three retry edges that the original task sequence 
 - [x] Avoid unloading a running launchd job from itself. Install a separate, short-lived reloader that waits for the parent CLI to exit, validates the token again, activates the target agent, persists activation errors, and removes itself.
 - [x] Use that deferred reloader for successful and degraded launchd freshness reconciliation too; the activator accepts only the matching `scheduled` or `retryable` token.
 
+PR review follow-up closed the remaining recovery and presentation edges:
+
+- [x] Give `running` a 15-minute lease, return its `eligibleAt` to the page, and only let reconciliation replace it after the real period-run heartbeat lock expires.
+- [x] Bound reloader PID waiting to the period-run six-hour maximum.
+- [x] Apply `retryAt`/`dueAt` to every page recovery, including legacy `consumed` and install `error` states; a due retry-install error remains part of the automatic retry chain.
+- [x] Share the Today/24h freshness response schema and distinguish `consumed` from `disabled` in Config status text.
+- [x] Keep legacy `consumed` recovery because it repairs pre-upgrade attempts that were marked consumed before their run completed; require both stale metadata and a due same-day attempt to avoid eager reruns.
+
 The final verification commands above must be rerun after these hardening commits.

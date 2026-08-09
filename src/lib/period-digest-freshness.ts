@@ -24,7 +24,10 @@ import {
 	type CurrentPeriodDigestPeriod,
 } from "./period-digest-current-store";
 import type { PeriodDigestContentSource } from "./period-digest";
-import { acquireScheduledJobLock } from "./scheduled-job";
+import {
+	acquireScheduledJobLock,
+	peekScheduledJobLockMetadata,
+} from "./scheduled-job";
 
 export interface PeriodDigestFreshnessStateV1 {
 	schemaVersion: 1;
@@ -81,6 +84,8 @@ const FRESHNESS_RETRY_DELAYS_MS = [
 	60 * 60_000,
 	4 * 60 * 60_000,
 ] as const;
+const FRESHNESS_RUNNING_LEASE_MS = 15 * 60_000;
+const FRESHNESS_RELOADER_WAIT_SECONDS = 6 * 60 * 60;
 
 function periodDigestFreshnessLaunchAgentLabel(
 	period: CurrentPeriodDigestPeriod,
@@ -103,6 +108,24 @@ function roundUpToMinute(value: Date) {
 	}
 	rounded.setSeconds(0, 0);
 	return rounded;
+}
+
+function runningLeaseEligibleAt(state: PeriodDigestFreshnessStateV1) {
+	const startedAt = new Date(state.startedAt ?? state.updatedAt);
+	return Number.isFinite(startedAt.getTime())
+		? new Date(startedAt.getTime() + FRESHNESS_RUNNING_LEASE_MS)
+		: new Date(0);
+}
+
+async function isPeriodDigestRunActive(period: CurrentPeriodDigestPeriod) {
+	const { PERIOD_DIGEST_LOCK_STALE_MS, periodDigestRunLockPath } =
+		await import("./period-digest-orchestrator");
+	return Boolean(
+		await peekScheduledJobLockMetadata(
+			periodDigestRunLockPath(period),
+			PERIOD_DIGEST_LOCK_STALE_MS,
+		),
+	);
 }
 
 export function calculatePeriodDigestFreshnessDeadline({
@@ -349,7 +372,8 @@ export function buildPeriodDigestFreshnessRetryReloaderLaunchAgent({
 	});
 	const activationCommand = activationArguments.map(shellQuote).join(" ");
 	const script = [
-		`while /bin/kill -0 ${String(parentPid)} 2>/dev/null; do /bin/sleep 1; done`,
+		`remaining=${String(FRESHNESS_RELOADER_WAIT_SECONDS)}`,
+		`while /bin/kill -0 ${String(parentPid)} 2>/dev/null && [ "$remaining" -gt 0 ]; do /bin/sleep 1; remaining=$((remaining - 1)); done`,
 		activationCommand,
 		"activation_status=$?",
 		`/usr/bin/unlink ${shellQuote(helperPlistPath)} 2>/dev/null || true`,
@@ -390,6 +414,7 @@ export async function consumePeriodDigestFreshnessAttempt({
 	| { valid: true }
 	| {
 			valid: false;
+			eligibleAt?: string;
 			reason:
 				| "missing-state"
 				| "token-mismatch"
@@ -411,35 +436,47 @@ export async function consumePeriodDigestFreshnessAttempt({
 			if (state.status === "disabled") {
 				return { valid: false, reason: "disabled" } as const;
 			}
+			const dueAt = new Date(state.dueAt);
+			if (!sameLocalDay(dueAt, now)) {
+				return { valid: false, reason: "cross-day" } as const;
+			}
 			if (state.status === "running") {
-				return { valid: false, reason: "already-running" } as const;
+				const eligibleAt = runningLeaseEligibleAt(state);
+				if (now.getTime() < eligibleAt.getTime()) {
+					return {
+						valid: false,
+						reason: "already-running",
+						eligibleAt: eligibleAt.toISOString(),
+					} as const;
+				}
 			}
 			const terminal =
 				state.status === "failed" ||
 				state.status === "consumed" ||
 				state.status === "error";
+			const retryInstallPending =
+				state.status === "error" && Boolean(state.retryAt);
 			const recoverableTerminal =
 				state.status === "failed" ||
-				state.status === "error" ||
+				(state.status === "error" && !retryInstallPending) ||
 				(state.status === "consumed" && !state.completedAt);
 			const pageRecovery =
 				origin === "page" && recoverableTerminal && !state.pageRecoveryUsedAt;
-			if (terminal && !pageRecovery) {
+			if (terminal && !pageRecovery && !retryInstallPending) {
 				return { valid: false, reason: "already-consumed" } as const;
 			}
-			const dueAt = new Date(state.dueAt);
-			if (!sameLocalDay(dueAt, now)) {
-				return { valid: false, reason: "cross-day" } as const;
-			}
-			const eligibleAt = new Date(
-				state.status === "retryable" ? (state.retryAt ?? "") : state.dueAt,
-			);
+			const eligibleAt = new Date(state.retryAt ?? state.dueAt);
 			if (
-				!pageRecovery &&
-				(!Number.isFinite(eligibleAt.getTime()) ||
-					now.getTime() < eligibleAt.getTime())
+				!Number.isFinite(eligibleAt.getTime()) ||
+				now.getTime() < eligibleAt.getTime()
 			) {
-				return { valid: false, reason: "not-due" } as const;
+				return {
+					valid: false,
+					reason: "not-due",
+					...(Number.isFinite(eligibleAt.getTime())
+						? { eligibleAt: eligibleAt.toISOString() }
+						: {}),
+				} as const;
 			}
 			await writeStateFile(statePath, {
 				...state,
@@ -749,16 +786,10 @@ export async function triggerDuePeriodDigestFreshness({
 		now,
 	});
 	if (!attempt.valid) {
-		const eligibleAt =
-			attempt.reason === "not-due"
-				? state.status === "retryable"
-					? state.retryAt
-					: state.dueAt
-				: undefined;
 		return {
 			triggered: false as const,
 			reason: attempt.reason,
-			...(eligibleAt ? { eligibleAt } : {}),
+			...(attempt.eligibleAt ? { eligibleAt: attempt.eligibleAt } : {}),
 		};
 	}
 	const reportFailedAttempt = () =>
@@ -901,16 +932,22 @@ async function reconcilePeriodDigestFreshnessInternal({
 		await writePeriodDigestFreshnessState(state);
 		return { state, installResult: null };
 	}
+	const sameAttempt = previous?.attemptToken === attemptToken;
+	if (sameAttempt && previous.status === "running") {
+		const leaseActive =
+			now.getTime() < runningLeaseEligibleAt(previous).getTime();
+		if (leaseActive || (await isPeriodDigestRunActive(period))) {
+			return { state: previous, installResult: null };
+		}
+	}
 	if (
-		previous?.attemptToken === attemptToken &&
-		(previous.status === "running" ||
-			previous.status === "retryable" ||
+		sameAttempt &&
+		(previous.status === "retryable" ||
 			previous.status === "failed" ||
 			previous.status === "consumed")
 	) {
 		return { state: previous, installResult: null };
 	}
-	const sameAttempt = previous?.attemptToken === attemptToken;
 	const restoringRetry =
 		sameAttempt && previous.status === "error" && Boolean(previous.retryAt);
 	const desiredFireAt =
