@@ -121,6 +121,26 @@ function resolveLaunchAgentFireAt(desiredAt: Date, now: Date) {
 	return sameLocalDay(fireAt, now) ? fireAt : undefined;
 }
 
+function resolveSameDayLaunchAgentFireAt({
+	dueAt,
+	desiredAt,
+	now,
+}: {
+	dueAt: Date;
+	desiredAt: Date;
+	now: Date;
+}) {
+	if (
+		!Number.isFinite(dueAt.getTime()) ||
+		!Number.isFinite(desiredAt.getTime()) ||
+		!sameLocalDay(dueAt, now) ||
+		!sameLocalDay(desiredAt, now)
+	) {
+		return undefined;
+	}
+	return resolveLaunchAgentFireAt(desiredAt, now);
+}
+
 function runningLeaseEligibleAt(state: PeriodDigestFreshnessStateV1) {
 	const startedAt = new Date(state.startedAt ?? state.updatedAt);
 	return Number.isFinite(startedAt.getTime())
@@ -528,7 +548,8 @@ export async function consumePeriodDigestFreshnessAttempt({
 export async function activatePeriodDigestFreshnessRetry({
 	period,
 	attemptToken,
-	now = new Date(),
+	now,
+	clock,
 	install = installLaunchAgent,
 	installOptions,
 	program,
@@ -537,6 +558,7 @@ export async function activatePeriodDigestFreshnessRetry({
 	period: CurrentPeriodDigestPeriod;
 	attemptToken: string;
 	now?: Date;
+	clock?: () => Date;
 	install?: (
 		agent: LaunchAgent,
 		options?: LaunchAgentInstallOptions,
@@ -546,6 +568,7 @@ export async function activatePeriodDigestFreshnessRetry({
 	envFile?: string;
 }) {
 	const statePath = periodDigestFreshnessStatePath(period);
+	const currentTime = clock ?? (now ? () => now : () => new Date());
 	return withFreshnessSchedulerLease(period, () =>
 		serializeState(statePath, async () => {
 			const state = await readPeriodDigestFreshnessState(period);
@@ -579,19 +602,12 @@ export async function activatePeriodDigestFreshnessRetry({
 					? (state.retryAt ?? state.fireAt)
 					: state.fireAt,
 			);
-			const activationAt = Number.isFinite(desiredActivationAt.getTime())
-				? resolveLaunchAgentFireAt(desiredActivationAt, now)
-				: undefined;
-			if (
-				!activationAt ||
-				!sameLocalDay(dueAt, now) ||
-				!sameLocalDay(desiredActivationAt, now)
-			) {
+			const disable = async (disabledAt: Date) => {
 				const disabled: PeriodDigestFreshnessStateV1 = {
 					...state,
 					status: "disabled",
 					fireAt: "",
-					updatedAt: now.toISOString(),
+					updatedAt: disabledAt.toISOString(),
 				};
 				await writeStateFile(statePath, disabled);
 				return {
@@ -600,14 +616,41 @@ export async function activatePeriodDigestFreshnessRetry({
 					state: disabled,
 					installResult: null,
 				};
+			};
+			const schedulingNow = currentTime();
+			let activationAt = resolveSameDayLaunchAgentFireAt({
+				dueAt,
+				desiredAt: desiredActivationAt,
+				now: schedulingNow,
+			});
+			if (!activationAt) {
+				return disable(schedulingNow);
 			}
 
-			const activationState: PeriodDigestFreshnessStateV1 = {
+			let activationState: PeriodDigestFreshnessStateV1 = {
 				...state,
 				fireAt: activationAt.toISOString(),
-				updatedAt: now.toISOString(),
+				updatedAt: schedulingNow.toISOString(),
 			};
 			await writeStateFile(statePath, activationState);
+			const installNow = currentTime();
+			const installationFireAt = resolveSameDayLaunchAgentFireAt({
+				dueAt,
+				desiredAt: desiredActivationAt,
+				now: installNow,
+			});
+			if (!installationFireAt) {
+				return disable(installNow);
+			}
+			if (installationFireAt.getTime() !== activationAt.getTime()) {
+				activationAt = installationFireAt;
+				activationState = {
+					...activationState,
+					fireAt: activationAt.toISOString(),
+					updatedAt: installNow.toISOString(),
+				};
+				await writeStateFile(statePath, activationState);
+			}
 			const execution = resolveDigestLaunchdExecution();
 			const agent = buildPeriodDigestFreshnessLaunchAgent({
 				period,
@@ -628,7 +671,7 @@ export async function activatePeriodDigestFreshnessRetry({
 					...activationState,
 					status: "error",
 					installError: error instanceof Error ? error.message : String(error),
-					updatedAt: now.toISOString(),
+					updatedAt: currentTime().toISOString(),
 				};
 				await writeStateFile(statePath, failedInstall);
 				return {
@@ -803,12 +846,14 @@ export async function triggerDuePeriodDigestFreshness({
 	period,
 	origin,
 	now = new Date(),
+	clock = () => new Date(),
 	requestRun,
 	completeAttempt = completePeriodDigestFreshnessAttempt,
 }: {
 	period: CurrentPeriodDigestPeriod;
 	origin: "page" | "cli";
 	now?: Date;
+	clock?: () => Date;
 	requestRun?: (request: {
 		period: CurrentPeriodDigestPeriod;
 		trigger: "freshness";
@@ -822,7 +867,8 @@ export async function triggerDuePeriodDigestFreshness({
 }) {
 	let state = await readPeriodDigestFreshnessState(period);
 	if (!state) {
-		state = (await reconcilePeriodDigestFreshness({ period, now })).state;
+		state = (await reconcilePeriodDigestFreshness({ period, now, clock }))
+			.state;
 	}
 	if (state.status === "disabled") {
 		return { triggered: false as const, reason: "disabled" as const };
@@ -880,7 +926,8 @@ export async function triggerDuePeriodDigestFreshness({
 
 async function reconcilePeriodDigestFreshnessInternal({
 	period,
-	now = new Date(),
+	now,
+	clock,
 	freshnessSeconds = resolveDigestFreshnessSeconds(),
 	schedule = resolveDigestScheduleTime(period),
 	installOptions,
@@ -893,6 +940,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 }: {
 	period: CurrentPeriodDigestPeriod;
 	now?: Date;
+	clock?: () => Date;
 	freshnessSeconds?: number;
 	schedule?: Required<Pick<DigestScheduleTime, "hour" | "minute">>;
 	installOptions?: LaunchAgentInstallOptions;
@@ -906,7 +954,9 @@ async function reconcilePeriodDigestFreshnessInternal({
 	program?: string;
 	envFile?: string;
 }) {
-	const scheduledBase = new Date(now);
+	const currentTime = clock ?? (now ? () => now : () => new Date());
+	const calculationNow = now ?? currentTime();
+	const scheduledBase = new Date(calculationNow);
 	scheduledBase.setHours(schedule.hour, schedule.minute, 0, 0);
 	const currentBySource = Object.fromEntries(
 		CONTENT_SOURCES.map((contentSource) => [
@@ -949,7 +999,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 			sourceIdentities[contentSource],
 	);
 	const dueAt = calculatePeriodDigestFreshnessDeadline({
-		now,
+		now: calculationNow,
 		freshnessSeconds,
 		schedule,
 		generatedAt,
@@ -972,7 +1022,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 	);
 	if (previous?.status === "running" && !replacingRunningAttempt) {
 		const leaseActive =
-			now.getTime() < runningLeaseEligibleAt(previous).getTime();
+			calculationNow.getTime() < runningLeaseEligibleAt(previous).getTime();
 		if (leaseActive || (await isPeriodDigestRunActive(period))) {
 			return { state: previous, installResult: null };
 		}
@@ -985,7 +1035,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 			dueAt: "",
 			fireAt: "",
 			status: "disabled",
-			updatedAt: now.toISOString(),
+			updatedAt: calculationNow.toISOString(),
 			freshnessSeconds,
 			sourceIdentities,
 			suppressedSourceIdentities,
@@ -1005,7 +1055,6 @@ async function reconcilePeriodDigestFreshnessInternal({
 		sameAttempt && previous.status === "error" && Boolean(previous.retryAt);
 	const desiredFireAt =
 		restoringRetry && previous.retryAt ? new Date(previous.retryAt) : dueAt;
-	const fireAt = resolveLaunchAgentFireAt(desiredFireAt, now);
 	const retainedAttemptFields = {
 		...(sameAttempt && previous.retryCount !== undefined
 			? { retryCount: previous.retryCount }
@@ -1017,37 +1066,64 @@ async function reconcilePeriodDigestFreshnessInternal({
 			? { pageRecoveryUsedAt: previous.pageRecoveryUsedAt }
 			: {}),
 	};
+	const disabledState = (disabledAt: Date): PeriodDigestFreshnessStateV1 => ({
+		schemaVersion: 1,
+		period,
+		attemptToken,
+		dueAt: dueAt.toISOString(),
+		fireAt: "",
+		status: "disabled",
+		updatedAt: disabledAt.toISOString(),
+		freshnessSeconds,
+		sourceIdentities,
+		suppressedSourceIdentities,
+		...retainedAttemptFields,
+	});
+	const schedulingNow = currentTime();
+	let fireAt = resolveSameDayLaunchAgentFireAt({
+		dueAt,
+		desiredAt: desiredFireAt,
+		now: schedulingNow,
+	});
 	if (!fireAt) {
-		const disabled: PeriodDigestFreshnessStateV1 = {
-			schemaVersion: 1,
-			period,
-			attemptToken,
-			dueAt: dueAt.toISOString(),
-			fireAt: "",
-			status: "disabled",
-			updatedAt: now.toISOString(),
-			freshnessSeconds,
-			sourceIdentities,
-			suppressedSourceIdentities,
-			...retainedAttemptFields,
-		};
+		const disabled = disabledState(schedulingNow);
 		await writePeriodDigestFreshnessState(disabled);
 		return { state: disabled, installResult: null };
 	}
-	const state: PeriodDigestFreshnessStateV1 = {
+	let state: PeriodDigestFreshnessStateV1 = {
 		schemaVersion: 1,
 		period,
 		attemptToken,
 		dueAt: dueAt.toISOString(),
 		fireAt: fireAt.toISOString(),
 		status: restoringRetry ? "retryable" : "scheduled",
-		updatedAt: now.toISOString(),
+		updatedAt: schedulingNow.toISOString(),
 		freshnessSeconds,
 		sourceIdentities,
 		suppressedSourceIdentities,
 		...retainedAttemptFields,
 	};
 	await writePeriodDigestFreshnessState(state);
+	const installNow = currentTime();
+	const installationFireAt = resolveSameDayLaunchAgentFireAt({
+		dueAt,
+		desiredAt: desiredFireAt,
+		now: installNow,
+	});
+	if (!installationFireAt) {
+		const disabled = disabledState(installNow);
+		await writePeriodDigestFreshnessState(disabled);
+		return { state: disabled, installResult: null };
+	}
+	if (installationFireAt.getTime() !== fireAt.getTime()) {
+		fireAt = installationFireAt;
+		state = {
+			...state,
+			fireAt: fireAt.toISOString(),
+			updatedAt: installNow.toISOString(),
+		};
+		await writePeriodDigestFreshnessState(state);
+	}
 	const execution = resolveDigestLaunchdExecution();
 	const launchdCallerPid = validProcessId(previous?.launchdCallerPid)
 		? previous.launchdCallerPid

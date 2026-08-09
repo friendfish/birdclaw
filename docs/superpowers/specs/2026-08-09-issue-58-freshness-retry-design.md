@@ -144,6 +144,10 @@ reloader 可能在原 `fireAt` 或 `retryAt` 已经过期后才激活目标 Laun
    `disabled`。
 4. activation 安装前把实际 fire time 回写到 `fireAt`；`retryAt` 仍保留原始退避资格
    时间，因此状态展示与实际 launchd 计划一致，同时页面在重试已到期时仍可接管。
+5. `now` 不能只在等待 scheduler lease 之前捕获。activation 与 reconcile 在锁内完成
+   异步状态读取后重新取墙钟，并在状态首次落盘后、构建安装对象前再次校验；若等待或
+   落盘跨过分钟边界，状态与 launchd 日历一起推进到新的下一分钟，若跨过午夜则写为
+   `disabled` 而不安装。
 
 资格时间由状态决定，而不是由任意残留字段决定：
 
@@ -193,6 +197,8 @@ launchd，或 state 中存在有效的 `launchdCallerPid`。历史 state 只有
     清除旧 retryAt 但保留 retryCount。
 12. 兼容单测：只有 runningOrigin 而没有有效 launchdCallerPid 的历史状态不会让 web
     owner 安装 reloader；明确的 launchd owner 仍使用当前进程 PID 延迟替换。
+13. 锁等待竞态单测：activation 在安装前跨过目标分钟时推进并回写 `fireAt`；reconcile
+    在安装前跨过午夜时禁用且不调用 installer。
 
 ## 非目标
 

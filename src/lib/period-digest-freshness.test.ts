@@ -492,6 +492,54 @@ describe("period digest freshness", () => {
 		});
 	});
 
+	it("refreshes deferred activation time immediately before installation", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 0, 0);
+		const desiredFireAt = new Date(2026, 7, 6, 10, 31, 0);
+		const initialNow = new Date(2026, 7, 6, 10, 30, 59, 900);
+		const installNow = new Date(2026, 7, 6, 10, 31, 0, 100);
+		const expectedFireAt = new Date(2026, 7, 6, 10, 32, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "lease-delayed-activation-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: desiredFireAt.toISOString(),
+			status: "scheduled",
+			updatedAt: initialNow.toISOString(),
+		});
+		const clock = vi
+			.fn<() => Date>()
+			.mockReturnValueOnce(initialNow)
+			.mockReturnValue(installNow);
+		const install = vi.fn(
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+
+		const activated = await activatePeriodDigestFreshnessRetry({
+			period: "today",
+			attemptToken: "lease-delayed-activation-token",
+			now: initialNow,
+			clock,
+			install,
+		});
+
+		expect(activated).toMatchObject({
+			activated: true,
+			state: { fireAt: expectedFireAt.toISOString() },
+		});
+		expect(install.mock.calls[0]?.[0].schedule).toMatchObject({
+			kind: "calendar",
+			year: 2026,
+			month: 8,
+			day: 6,
+			hour: 10,
+			minute: 32,
+		});
+		expect(await readPeriodDigestFreshnessState("today")).toMatchObject({
+			fireAt: expectedFireAt.toISOString(),
+		});
+	});
+
 	it("disables a deferred activation when the next minute crosses days", async () => {
 		const dueAt = new Date(2026, 7, 6, 22, 0, 0);
 		const retryAt = new Date(2026, 7, 6, 23, 0, 0);
@@ -854,6 +902,31 @@ describe("period digest freshness", () => {
 			now: new Date(2026, 7, 6, 23, 59, 59),
 			freshnessSeconds: 60 * 60,
 			schedule: { hour: 8, minute: 0 },
+			install,
+		});
+
+		expect(reconciled.state).toMatchObject({
+			status: "disabled",
+			fireAt: "",
+		});
+		expect(install).not.toHaveBeenCalled();
+	});
+
+	it("disables reconciliation when installation is delayed across days", async () => {
+		const initialNow = new Date(2026, 7, 6, 23, 58, 59, 900);
+		const installNow = new Date(2026, 7, 6, 23, 59, 0, 100);
+		const clock = vi
+			.fn<() => Date>()
+			.mockReturnValueOnce(initialNow)
+			.mockReturnValue(installNow);
+		const install = vi.fn();
+
+		const reconciled = await reconcilePeriodDigestFreshness({
+			period: "24h",
+			now: initialNow,
+			clock,
+			freshnessSeconds: 60,
+			schedule: { hour: 23, minute: 58 },
 			install,
 		});
 

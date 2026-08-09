@@ -1404,3 +1404,51 @@ Fix every valid Critical, Important, and Minor finding before proceeding.
 
 Push `codex/issue-58-freshness-retry`, post a PR comment summarizing all three fixes
 and verification evidence, then wait for the new-head GitHub `validate` check.
+
+### Task 11: Close the Lock-Wait Fire-Time Race
+
+**Files:**
+- Modify: `src/lib/period-digest-freshness.ts`
+- Test: `src/lib/period-digest-freshness.test.ts`
+- Modify: `docs/superpowers/specs/2026-08-09-issue-58-freshness-retry-design.md`
+
+- [x] **Step 1: Add failing install-boundary tests**
+
+Inject a clock that crosses the scheduled minute between state preparation and
+installation. Expect deferred activation to persist and install the following minute.
+For reconciliation, cross midnight while the desired minute expires and expect a
+`disabled` state with no installer call.
+
+- [x] **Step 2: Verify the new tests fail on the reviewed implementation**
+
+```bash
+pnpm exec vitest run src/lib/period-digest-freshness.test.ts
+```
+
+Expected: activation retains `10:31` instead of `10:32`, and reconciliation remains
+`scheduled` instead of becoming `disabled`.
+
+- [x] **Step 3: Re-evaluate fire time inside the scheduler lease**
+
+Add an injectable clock while preserving fixed `now` behavior for existing callers
+and tests. Activation and reconciliation must re-read the clock after their async
+decision work, persist the resolved time, then check once more immediately before
+building the LaunchAgent. The page-created initial reconciliation must pass a live
+clock instead of reusing the request timestamp.
+
+- [x] **Step 4: Verify focused tests and repository checks**
+
+```bash
+pnpm exec vitest run \
+	src/lib/period-digest-freshness.test.ts \
+	src/lib/period-digest-orchestrator.test.ts
+pnpm run check
+```
+
+Expected: 70 focused tests pass and format, lint, and typecheck exit zero.
+
+- [ ] **Step 5: Commit, re-review, and repeat full verification**
+
+Commit the race fix, request an independent review of the new range, then rerun the
+focused six-file suite, all tests, production build, helper shell syntax, and diff
+checks before pushing.
