@@ -130,6 +130,35 @@ origin 和最终 run phase。只有 state 仍匹配该 token 且处于 `running`
   状态校验才能激活目标 agent。
 - 任何尚未到期、仍在 running 租约内、token 不匹配或跨日的请求都不会启动新批次。
 
+## 第三轮调度一致性
+
+reloader 可能在原 `fireAt` 或 `retryAt` 已经过期后才激活目标 LaunchAgent，例如父进程
+存活到六小时墙钟上限，或者 Mac 在等待期间休眠。目标 agent 使用固定 Year/Month/Day
+的 `StartCalendarInterval` 且 `RunAtLoad = false`，因此不能把过去时间原样交给 launchd。
+
+初次 reconcile 和 reloader activation 共用同一条 fire time 规则：
+
+1. 期望时间仍在未来时，向上取整到分钟后安装。
+2. 期望时间已到或已过时，以 `now + 1ms` 为基准向上取整到下一分钟。
+3. 钳制后的实际 fire time 若跨越本地自然日，则不安装目标 agent，并把 attempt 标为
+   `disabled`。
+4. activation 安装前把实际 fire time 回写到 `fireAt`；`retryAt` 仍保留原始退避资格
+   时间，因此状态展示与实际 launchd 计划一致，同时页面在重试已到期时仍可接管。
+
+资格时间由状态决定，而不是由任意残留字段决定：
+
+- `retryable` 使用 `retryAt`；
+- 带 `retryAt` 的安装 `error` 使用 `retryAt`；
+- `scheduled`、`failed`、旧 `consumed` 和过租约的 `running` 使用 `dueAt`。
+
+reconcile 从旧 `disabled` 等状态重新建立 `scheduled` attempt 时，不携带陈旧 `retryAt`；
+`retryCount` 可继续保留，防止配置保存意外重置已消耗的后台尝试次数。只有恢复同 token
+安装错误时才写出 `status = retryable` 并保留原 `retryAt`。
+
+是否安装 reloader 只依赖两种可证明安全的条件：当前 orchestrator 请求明确来自 freshness
+launchd，或 state 中存在有效的 `launchdCallerPid`。历史 state 只有
+`runningOrigin = launchd` 但没有有效 PID 时，不把当前 web server PID 当作替代等待目标。
+
 ## 错误处理与兼容性
 
 - LaunchAgent 安装失败保留 `error` 和 `installError`，不会伪装成已成功调度。
@@ -139,6 +168,7 @@ origin 和最终 run phase。只有 state 仍匹配该 token 且处于 `running`
   不会提前消耗最终页面恢复额度。
 - reloader 激活目标 agent 前再次校验 token，以及 `scheduled` 或 `retryable` 状态；
   目标安装失败会把 attempt 回写为 `error`，随后删除 helper plist 并移除 helper label。
+  若原计划时间已过，activation 使用同日下一分钟；若该时间跨日则禁用而不安装。
 - completion 回写失败不能改写摘要批次结果，但 CLI 会记录失败，页面后续仍可通过
   状态检查恢复。
 - 旧 state 缺少新增字段时按 `retryCount = 0`、页面恢复未使用处理。
@@ -157,6 +187,12 @@ origin 和最终 run phase。只有 state 仍匹配该 token 且处于 `running`
 8. 集成回归：DarkWake 全量失败 -> retryable -> 同日页面恢复 -> 成功发布 -> 新 freshness 被安排。
 9. reloader 单测：launchd completion 使用不同 label；父进程退出后隐藏命令只为仍
    retryable 的同 token 安装目标 agent，并持久化实际安装失败。
+10. 过期 activation 单测：过去的 retryAt/fireAt 被钳制到同日下一分钟并回写 fireAt；
+    23:59 后钳制跨日则 disabled。
+11. 状态资格单测：scheduled 的陈旧 retryAt 不覆盖 dueAt；reconcile 新 scheduled 状态
+    清除旧 retryAt 但保留 retryCount。
+12. 兼容单测：只有 runningOrigin 而没有有效 launchdCallerPid 的历史状态不会让 web
+    owner 安装 reloader；明确的 launchd owner 仍使用当前进程 PID 延迟替换。
 
 ## 非目标
 
