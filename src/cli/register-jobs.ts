@@ -19,7 +19,11 @@ import {
 	setDigestLaunchdExecution,
 } from "#/lib/config";
 import type { PeriodDigestPreset } from "#/lib/period-digest";
-import { consumePeriodDigestFreshnessAttempt } from "#/lib/period-digest-freshness";
+import {
+	activatePeriodDigestFreshnessRetry,
+	completePeriodDigestFreshnessAttempt,
+	consumePeriodDigestFreshnessAttempt,
+} from "#/lib/period-digest-freshness";
 import {
 	requestPeriodDigestRun,
 	type PeriodDigestTrigger,
@@ -233,6 +237,35 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 		});
 
 	jobsCommand
+		.command("activate-period-digest-freshness-retry", { hidden: true })
+		.requiredOption("--period <period>", "today or 24h")
+		.requiredOption("--attempt-token <token>", "Freshness attempt token")
+		.option("--launch-agents-dir <path>", "LaunchAgents directory")
+		.action(async (options) => {
+			const period = parseCurrentPeriod(options.period);
+			const result = await activatePeriodDigestFreshnessRetry({
+				period,
+				attemptToken: options.attemptToken,
+				...(options.launchAgentsDir
+					? {
+							installOptions: {
+								launchAgentsDir: options.launchAgentsDir,
+							},
+						}
+					: {}),
+			});
+			print(
+				{
+					ok: result.state?.status !== "error",
+					period,
+					...result,
+				},
+				true,
+			);
+			if (result.state?.status === "error") process.exitCode = 1;
+		});
+
+	jobsCommand
 		.command("run-period-digest")
 		.description("Generate and publish the current Today or 24h digest batch")
 		.requiredOption("--period <period>", "today or 24h")
@@ -263,6 +296,7 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			const period = parseCurrentPeriod(options.period);
 			const trigger = parseDigestTrigger(options.trigger);
 			const origin = parseDigestTriggerOrigin(options.origin);
+			let freshnessAttemptToken: string | undefined;
 			if (trigger === "freshness" && origin === "launchd") {
 				if (!options.attemptToken) {
 					throw new Error(
@@ -272,27 +306,51 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				const attempt = await consumePeriodDigestFreshnessAttempt({
 					period,
 					attemptToken: options.attemptToken,
+					origin: "launchd",
 				});
 				if (!attempt.valid) {
 					print({ ok: true, skipped: attempt.reason, period }, true);
 					return;
 				}
+				freshnessAttemptToken = options.attemptToken;
 			}
 			const requestedSource = options.requestedSource
 				? parseDigestContentSources(options.requestedSource)?.[0]
 				: undefined;
-			const run = await requestPeriodDigestRun({
-				period,
-				trigger,
-				origin,
-				...(requestedSource ? { requestedSource } : {}),
-				...(options.account ? { account: options.account } : {}),
-				...(options.birdCredentialsPath
-					? { birdCredentialsPath: options.birdCredentialsPath }
-					: {}),
-				liveSync: Boolean(options.liveSync),
-			});
-			const state = await run.completion;
+			let run;
+			let state;
+			try {
+				run = await requestPeriodDigestRun({
+					period,
+					trigger,
+					origin,
+					...(requestedSource ? { requestedSource } : {}),
+					...(options.account ? { account: options.account } : {}),
+					...(options.birdCredentialsPath
+						? { birdCredentialsPath: options.birdCredentialsPath }
+						: {}),
+					liveSync: Boolean(options.liveSync),
+				});
+				state = await run.completion;
+			} catch (error) {
+				if (freshnessAttemptToken) {
+					await completePeriodDigestFreshnessAttempt({
+						period,
+						attemptToken: freshnessAttemptToken,
+						origin,
+						outcome: "failed",
+					}).catch(() => undefined);
+				}
+				throw error;
+			}
+			if (freshnessAttemptToken) {
+				await completePeriodDigestFreshnessAttempt({
+					period,
+					attemptToken: freshnessAttemptToken,
+					origin,
+					outcome: state.phase === "failed" ? "failed" : "published",
+				});
+			}
 			print(
 				{ ok: state.phase !== "failed", joined: run.joined, ...state },
 				true,

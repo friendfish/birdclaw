@@ -66,6 +66,16 @@ export interface LaunchAgentInstallOptions {
 	load?: boolean;
 }
 
+export function launchAgentPlistPath(
+	label: string,
+	options: LaunchAgentInstallOptions = {},
+) {
+	const launchAgentsDir = resolveUserPath(
+		options.launchAgentsDir ?? "~/Library/LaunchAgents",
+	);
+	return path.join(launchAgentsDir, `${label}.plist`);
+}
+
 export function expandHomePath(input: string) {
 	return input === "~" || input.startsWith("~/")
 		? path.join(os.homedir(), input.slice(2))
@@ -205,10 +215,8 @@ export function installLaunchAgentEffect(
 	options: LaunchAgentInstallOptions = {},
 ): Effect.Effect<LaunchAgentInstallResult, unknown> {
 	return Effect.gen(function* () {
-		const launchAgentsDir = resolveUserPath(
-			options.launchAgentsDir ?? "~/Library/LaunchAgents",
-		);
-		const plistPath = path.join(launchAgentsDir, `${agent.label}.plist`);
+		const plistPath = launchAgentPlistPath(agent.label, options);
+		const launchAgentsDir = path.dirname(plistPath);
 		for (const directory of [
 			launchAgentsDir,
 			path.dirname(agent.logPath),

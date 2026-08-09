@@ -572,7 +572,25 @@ describe("period digest orchestrator", () => {
 		expect(finalState.sources.following.state).toBe("completed");
 		expect(finalState.sources.for_you.state).toBe("completed");
 		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
+			deferLaunchAgentReload: true,
+			replaceRunningAttempt: true,
 			suppressSources: ["all"],
+		});
+	});
+
+	it("defers next-generation freshness scheduling until a launchd freshness run exits", async () => {
+		const deps = dependencies();
+
+		const run = await requestPeriodDigestRun(
+			{ period: "today", trigger: "freshness", origin: "launchd" },
+			deps,
+		);
+		const finalState = await run.completion;
+
+		expect(finalState.phase).toBe("completed");
+		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
+			deferLaunchAgentReload: true,
+			replaceRunningAttempt: true,
 		});
 	});
 
@@ -707,7 +725,9 @@ describe("period digest orchestrator", () => {
 			attempts: 2,
 		});
 		expect(sleep).toHaveBeenCalledWith(25);
-		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today");
+		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
+			replaceRunningAttempt: true,
+		});
 		expect(deps.audit).toHaveBeenCalledWith(
 			expect.objectContaining({
 				phase: "completed",
@@ -815,7 +835,9 @@ describe("period digest orchestrator", () => {
 		expect(deps.generate).toHaveBeenCalledWith(
 			expect.objectContaining({ account: "alice", language: "zh-CN" }),
 		);
-		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today");
+		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
+			replaceRunningAttempt: true,
+		});
 		expect(deps.audit).toHaveBeenCalledOnce();
 	});
 

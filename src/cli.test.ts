@@ -84,7 +84,9 @@ const runDigestArchiveJobMock = vi.hoisted(() => vi.fn());
 const installDigestArchiveLaunchAgentMock = vi.hoisted(() => vi.fn());
 const installAllDigestArchiveLaunchAgentsMock = vi.hoisted(() => vi.fn());
 const requestPeriodDigestRunMock = vi.hoisted(() => vi.fn());
+const activatePeriodDigestFreshnessRetryMock = vi.hoisted(() => vi.fn());
 const consumePeriodDigestFreshnessAttemptMock = vi.hoisted(() => vi.fn());
+const completePeriodDigestFreshnessAttemptMock = vi.hoisted(() => vi.fn());
 const reconcileAllPeriodDigestFreshnessMock = vi.hoisted(() => vi.fn());
 const syncHomeTimelineMock = vi.hoisted(() => vi.fn());
 const syncXListsMock = vi.hoisted(() => vi.fn());
@@ -166,8 +168,12 @@ vi.mock("#/lib/period-digest-orchestrator", () => ({
 }));
 
 vi.mock("#/lib/period-digest-freshness", () => ({
+	activatePeriodDigestFreshnessRetry: (...args: unknown[]) =>
+		activatePeriodDigestFreshnessRetryMock(...args),
 	consumePeriodDigestFreshnessAttempt: (...args: unknown[]) =>
 		consumePeriodDigestFreshnessAttemptMock(...args),
+	completePeriodDigestFreshnessAttempt: (...args: unknown[]) =>
+		completePeriodDigestFreshnessAttemptMock(...args),
 	reconcileAllPeriodDigestFreshness: (...args: unknown[]) =>
 		reconcileAllPeriodDigestFreshnessMock(...args),
 }));
@@ -487,8 +493,16 @@ describe("cli", () => {
 		installDigestArchiveLaunchAgentMock.mockReset();
 		installAllDigestArchiveLaunchAgentsMock.mockReset();
 		requestPeriodDigestRunMock.mockReset();
+		activatePeriodDigestFreshnessRetryMock.mockReset();
+		activatePeriodDigestFreshnessRetryMock.mockResolvedValue({
+			activated: true,
+			state: { status: "retryable" },
+			installResult: { ok: true },
+		});
 		consumePeriodDigestFreshnessAttemptMock.mockReset();
 		consumePeriodDigestFreshnessAttemptMock.mockResolvedValue({ valid: true });
+		completePeriodDigestFreshnessAttemptMock.mockReset();
+		completePeriodDigestFreshnessAttemptMock.mockResolvedValue(undefined);
 		reconcileAllPeriodDigestFreshnessMock.mockReset();
 		reconcileAllPeriodDigestFreshnessMock.mockResolvedValue({});
 		syncHomeTimelineMock.mockReset();
@@ -1121,8 +1135,10 @@ describe("cli", () => {
 		expect(consumePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
 			period: "24h",
 			attemptToken: "obsolete-token",
+			origin: "launchd",
 		});
 		expect(requestPeriodDigestRunMock).not.toHaveBeenCalled();
+		expect(completePeriodDigestFreshnessAttemptMock).not.toHaveBeenCalled();
 		expect(consoleLogMock).toHaveBeenCalledWith(
 			expect.stringContaining('"skipped": "token-mismatch"'),
 		);
@@ -1256,9 +1272,70 @@ describe("cli", () => {
 		expect(consumePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
 			period: "today",
 			attemptToken: "valid-token",
+			origin: "launchd",
+		});
+		expect(completePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
+			period: "today",
+			attemptToken: "valid-token",
+			origin: "launchd",
+			outcome: "failed",
 		});
 		expect(requestPeriodDigestRunMock).toHaveBeenCalledOnce();
 		expect(process.exitCode).toBe(1);
+	});
+
+	it("reports a freshness run startup error before rethrowing it", async () => {
+		consumePeriodDigestFreshnessAttemptMock.mockResolvedValue({ valid: true });
+		requestPeriodDigestRunMock.mockRejectedValue(
+			new Error("run startup failed"),
+		);
+		const { runCli } = await loadCli();
+
+		await expect(
+			runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"run-period-digest",
+				"--period",
+				"today",
+				"--trigger",
+				"freshness",
+				"--origin",
+				"launchd",
+				"--attempt-token",
+				"startup-error-token",
+			]),
+		).rejects.toThrow("run startup failed");
+		expect(completePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
+			period: "today",
+			attemptToken: "startup-error-token",
+			origin: "launchd",
+			outcome: "failed",
+		});
+	});
+
+	it("activates a deferred freshness retry through the hidden helper command", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"activate-period-digest-freshness-retry",
+			"--period",
+			"24h",
+			"--attempt-token",
+			"deferred-token",
+			"--launch-agents-dir",
+			"/tmp/birdclaw-agents",
+		]);
+
+		expect(activatePeriodDigestFreshnessRetryMock).toHaveBeenCalledWith({
+			period: "24h",
+			attemptToken: "deferred-token",
+			installOptions: { launchAgentsDir: "/tmp/birdclaw-agents" },
+		});
 	});
 
 	it("rejects invalid current-digest command identities before dispatch", async () => {

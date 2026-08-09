@@ -1,0 +1,212 @@
+# Issue #58：休眠失败后的 Freshness 恢复设计
+
+## 文档状态
+
+- 日期：2026-08-09
+- 关联 Issue：[#58](https://github.com/friendfish/birdclaw/issues/58)
+- 选定方案：持久化 attempt 生命周期、有限后台退避、页面恢复兜底
+- 范围：Today/24h freshness 触发、运行结果回写和页面恢复
+
+## 结论摘要
+
+Today/24h 的 freshness attempt 不再在运行开始前进入永久终态。到期任务取得
+调度锁后进入 `running`；批次成功时正常消费并根据新内容安排下一次 freshness，
+全量失败时则进入 `retryable` 并保存 `retryAt`。
+
+同一份过期内容最多安排三次后台重试，使用 15 分钟、1 小时和 4 小时的退避。
+后台次数耗尽后状态为 `failed`，不再安装 LaunchAgent。用户同日重新打开或恢复
+Today 页面时，仍可对这份过期内容发起一次额外恢复尝试。该页面兜底机会持久化
+在 attempt state 中，因此刷新、重新挂载或多个进程不能重复消耗它。
+
+跨自然日的 attempt 一律不再运行，由新一天的固定任务接管。
+
+## 用户体验
+
+1. Mac 休眠期间 freshness 任务可以因网络不可用而失败，现有摘要继续显示。
+2. Birdclaw 在同一天内以有限次数和逐步拉长的间隔后台重试，不会连续轰炸网络或模型。
+3. 用户真正开盖并回到 Today 页面时，如果内容仍过期且没有活动批次，页面会再尝试恢复一次。
+4. 同一份旧摘要只拥有一次页面恢复机会；重复聚焦、刷新和多进程请求不会重复启动批次。
+5. 当任一来源成功发布后，页面继续沿用现有行为：显示成功的新版本，并按新版本重新计算 freshness。
+6. 第二天不会补跑前一天未完成的 attempt。
+
+## 状态模型
+
+继续使用 `PeriodDigestFreshnessStateV1` 的向后兼容 JSON 结构，增加可选字段，避免
+现有安装升级时丢弃状态：
+
+```ts
+status: "scheduled" | "running" | "retryable" | "failed" |
+  "consumed" | "disabled" | "error";
+retryCount?: number;
+retryAt?: string;
+pageRecoveryUsedAt?: string;
+completedAt?: string;
+runningOrigin?: "launchd" | "page" | "cli";
+launchdCallerPid?: number;
+```
+
+- `scheduled`：初次 freshness 已安装，等待 `dueAt`。
+- `running`：某个进程已原子取得该 token；状态带 15 分钟租约，并记录最近取得者来源。
+  launchd 调用者的 PID 会单独保留，即使页面/CLI 过租约接管也不会丢失。租约内其他进程
+  只能跳过或加入现有摘要批次；租约过期且 period-run 心跳锁已失效时可重新调度。
+- `retryable`：上次批次全量失败，已保存并安装下一次 `retryAt`。
+- `failed`：三次后台重试均失败，不再自动调度；同日仍可使用一次页面恢复机会。
+- `consumed`：成功完成或从旧版本读取的终态。新版成功完成时写入 `completedAt`；
+  对于没有该字段的旧版同日 `consumed` 状态，仅当摘要已 stale 且 `dueAt` 已到时，
+  页面可使用一次恢复机会，修复升级前已卡住的用户。成功发布会创建新 token，
+  未 stale 的摘要不会触发该兼容恢复。
+- `disabled`：freshness 截止时间或下一次重试跨日。
+- `error`：LaunchAgent 安装失败；页面在 `retryAt`（若有）或 `dueAt` 到达后恢复，
+  不依赖该 agent。
+
+状态文件继续由现有进程内队列、跨进程 scheduler lease 和原子 rename 保护。
+attempt token 仍由 period、freshness 配置和来源版本身份生成；后台重试复用同一个
+token，因此并发触发无法绕过状态锁。
+
+## 运行流程
+
+### 初次与后台触发
+
+1. launchd 使用 attempt token 调用 `consumePeriodDigestFreshnessAttempt`。
+2. consume 在 scheduler lease 内校验 token、自然日、到期时间和状态，然后将状态写为 `running`。
+3. CLI 启动或加入统一的 period digest 批次，并等待 completion。
+4. 若批次至少发布一个来源，现有 orchestrator reconciliation 以明确的 published
+   replacement 权限，根据新 version identity 安排下一次 freshness；失败来源继续使用
+   现有 suppression 规则。普通配置保存即使生成不同 token，也不能越过运行租约/心跳锁。
+   launchd freshness 即使加入由其他进程拥有的批次，也不会直接替换自己的 LaunchAgent，
+   而是安装不同 label 的短命 reloader，等待状态里记录的 launchd 调用者 PID 退出后再激活
+   下一代任务。
+5. 若批次全量失败，completion 回写在 scheduler lease 内把同一 token 标为
+   `retryable` 并计算退避时间。只要 attempt 仍记录 launchd 调用者，即使页面/CLI 加入者
+   先取得 completion 回写，也复用相同 reloader 流程，避免 job 在执行 `unload` 自身后、
+   来不及重新 `load` 就被终止。
+6. 第三次后台重试仍失败后写为 `failed`，不再自动安装任务。
+
+### 页面恢复
+
+页面只在 metadata 显示 `stale + no active run` 时发送 freshness POST。请求遵守与
+launchd 相同的 token 和调度锁，但在以下状态拥有恢复语义：
+
+- `retryable` 且已经到达 `retryAt`：可提前于或替代 launchd 取得本次后台重试；
+- `failed`：可消耗一次持久化页面恢复机会；
+- 旧版 `consumed` 或初次调度安装 `error`：到达 `dueAt` 后可消耗一次持久化页面恢复机会；
+- 带 `retryAt` 的安装 `error`：到达 `retryAt` 后替代未安装成功的后台重试，不消耗
+  最终页面恢复额度，失败后仍继续剩余退避链。
+- 租约过期的 `running`：页面可重新取得同一 token；若真实摘要批次仍持有心跳锁，
+  请求只会加入该批次，不会重复生成。
+
+页面 freshness 去重 key 加入最终 run 的身份/完成时间。这样每次失败批次结束后，
+页面能重新评估服务端状态；同一批次的普通轮询仍只发送一次 POST。真正是否允许
+启动由持久化 state 和跨进程锁决定，React ref 不是正确性的唯一边界。
+
+若服务端返回 `not-due` 或租约内的 `already-running`，响应同时携带权威
+`eligibleAt`。已打开的页面设置一次性计时器，到点后清除当前 key 的本地去重并
+重新请求，因此可在 launchd 未触发或进程异常退出时接手，同时不会在退避窗口或
+running 租约内提前运行。
+
+### 完成回写
+
+新增一个幂等的 freshness completion 操作，输入包含 period、attempt token、触发
+origin 和最终 run phase。只有 state 仍匹配该 token 且处于 `running` 时才允许更新：
+
+- `completed` / `degraded`：若发布 reconciliation 尚未换成新 token，则落为 `consumed`；
+- `failed`：按照 retryCount 和 origin 进入 `retryable` 或终态 `failed`；
+- token 已变化：说明成功发布已建立下一代 attempt，旧 completion 直接忽略。
+
+页面触发和 CLI launchd 触发都必须把 completion 接回该操作。即使 freshness 请求
+加入了一个由 scheduled/manual 触发的活动批次，也能根据该共享批次的最终结果正确
+结束自己的 attempt。
+
+## 退避与上限
+
+- 后台重试间隔固定为 15 分钟、1 小时、4 小时，共三次。
+- `retryAt` 向上取整到分钟，便于复用当前一次性 LaunchAgent 构造。
+- 若 `retryAt` 跨越本地自然日，不安装任务，状态改为 `disabled`。
+- 后台次数耗尽后只保留一次页面恢复机会；页面恢复失败不再自动重排。
+- `running` 租约固定为 15 分钟；显式 reconciliation 还必须确认 period-run 心跳锁
+  已失效，才会安装新的 freshness agent，避免终止正常的长生成任务。
+- reloader 按墙钟时间等待 launchd 调用者 PID 最多 6 小时，与 period-run 最大寿命一致；
+  机器休眠不会暂停该截止时间，PID 被复用时也不会无限期挂起。超时后仍须通过 token 和
+  状态校验才能激活目标 agent。
+- 任何尚未到期、仍在 running 租约内、token 不匹配或跨日的请求都不会启动新批次。
+
+## 第三轮调度一致性
+
+reloader 可能在原 `fireAt` 或 `retryAt` 已经过期后才激活目标 LaunchAgent，例如父进程
+存活到六小时墙钟上限，或者 Mac 在等待期间休眠。目标 agent 使用固定 Year/Month/Day
+的 `StartCalendarInterval` 且 `RunAtLoad = false`，因此不能把过去时间原样交给 launchd。
+
+初次 reconcile 和 reloader activation 共用同一条 fire time 规则：
+
+1. 期望时间仍在未来时先向上取整到分钟；实际安装时间取该值与
+   `roundUpToMinute(now + 60s)` 中更晚者，给 plist 写入和 `launchctl` 加载至少一分钟余量。
+2. 期望时间已到或已过时，同样使用 `roundUpToMinute(now + 60s)`，不安装即将过期的
+   当前分钟刻度。
+3. 钳制后的实际 fire time 若跨越本地自然日，则不安装目标 agent，并把 attempt 标为
+   `disabled`。
+4. activation 安装前把实际 fire time 回写到 `fireAt`；`retryAt` 仍保留原始退避资格
+   时间，因此状态展示与实际 launchd 计划一致，同时页面在重试已到期时仍可接管。
+5. `now` 不能只在等待 scheduler lease 之前捕获。activation 与 reconcile 在锁内完成
+   异步状态读取后重新取墙钟；状态每次落盘后都再次校验，若结果变化就更新并继续循环，
+   直到一次写入后 fire time 仍稳定，才构建安装对象。若等待或落盘跨过分钟边界，状态与
+   launchd 日历一起推进；若跨过午夜则写为 `disabled` 而不安装。
+
+资格时间由状态决定，而不是由任意残留字段决定：
+
+- `retryable` 使用 `retryAt`；
+- 带 `retryAt` 的安装 `error` 使用 `retryAt`；
+- `scheduled`、`failed`、旧 `consumed` 和过租约的 `running` 使用 `dueAt`。
+
+reconcile 从旧 `disabled` 等状态重新建立 `scheduled` attempt 时，不携带陈旧 `retryAt`；
+`retryCount` 可继续保留，防止配置保存意外重置已消耗的后台尝试次数。只有恢复同 token
+安装错误时才写出 `status = retryable` 并保留原 `retryAt`。
+
+是否安装 reloader 只依赖两种可证明安全的条件：当前 orchestrator 请求明确来自 freshness
+launchd，或 state 中存在有效的 `launchdCallerPid`。历史 state 只有
+`runningOrigin = launchd` 但没有有效 PID 时，不把当前 web server PID 当作替代等待目标。
+
+## 错误处理与兼容性
+
+- LaunchAgent 安装失败保留 `error` 和 `installError`，不会伪装成已成功调度。
+- 同 token 的重试安装错误在 reconcile 后仍恢复为 `retryable`，保留原 `retryAt`；
+  不会因为配置保存或状态读取而降回 `scheduled` 并绕过退避。
+- 页面处理带 `retryAt` 的安装错误时遵守原退避时间，并把它视为后台重试的替代执行，
+  不会提前消耗最终页面恢复额度。
+- reloader 激活目标 agent 前再次校验 token，以及 `scheduled` 或 `retryable` 状态；
+  目标安装失败会把 attempt 回写为 `error`，随后删除 helper plist 并移除 helper label。
+  若原计划时间已过，activation 使用同日下一分钟；若该时间跨日则禁用而不安装。
+- completion 回写失败不能改写摘要批次结果，但 CLI 会记录失败，页面后续仍可通过
+  状态检查恢复。
+- 旧 state 缺少新增字段时按 `retryCount = 0`、页面恢复未使用处理。
+- 不修改 current digest 数据格式、生成顺序、每来源模型重试或 period run lock。
+- 不建设常驻 worker，也不监听 macOS 的 Wake 通知；页面焦点恢复继续作为用户可见兜底。
+
+## 测试
+
+1. 状态单测：scheduled -> running -> retryable，验证 retryAt、退避、同 token 和原子消费。
+2. 上限单测：三次后台重试后进入 failed，不再安装 LaunchAgent。
+3. 页面恢复单测：failed/旧 consumed/error 同日只允许一次，跨日拒绝。
+4. 并发单测：同 token 的多个进程/请求只有一个取得 running。
+5. completion 单测：成功、新 token、安装失败和重复 completion 均幂等。
+6. CLI 单测：launchd freshness completion 会回写成功或失败结果。
+7. 页面单测：失败 run 更新去重 key，恢复焦点可再次请求，但同一 run 不重复 POST。
+8. 集成回归：DarkWake 全量失败 -> retryable -> 同日页面恢复 -> 成功发布 -> 新 freshness 被安排。
+9. reloader 单测：launchd completion 使用不同 label；父进程退出后隐藏命令只为仍
+   retryable 的同 token 安装目标 agent，并持久化实际安装失败。
+10. 过期 activation 单测：过去的 retryAt/fireAt 被钳制到同日下一分钟并回写 fireAt；
+    23:59 后钳制跨日则 disabled。
+11. 状态资格单测：scheduled 的陈旧 retryAt 不覆盖 dueAt；reconcile 新 scheduled 状态
+    清除旧 retryAt 但保留 retryCount。
+12. 兼容单测：只有 runningOrigin 而没有有效 launchdCallerPid 的历史状态不会让 web
+    owner 安装 reloader；明确的 launchd owner 仍使用当前进程 PID 延迟替换。
+13. 锁等待竞态单测：activation 在安装前跨过目标分钟时保留完整一分钟加载余量并回写
+    `fireAt`；reconcile 在安装前跨过午夜时禁用且不调用 installer。安装错误使用同一个
+    注入时钟写 `updatedAt`。
+
+## 非目标
+
+- 不保证 Mac 在持续休眠时完成摘要。
+- 不改变每个来源内部已有的三次模型调用重试。
+- 不为 Yesterday/Week 增加 freshness。
+- 不允许跨日恢复前一天的 attempt。
+- 不增加用户可配置的 freshness 重试参数。

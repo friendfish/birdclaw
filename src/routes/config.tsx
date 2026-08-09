@@ -56,6 +56,20 @@ const digestScheduleTimeSchema = z.object({
 	weekday: z.number().optional(),
 });
 
+const freshnessStatusSchema = z.object({
+	status: z.string(),
+	dueAt: z.string(),
+	fireAt: z.string(),
+	consumedAt: z.string().optional(),
+	completedAt: z.string().optional(),
+	startedAt: z.string().optional(),
+	failedAt: z.string().optional(),
+	installError: z.string().optional(),
+	retryAt: z.string().optional(),
+	retryCount: z.number().optional(),
+	pageRecoveryUsedAt: z.string().optional(),
+});
+
 const digestScheduleResponseSchema = z.object({
 	ok: z.boolean(),
 	archiveDir: z.string(),
@@ -67,22 +81,8 @@ const digestScheduleResponseSchema = z.object({
 		week: digestScheduleTimeSchema,
 	}),
 	freshness: z.object({
-		today: z
-			.object({
-				status: z.string(),
-				dueAt: z.string(),
-				fireAt: z.string(),
-				installError: z.string().optional(),
-			})
-			.nullable(),
-		"24h": z
-			.object({
-				status: z.string(),
-				dueAt: z.string(),
-				fireAt: z.string(),
-				installError: z.string().optional(),
-			})
-			.nullable(),
+		today: freshnessStatusSchema.nullable(),
+		"24h": freshnessStatusSchema.nullable(),
 	}),
 	runs: z.object({
 		today: z
@@ -103,6 +103,37 @@ const digestScheduleResponseSchema = z.object({
 			.nullable(),
 	}),
 });
+
+function digestFreshnessStatusText(
+	freshness: z.infer<typeof freshnessStatusSchema>,
+): string {
+	if (freshness.status === "scheduled") {
+		return `下次超时 ${new Date(freshness.dueAt).toLocaleString()}`;
+	}
+	if (freshness.status === "running") {
+		return "正在刷新";
+	}
+	if (freshness.status === "retryable") {
+		return freshness.retryAt
+			? `重试于 ${new Date(freshness.retryAt).toLocaleString()}`
+			: "等待后台重试";
+	}
+	if (freshness.status === "failed") {
+		return freshness.pageRecoveryUsedAt
+			? "今日刷新已结束"
+			: "自动重试已结束，等待页面恢复";
+	}
+	if (freshness.status === "error") {
+		return `调度安装失败：${freshness.installError ?? "未知错误"}`;
+	}
+	if (freshness.status === "consumed") {
+		return "今日超时更新已完成";
+	}
+	if (freshness.status === "disabled") {
+		return "今日不再触发超时更新";
+	}
+	return "超时更新状态未知";
+}
 
 const birdCredentialStatusSchema = z
 	.object({
@@ -873,11 +904,7 @@ function ConfigRoute() {
 											const run = digestScheduleStatus.runs[period];
 											const freshnessText = !freshness
 												? "调度尚未初始化"
-												: freshness.status === "scheduled"
-													? `下次超时 ${new Date(freshness.dueAt).toLocaleString()}`
-													: freshness.status === "error"
-														? `调度安装失败：${freshness.installError ?? "未知错误"}`
-														: "今日不再触发超时更新";
+												: digestFreshnessStatusText(freshness);
 											return (
 												<div
 													key={period}

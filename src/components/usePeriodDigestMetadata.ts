@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { fetchJson } from "#/lib/api-client";
 import { queryKeys } from "#/lib/query-client";
@@ -48,10 +48,32 @@ export const periodDigestMetadataResponseSchema = z.object({
 	migration: z.unknown().nullable(),
 });
 
+const periodDigestFreshnessResponseSchema = z.object({
+	ok: z.boolean(),
+	triggered: z.boolean(),
+	reason: z.string().optional(),
+	eligibleAt: z.string().optional(),
+});
+
 function metadataUrl(period: string, contentSource: PeriodDigestContentSource) {
 	const url = new URL("/api/period-digest-metadata", window.location.origin);
 	applyPeriodDigestIdentityParams(url, period, false, contentSource);
 	return url.toString();
+}
+
+function terminalRunIdentity(runState: unknown) {
+	if (!runState || typeof runState !== "object") return "no-run";
+	const value = runState as Record<string, unknown>;
+	if (
+		typeof value.runId !== "string" ||
+		typeof value.finishedAt !== "string" ||
+		(value.phase !== "completed" &&
+			value.phase !== "degraded" &&
+			value.phase !== "failed")
+	) {
+		return "active-run";
+	}
+	return `${value.runId}:${value.finishedAt}:${value.phase}`;
 }
 
 /**
@@ -87,6 +109,9 @@ export function usePeriodDigestMetadata({
 		refetchOnWindowFocus: true,
 	});
 	const attemptedFreshnessKey = useRef<string | null>(null);
+	const [freshnessEligibleAt, setFreshnessEligibleAt] = useState<string | null>(
+		null,
+	);
 	const freshnessMutation = useMutation({
 		mutationFn: async () => {
 			const url = new URL(
@@ -100,12 +125,38 @@ export function usePeriodDigestMetadata({
 					`Freshness request failed (${String(response.status)})`,
 				);
 			}
+			return periodDigestFreshnessResponseSchema.parse(await response.json());
 		},
-		onSuccess: () => {
+		onSuccess: (result) => {
+			setFreshnessEligibleAt(
+				!result.triggered ? (result.eligibleAt ?? null) : null,
+			);
 			void query.refetch();
 		},
 	});
-	const freshnessKey = `${period}:${contentSource}:${query.data?.result?.updatedAt ?? "empty"}`;
+	useEffect(() => {
+		if (!freshnessEligibleAt) return;
+		const eligibleTime = new Date(freshnessEligibleAt).getTime();
+		if (!Number.isFinite(eligibleTime)) {
+			setFreshnessEligibleAt(null);
+			return;
+		}
+		const remainingMs = eligibleTime - Date.now();
+		const timeout = window.setTimeout(
+			() => {
+				attemptedFreshnessKey.current = null;
+				setFreshnessEligibleAt(null);
+			},
+			remainingMs > 0 ? remainingMs + 50 : IDLE_POLL_INTERVAL_MS,
+		);
+		return () => window.clearTimeout(timeout);
+	}, [freshnessEligibleAt]);
+	const freshnessKey = [
+		period,
+		contentSource,
+		query.data?.result?.updatedAt ?? "empty",
+		terminalRunIdentity(query.data?.runState),
+	].join(":");
 	useEffect(() => {
 		if (
 			!enabled ||
@@ -122,6 +173,7 @@ export function usePeriodDigestMetadata({
 	}, [
 		enabled,
 		freshnessKey,
+		freshnessEligibleAt,
 		freshnessMutation,
 		query.data?.isGenerating,
 		query.data?.isStale,
