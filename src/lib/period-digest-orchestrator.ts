@@ -138,7 +138,10 @@ export interface PeriodDigestOrchestratorDependencies {
 	publish?(input: PublishCurrentPeriodDigestInput, database?: Database): void;
 	reconcileFreshness?(
 		period: CurrentPeriodDigestPeriod,
-		options?: { suppressSources: PeriodDigestContentSource[] },
+		options?: {
+			deferLaunchAgentReload?: boolean;
+			suppressSources?: PeriodDigestContentSource[];
+		},
 	): Promise<unknown>;
 	audit?(state: PeriodDigestRunStateV1): Promise<unknown>;
 	sleep?(milliseconds: number): Promise<void>;
@@ -876,11 +879,18 @@ async function runOwnedBatch({
 			const suppressSources = DEFAULT_SOURCE_ORDER.filter(
 				(contentSource) => finalState.sources[contentSource].state === "failed",
 			);
+			const deferLaunchAgentReload =
+				request.trigger === "freshness" && request.origin === "launchd";
+			const reconciliationOptions = {
+				...(deferLaunchAgentReload ? { deferLaunchAgentReload: true } : {}),
+				...(suppressSources.length > 0 ? { suppressSources } : {}),
+			};
 			const reconciliation =
-				suppressSources.length > 0
-					? dependencies.reconcileFreshness?.(request.period, {
-							suppressSources,
-						})
+				Object.keys(reconciliationOptions).length > 0
+					? dependencies.reconcileFreshness?.(
+							request.period,
+							reconciliationOptions,
+						)
 					: dependencies.reconcileFreshness?.(request.period);
 			await reconciliation?.catch(() => undefined);
 		}

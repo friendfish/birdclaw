@@ -1113,5 +1113,6 @@ Independent review identified three retry edges that the original task sequence 
 - [x] Preserve `retryable` and its original `retryAt` when reconciling a same-token retry installation error.
 - [x] Return `eligibleAt` for `not-due` page requests and re-evaluate the same stale version when that time arrives.
 - [x] Avoid unloading a running launchd job from itself. Install a separate, short-lived reloader that waits for the parent CLI to exit, validates the token again, activates the target agent, persists activation errors, and removes itself.
+- [x] Use that deferred reloader for successful and degraded launchd freshness reconciliation too; the activator accepts only the matching `scheduled` or `retryable` token.
 
 The final verification commands above must be rerun after these hardening commits.

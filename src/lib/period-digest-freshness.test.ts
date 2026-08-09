@@ -325,8 +325,48 @@ describe("period digest freshness", () => {
 				attemptToken: "deferred-token",
 				install,
 			}),
-		).resolves.toMatchObject({ activated: false, reason: "not-retryable" });
+		).resolves.toMatchObject({
+			activated: false,
+			reason: "not-activatable",
+		});
 		expect(install).toHaveBeenCalledOnce();
+	});
+
+	it("activates a deferred next-generation schedule after its caller exits", async () => {
+		const dueAt = new Date(2026, 7, 6, 12, 30, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "next-generation-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "scheduled",
+			updatedAt: new Date(2026, 7, 6, 10, 32, 0).toISOString(),
+		});
+		const install = vi.fn(
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+
+		const activated = await activatePeriodDigestFreshnessRetry({
+			period: "today",
+			attemptToken: "next-generation-token",
+			now: new Date(2026, 7, 6, 10, 33, 0),
+			install,
+		});
+
+		expect(activated.activated).toBe(true);
+		expect(install).toHaveBeenCalledOnce();
+		expect(install.mock.calls[0]?.[0]).toMatchObject({
+			label: "com.steipete.birdclaw.period-digest-freshness-today",
+			schedule: {
+				kind: "calendar",
+				year: 2026,
+				month: 8,
+				day: 6,
+				hour: 12,
+				minute: 30,
+			},
+		});
 	});
 
 	it("persists deferred retry activation failures", async () => {
@@ -613,6 +653,32 @@ describe("period digest freshness", () => {
 		});
 		expect(second.state.status).toBe("scheduled");
 		expect(maximumActiveInstalls).toBe(1);
+	});
+
+	it("installs a reloader instead of replacing a running launchd freshness agent", async () => {
+		const install = vi.fn(
+			async (_agent: LaunchAgent) => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+
+		const reconciled = await reconcilePeriodDigestFreshness({
+			period: "today",
+			now: new Date(2026, 7, 6, 10, 0, 0),
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			deferLaunchAgentReload: true,
+			install,
+			program: "/opt/homebrew/bin/birdclaw",
+		});
+
+		expect(reconciled.state.status).toBe("scheduled");
+		expect(install).toHaveBeenCalledOnce();
+		expect(install.mock.calls[0]?.[0]).toMatchObject({
+			label: "com.steipete.birdclaw.period-digest-freshness-today-reloader",
+			runAtLoad: true,
+		});
+		expect(install.mock.calls[0]?.[0].programArguments.join(" ")).toContain(
+			reconciled.state.attemptToken,
+		);
 	});
 
 	it("preserves retry eligibility when reconciling an install error", async () => {

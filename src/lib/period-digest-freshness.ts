@@ -493,20 +493,24 @@ export async function activatePeriodDigestFreshnessRetry({
 					installResult: null,
 				};
 			}
-			if (state.status !== "retryable") {
+			if (state.status !== "scheduled" && state.status !== "retryable") {
 				return {
 					activated: false as const,
-					reason: "not-retryable" as const,
+					reason: "not-activatable" as const,
 					state,
 					installResult: null,
 				};
 			}
 			const dueAt = new Date(state.dueAt);
-			const retryAt = new Date(state.retryAt ?? state.fireAt);
+			const activationAt = new Date(
+				state.status === "retryable"
+					? (state.retryAt ?? state.fireAt)
+					: state.fireAt,
+			);
 			if (
-				!Number.isFinite(retryAt.getTime()) ||
+				!Number.isFinite(activationAt.getTime()) ||
 				!sameLocalDay(dueAt, now) ||
-				!sameLocalDay(retryAt, now)
+				!sameLocalDay(activationAt, now)
 			) {
 				const disabled: PeriodDigestFreshnessStateV1 = {
 					...state,
@@ -526,7 +530,7 @@ export async function activatePeriodDigestFreshnessRetry({
 			const execution = resolveDigestLaunchdExecution();
 			const agent = buildPeriodDigestFreshnessLaunchAgent({
 				period,
-				fireAt: retryAt,
+				fireAt: activationAt,
 				attemptToken,
 				program: program ?? execution.program,
 				envFile: envFile ?? execution.envFile,
@@ -803,6 +807,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 	installOptions,
 	install = installLaunchAgent,
 	suppressSources = [],
+	deferLaunchAgentReload = false,
 	program,
 	envFile,
 }: {
@@ -816,6 +821,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 		options?: LaunchAgentInstallOptions,
 	) => Promise<LaunchAgentInstallResult>;
 	suppressSources?: PeriodDigestContentSource[];
+	deferLaunchAgentReload?: boolean;
 	program?: string;
 	envFile?: string;
 }) {
@@ -934,13 +940,22 @@ async function reconcilePeriodDigestFreshnessInternal({
 			: {}),
 	};
 	await writePeriodDigestFreshnessState(state);
-	const agent = buildPeriodDigestFreshnessLaunchAgent({
-		period,
-		fireAt,
-		attemptToken,
-		program: program ?? resolveDigestLaunchdExecution().program,
-		envFile: envFile ?? resolveDigestLaunchdExecution().envFile,
-	});
+	const execution = resolveDigestLaunchdExecution();
+	const agent = deferLaunchAgentReload
+		? buildPeriodDigestFreshnessRetryReloaderLaunchAgent({
+				period,
+				attemptToken,
+				program: program ?? execution.program,
+				envFile: envFile ?? execution.envFile,
+				launchAgentsDir: installOptions?.launchAgentsDir,
+			})
+		: buildPeriodDigestFreshnessLaunchAgent({
+				period,
+				fireAt,
+				attemptToken,
+				program: program ?? execution.program,
+				envFile: envFile ?? execution.envFile,
+			});
 	try {
 		const installResult = await install(agent, installOptions);
 		return { state, installResult };

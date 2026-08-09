@@ -65,11 +65,12 @@ token，因此并发触发无法绕过状态锁。
 2. consume 在 scheduler lease 内校验 token、自然日、到期时间和状态，然后将状态写为 `running`。
 3. CLI 启动或加入统一的 period digest 批次，并等待 completion。
 4. 若批次至少发布一个来源，现有 orchestrator reconciliation 根据新 version identity
-   安排下一次 freshness；失败来源继续使用现有 suppression 规则。
+   安排下一次 freshness；失败来源继续使用现有 suppression 规则。launchd freshness
+   进程不会直接替换自己的 LaunchAgent，而是安装不同 label 的短命 reloader，等当前
+   进程退出后再激活下一代任务。
 5. 若批次全量失败，completion 回写在 scheduler lease 内把同一 token 标为
-   `retryable` 并计算退避时间。launchd 触发的进程先安装一个不同 label 的短命
-   reloader；reloader 等当前进程退出后再替换一次性 freshness LaunchAgent，避免 job
-   在执行 `unload` 自身后、来不及重新 `load` 就被终止。
+   `retryable` 并计算退避时间。launchd 触发的失败重试也复用相同 reloader 流程，避免
+   job 在执行 `unload` 自身后、来不及重新 `load` 就被终止。
 6. 第三次后台重试仍失败后写为 `failed`，不再自动安装任务。
 
 ### 页面恢复
@@ -115,8 +116,8 @@ origin 和最终 run phase。只有 state 仍匹配该 token 且处于 `running`
 - LaunchAgent 安装失败保留 `error` 和 `installError`，不会伪装成已成功调度。
 - 同 token 的重试安装错误在 reconcile 后仍恢复为 `retryable`，保留原 `retryAt`；
   不会因为配置保存或状态读取而降回 `scheduled` 并绕过退避。
-- reloader 激活目标 agent 前再次校验 token 和 `retryable` 状态；目标安装失败会把
-  attempt 回写为 `error`，随后删除 helper plist 并移除 helper label。
+- reloader 激活目标 agent 前再次校验 token，以及 `scheduled` 或 `retryable` 状态；
+  目标安装失败会把 attempt 回写为 `error`，随后删除 helper plist 并移除 helper label。
 - completion 回写失败不能改写摘要批次结果，但 CLI 会记录失败，页面后续仍可通过
   状态检查恢复。
 - 旧 state 缺少新增字段时按 `retryCount = 0`、页面恢复未使用处理。

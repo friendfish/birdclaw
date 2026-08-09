@@ -572,7 +572,23 @@ describe("period digest orchestrator", () => {
 		expect(finalState.sources.following.state).toBe("completed");
 		expect(finalState.sources.for_you.state).toBe("completed");
 		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
+			deferLaunchAgentReload: true,
 			suppressSources: ["all"],
+		});
+	});
+
+	it("defers next-generation freshness scheduling until a launchd freshness run exits", async () => {
+		const deps = dependencies();
+
+		const run = await requestPeriodDigestRun(
+			{ period: "today", trigger: "freshness", origin: "launchd" },
+			deps,
+		);
+		const finalState = await run.completion;
+
+		expect(finalState.phase).toBe("completed");
+		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
+			deferLaunchAgentReload: true,
 		});
 	});
 
