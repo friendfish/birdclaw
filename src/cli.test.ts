@@ -1274,6 +1274,36 @@ describe("cli", () => {
 		expect(process.exitCode).toBe(1);
 	});
 
+	it("reports a freshness run startup error before rethrowing it", async () => {
+		consumePeriodDigestFreshnessAttemptMock.mockResolvedValue({ valid: true });
+		requestPeriodDigestRunMock.mockRejectedValue(
+			new Error("run startup failed"),
+		);
+		const { runCli } = await loadCli();
+
+		await expect(
+			runCli([
+				"node",
+				"birdclaw",
+				"jobs",
+				"run-period-digest",
+				"--period",
+				"today",
+				"--trigger",
+				"freshness",
+				"--origin",
+				"launchd",
+				"--attempt-token",
+				"startup-error-token",
+			]),
+		).rejects.toThrow("run startup failed");
+		expect(completePeriodDigestFreshnessAttemptMock).toHaveBeenCalledWith({
+			period: "today",
+			attemptToken: "startup-error-token",
+			outcome: "failed",
+		});
+	});
+
 	it("rejects invalid current-digest command identities before dispatch", async () => {
 		const { runCli } = await loadCli();
 		const cases = [

@@ -286,18 +286,31 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 			const requestedSource = options.requestedSource
 				? parseDigestContentSources(options.requestedSource)?.[0]
 				: undefined;
-			const run = await requestPeriodDigestRun({
-				period,
-				trigger,
-				origin,
-				...(requestedSource ? { requestedSource } : {}),
-				...(options.account ? { account: options.account } : {}),
-				...(options.birdCredentialsPath
-					? { birdCredentialsPath: options.birdCredentialsPath }
-					: {}),
-				liveSync: Boolean(options.liveSync),
-			});
-			const state = await run.completion;
+			let run;
+			let state;
+			try {
+				run = await requestPeriodDigestRun({
+					period,
+					trigger,
+					origin,
+					...(requestedSource ? { requestedSource } : {}),
+					...(options.account ? { account: options.account } : {}),
+					...(options.birdCredentialsPath
+						? { birdCredentialsPath: options.birdCredentialsPath }
+						: {}),
+					liveSync: Boolean(options.liveSync),
+				});
+				state = await run.completion;
+			} catch (error) {
+				if (freshnessAttemptToken) {
+					await completePeriodDigestFreshnessAttempt({
+						period,
+						attemptToken: freshnessAttemptToken,
+						outcome: "failed",
+					}).catch(() => undefined);
+				}
+				throw error;
+			}
 			if (freshnessAttemptToken) {
 				await completePeriodDigestFreshnessAttempt({
 					period,

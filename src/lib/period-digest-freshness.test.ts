@@ -313,6 +313,87 @@ describe("period digest freshness", () => {
 		});
 	});
 
+	it("reports a page-triggered run startup error to the state machine", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "startup-error-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "scheduled",
+			updatedAt: dueAt.toISOString(),
+		});
+		const requestRun = vi.fn(async () => {
+			throw new Error("run startup failed");
+		});
+		const completeAttempt = vi.fn(async () => ({
+			state: undefined,
+			installResult: null,
+			updated: false as const,
+		}));
+
+		await expect(
+			triggerDuePeriodDigestFreshness({
+				period: "today",
+				origin: "page",
+				now: new Date(2026, 7, 6, 10, 31, 0),
+				requestRun,
+				completeAttempt,
+			}),
+		).rejects.toThrow("run startup failed");
+		expect(completeAttempt).toHaveBeenCalledWith({
+			period: "today",
+			attemptToken: "startup-error-token",
+			outcome: "failed",
+		});
+	});
+
+	it("reports a rejected page-triggered completion to the state machine", async () => {
+		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "rejected-completion-token",
+			dueAt: dueAt.toISOString(),
+			fireAt: dueAt.toISOString(),
+			status: "scheduled",
+			updatedAt: dueAt.toISOString(),
+		});
+		let rejectCompletion!: (error: Error) => void;
+		const completion = new Promise<{
+			phase: "completed" | "degraded" | "failed";
+		}>((_, reject) => {
+			rejectCompletion = reject;
+		});
+		const requestRun = vi.fn(async () => ({
+			runId: "rejected-run",
+			joined: false,
+			completion,
+		}));
+		const completeAttempt = vi.fn(async () => ({
+			state: undefined,
+			installResult: null,
+			updated: false as const,
+		}));
+
+		await triggerDuePeriodDigestFreshness({
+			period: "today",
+			origin: "page",
+			now: new Date(2026, 7, 6, 10, 31, 0),
+			requestRun,
+			completeAttempt,
+		});
+		rejectCompletion(new Error("completion failed"));
+		await vi.waitFor(() => {
+			expect(completeAttempt).toHaveBeenCalledWith({
+				period: "today",
+				attemptToken: "rejected-completion-token",
+				outcome: "failed",
+			});
+		});
+	});
+
 	it("recovers a failed launchd attempt from the page on the same day", async () => {
 		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
 		await writePeriodDigestFreshnessState({

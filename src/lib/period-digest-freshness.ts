@@ -563,19 +563,33 @@ export async function triggerDuePeriodDigestFreshness({
 	if (!attempt.valid) {
 		return { triggered: false as const, reason: attempt.reason };
 	}
-	const run = requestRun
-		? await requestRun({ period, trigger: "freshness", origin })
-		: await import("./period-digest-orchestrator").then(
-				({ requestPeriodDigestRun }) =>
-					requestPeriodDigestRun({ period, trigger: "freshness", origin }),
-			);
+	const reportFailedAttempt = () =>
+		completeAttempt({
+			period,
+			attemptToken: state.attemptToken,
+			outcome: "failed",
+		});
+	let run;
+	try {
+		run = requestRun
+			? await requestRun({ period, trigger: "freshness", origin })
+			: await import("./period-digest-orchestrator").then(
+					({ requestPeriodDigestRun }) =>
+						requestPeriodDigestRun({ period, trigger: "freshness", origin }),
+				);
+	} catch (error) {
+		await reportFailedAttempt().catch(() => undefined);
+		throw error;
+	}
 	void run.completion
-		.then((finalState) =>
-			completeAttempt({
-				period,
-				attemptToken: state.attemptToken,
-				outcome: finalState.phase === "failed" ? "failed" : "published",
-			}),
+		.then(
+			(finalState) =>
+				completeAttempt({
+					period,
+					attemptToken: state.attemptToken,
+					outcome: finalState.phase === "failed" ? "failed" : "published",
+				}),
+			() => reportFailedAttempt(),
 		)
 		.catch(() => undefined);
 	return {
