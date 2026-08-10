@@ -1,21 +1,55 @@
 # CHANGELOG
 
-## 0.11.2 - Unreleased
+## 2026.08.10 - friendfish fork (baseline: upstream v0.11.1)
+
+This is the first standalone release of the `friendfish/birdclaw` fork. It is based on
+upstream **steipete/birdclaw v0.11.1** (2026-07-27) plus 216 local commits of fork work
+(37 features, 101 fixes, 32 doc commits, 16 test commits). It does **not** include the
+upstream 0.11.2 / 0.12.x line.
+
+### Highlights
+
+- **DeepSeek & standard LLM compatibility adapter** with a dedicated AI Config page in the UI for explicit model/provider setup (DeepSeek, Google, OpenRouter, remote model fetching).
+- **User Profile Analysis (用户画像分析) overhaul**: complete reconstruction of the Analyse landing page and report view, multi-language support (Simplified Chinese & English), Bird-mode fallback tweet/thread fetching, active Sync button with auto-polling, unified progress UX, global concurrency lock, and background task memory radar with metadata polling.
+- **Scheduled & background digest archival**: background generation of Today/24h digests across navigation, scheduled archival for Today/24h/Yesterday/Week windows, historical window backfilling, manual refresh save/replace of digest archives, persisted and exposed scheduled digest progress, and unified current-digest orchestration.
+- **Editable prompt templates with isolated Playgrounds**: strict local Markdown storage, prompt-aware result caches, and local-data Playgrounds for testing unsaved drafts (Today / Analyse / Discuss).
+- **Home & Today feed tabs**: For You / Following tabs on Home, content-source tabs on Today.
+- **X credentials management in the UI** without secret readback.
+- **macOS neural voice TTS helper script**.
+- **Digest/freshness reliability hardening**: retry of stale or failed digests, launchd freshness recovery and reconciliation, archive boundary containment and validation, atomic current-digest migration, integrity checks, and sanitized diagnostics.
 
 ### Added
 
-- Add editable prompt templates for Today, Analyse, and Discuss, with strict local Markdown storage, prompt-aware result caches, and isolated local-data Playgrounds for testing unsaved drafts.
-
-### Changed
-
-- Reorder the default Today and Discuss prompt assembly relative to 0.11.0 so the fixed task instruction follows dynamic context and precedes editable guidance plus locked citation and structured-output rules; the resulting prompt hash change intentionally invalidates matching AI caches.
-- Define `live.dataSource` and `BIRDCLAW_LIVE_DATA_SOURCE` as the global live read/sync controls, retaining the mentions config and environment keys as lower-precedence compatibility aliases.
-- Clarify that `actions.transport` controls compose and policy-backed moderation writes; Bird mode rejects xurl-only post, reply, and DM compose operations, while `dms accept`, `dms reject`, and `dms block` remain Bird-only and do not use that preference. Disabled xurl status omits unprobed installation state.
-- Document explicit live-read and xurl-fallback overrides, including `profiles replies --mode xurl` and `--[no-]xurl-fallback` for DM search and identity lookup.
+- DeepSeek & standard LLM compatibility adapter (`b5a4c71`).
+- Config page in the main UI for explicit model and provider setup; AI Config expanded with Google, OpenRouter, and remote model fetching (`b5088c0`, `f9eb26d`).
+- Multi-language support (Simplified Chinese & English) for user profile AI analysis (`4b383d5`).
+- Fallback user tweets and thread fetching for profile analysis in bird mode (`824c18b`).
+- Active Sync button next to the Following List with auto-polling (`3edfdc6`).
+- Lightweight background task memory radar and metadata polling for analysis (`9e6e1f8`); client-detached background analysis via decoupled server abort signal (`8ae0f2f`).
+- Editable prompt templates and isolated local-data Playgrounds for Today, Analyse, and Discuss (`dc6af0a`).
+- Scheduled background archival for Today/24h/Yesterday/Week; backfilling of historical archive windows (`64b1823`, `5dfe7fd`).
+- Today/24h digest generation kept running in the background across navigation (`dc781a7`).
+- Save manually refreshed Today/24h digests and replace a single refreshed digest archive (`ff93a5f`, `cc70245`).
+- Persisted and exposed scheduled digest progress (`e47e3b3`, `fae3feb`).
+- For You / Following feed tabs on Home; Today content-source tabs (`3b5f012`, `94557ad`).
+- X credentials management in the UI without secret readback (`7188932`, `ec7a1ff`).
+- macOS neural voice TTS helper script (`8e917b3`).
+- Sync mode locked to Bird; digest sync mode resolved dynamically (`963a946`).
 
 ### Fixed
 
-- Preserve existing Bird message-request classifications during xurl/auto DM sync, narrow mention-thread `auto` reads to xurl, and retain configuration parse errors instead of rewriting them as mode errors.
+- Digest reliability: retry invalid/stale digest results, preserve lock retry backoff and launchd execution settings, atomic current-digest migration, protected publication, hardened integrity checks, sanitized stream diagnostics (`5066ab5`, `6a27fc9`, `57581e2`, `0790032`, `3b9174f`, `7a6eeb2`, `487da38`).
+- Digest/freshness recovery: recover freshness from run errors, retry stale digests after failed runs, persist launchd freshness outcomes, reload freshness agent after launchd exits, defer launchd freshness replacement, stabilize launch timing (`04b7fcd`, `3d6e3c7`, `c456b55`, `9432695`, `e8ee5d4`, `7f6de27`).
+- Archive boundary containment: validate digest archive requests and contain archive paths (`72db80b`, `d41e0d0`).
+- OpenAI stream hardening: reject blank streams, harden completion, propagate stream diagnostics (`735e47a`, `7d0ad94`, `2f4e987`).
+- Preserve existing Bird message-request classifications during xurl/auto DM sync; narrow mention-thread `auto` reads to xurl; retain configuration parse errors instead of rewriting them as mode errors.
+- Reorder default Today/Discuss prompt assembly so the fixed task instruction follows dynamic context and precedes editable guidance; prompt hash change intentionally invalidates matching AI caches.
+
+### Changed
+
+- Define `live.dataSource` and `BIRDCLAW_LIVE_DATA_SOURCE` as the global live read/sync controls, retaining mentions config and environment keys as lower-precedence compatibility aliases.
+- Clarify that `actions.transport` controls compose and policy-backed moderation writes; Bird mode rejects xurl-only compose operations while `dms accept/reject/block` remain Bird-only.
+- Document explicit live-read and xurl-fallback overrides, including `profiles replies --mode xurl` and `--[no-]xurl-fallback` for DM search and identity lookup.
 
 ## 0.11.1 - 2026-07-27
 
