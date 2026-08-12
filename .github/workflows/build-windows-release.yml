@@ -1,0 +1,105 @@
+name: Build Windows Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the Windows build (e.g. v2026.08.10)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      CI: "true"
+      BIRDCLAW_DISABLE_LIVE_WRITES: "1"
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          tag="${{ inputs.tag || github.event.release.tag_name }}"
+          if [[ -z "$tag" ]]; then
+            echo "Missing release tag." >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Assemble portable Windows package
+        id: assemble
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ steps.release.outputs.tag }}"
+          $version = $tag.TrimStart("v")
+          $nodeVer = (Get-Content ".node-version").Trim()
+          $stage = Join-Path $env:RUNNER_TEMP "birdclaw-stage"
+          $app = Join-Path $stage "birdclaw-$tag-windows-x64"
+          New-Item -ItemType Directory -Force -Path $app | Out-Null
+
+          # 1) Official Node runtime (win-x64) so the package runs without any install
+          $nodeZip = Join-Path $stage "node.zip"
+          Invoke-WebRequest -Uri "https://nodejs.org/dist/v$nodeVer/node-v$nodeVer-win-x64.zip" -OutFile $nodeZip
+          Expand-Archive -Path $nodeZip -DestinationPath $stage -Force
+          Move-Item (Join-Path $stage "node-v$nodeVer-win-x64") (Join-Path $app "node")
+
+          # 2) App payload
+          Copy-Item -Recurse dist (Join-Path $app "dist")
+          Copy-Item -Recurse bin (Join-Path $app "bin")
+          Copy-Item package.json, LICENSE, README.md (Join-Path $app)
+
+          # 3) Materialize node_modules: pnpm uses a symlink/junction layout; robocopy follows
+          #    junctions and copies real files, producing a flat, self-contained tree.
+          robocopy node_modules (Join-Path $app "node_modules") /E /NFL /NDL /NJH /NJS | Out-Null
+          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+
+          # 4) Windows launcher (birdclaw.cmd)
+          $launcher = "@echo off`r`nsetlocal`r`ncd /d `"%~dp0`"`r`n`"%~dp0node\node.exe`" `"%~dp0bin\birdclaw.mjs`" %*`r`n"
+          Set-Content -Path (Join-Path $app "birdclaw.cmd") -Value $launcher -Encoding ASCII
+
+          # 5) Sanity check: run the packaged CLI
+          & (Join-Path $app "node\node.exe") (Join-Path $app "bin\birdclaw.mjs") --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # 6) Zip it
+          $zipPath = Join-Path $stage "birdclaw-$tag-windows-x64.zip"
+          Compress-Archive -Path (Join-Path $app "*") -DestinationPath $zipPath -Force
+          "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+          "zip_name=birdclaw-$tag-windows-x64.zip" >> $env:GITHUB_OUTPUT
+
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.release.outputs.tag }}" "${{ steps.assemble.outputs.zip_path }}" --repo "$GITHUB_REPOSITORY" --clobber
