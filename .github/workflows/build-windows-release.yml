@@ -76,7 +76,7 @@ jobs:
           # 2) App payload
           Copy-Item -Recurse dist (Join-Path $app "dist")
           Copy-Item -Recurse bin (Join-Path $app "bin")
-          Copy-Item package.json, LICENSE, README.md (Join-Path $app)
+          Copy-Item -Path package.json, LICENSE, README.md -Destination $app
 
           # 3) Materialize node_modules: pnpm uses a symlink/junction layout; robocopy follows
           #    junctions and copies real files, producing a flat, self-contained tree.
