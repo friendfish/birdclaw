@@ -82,7 +82,9 @@ jobs:
           #    node_modules (no symlink/junction layout to break on zip extraction).
           #    Lockfile resolutions are still reused, so versions stay pinned.
           Push-Location $app
-          pnpm install --prod --config.node-linker=hoisted
+          # CI=true makes pnpm default to --frozen-lockfile; this copy of the lock is
+          # disposable (repo lock is untouched), so relax it and reuse resolutions.
+          pnpm install --prod --no-frozen-lockfile --config.node-linker=hoisted
           Pop-Location
 
           # 4) Windows launcher (birdclaw.cmd)
