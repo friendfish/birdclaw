@@ -74,14 +74,16 @@ jobs:
           Move-Item (Join-Path $stage "node-v$nodeVer-win-x64") (Join-Path $app "node")
 
           # 2) App payload
+          Copy-Item -Path package.json, pnpm-lock.yaml, LICENSE, README.md -Destination $app
           Copy-Item -Recurse dist (Join-Path $app "dist")
           Copy-Item -Recurse bin (Join-Path $app "bin")
-          Copy-Item -Path package.json, LICENSE, README.md -Destination $app
 
-          # 3) Materialize node_modules: pnpm uses a symlink/junction layout; robocopy follows
-          #    junctions and copies real files, producing a flat, self-contained tree.
-          robocopy node_modules (Join-Path $app "node_modules") /E /NFL /NDL /NJH /NJS | Out-Null
-          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+          # 3) Install production deps with the hoisted linker: flat, real-file
+          #    node_modules (no symlink/junction layout to break on zip extraction).
+          #    Lockfile resolutions are still reused, so versions stay pinned.
+          Push-Location $app
+          pnpm install --prod --config.node-linker=hoisted
+          Pop-Location
 
           # 4) Windows launcher (birdclaw.cmd)
           $launcher = "@echo off`r`nsetlocal`r`ncd /d `"%~dp0`"`r`n`"%~dp0node\node.exe`" `"%~dp0bin\birdclaw.mjs`" %*`r`n"
