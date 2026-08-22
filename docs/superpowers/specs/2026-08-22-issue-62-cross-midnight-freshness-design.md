@@ -1,119 +1,347 @@
-# Issue #62: Cross-Midnight Freshness Baseline Design
+# Issue #62: 跨午夜 Freshness 当日基线设计
 
-## Document Status
+## 文档状态
 
-- Date: 2026-08-22
-- Issue: [#62](https://github.com/friendfish/birdclaw/issues/62)
-- Selected approach: clamp every source freshness base to the current day's fixed schedule
-- Scope: Today/24h freshness deadline calculation and regression coverage
+- 日期：2026-08-22
+- 关联 Issue：[#62](https://github.com/friendfish/birdclaw/issues/62)
+- 评审 PR：[#63](https://github.com/friendfish/birdclaw/pull/63)
+- 选定方案：来源时间钳制 + 每日 cycle token + 真实触发入口重建
+- 范围：Today/24h deadline 计算、跨日状态重建、固定任务全量失败恢复和回归测试
 
-## Summary
+## 结论摘要
 
-Today and 24h freshness are intra-day update mechanisms. A freshness attempt from
-the previous day must not establish the first refresh cycle of a new day, even if
-some of its source generations finish after midnight. The fixed Today/24h task
-owns that daily boundary.
+Today/24h freshness 只负责同一自然日内的信息实时性。自然日切换后，当天固定任务
+拥有首轮生成优先级；上一日 freshness 即使跨午夜完成部分来源，也不能在当天固定
+任务之前再次触发。
 
-For each unsuppressed source, the scheduler will calculate:
+每个未抑制来源使用以下基线：
 
 ```text
 effectiveBase = max(scheduledBase, valid same-day generatedAt)
 sourceDeadline = effectiveBase + freshnessSeconds
 ```
 
-`scheduledBase` is the configured fixed time on the local calendar day represented
-by `now`, such as 07:00 for Today or 07:30 for 24h. Missing, invalid, previous-day,
-and same-day-but-before-schedule generation times all use `scheduledBase`.
+同时，仅修改 deadline 计算不足以覆盖真实生产入口。方案还会：
 
-The overall deadline remains the earliest deadline among unsuppressed sources and
-must remain on the current local day. Existing attempt tokens, source suppression,
-retry state, page recovery, cross-process locking, and launchd installation rules
-remain unchanged.
+1. 把当天 `scheduledBase` 纳入 attempt token，使相同来源版本在不同自然日属于不同 cycle。
+2. 只在同一 cycle 内继承 `suppressedSourceIdentities`，新自然日不会沿用上一日 suppression。
+3. 页面/CLI freshness 入口遇到上一日 state 时，先 reconcile 出当天 baseline，再判断是否到期。
+4. 当天固定任务全部来源失败时，orchestrator 仍 reconcile 一次，不抑制旧来源，为
+   `scheduledBase + freshnessSeconds` 保留恢复机会。
 
-## Required Behavior
+不新增持久化字段，不升级 state schema，也不改变 retry、page recovery、锁和 launchd
+交接机制。
 
-### Daily boundary
+## 功能与场景拆解
 
-- A previous-day run that finishes a source after midnight cannot schedule a
-  freshness attempt before the new day's fixed digest task.
-- Before the fixed time, the earliest possible freshness deadline is
-  `scheduledBase + freshnessSeconds`, not `generatedAt + freshnessSeconds`.
-- A persisted previous-day `dueAt` is still rejected by
-  `consumePeriodDigestFreshnessAttempt` with `cross-day`.
+### 1. 跨午夜完成
 
-### Same-day freshness
+上一日 23:49 启动的 freshness 在 00:01、00:07 发布来源时，这些 `generatedAt`
+虽然属于新一天，但早于新一天 07:30 的固定时刻。它们统一使用 07:30 作为
+effective base，4 小时 freshness 对应 11:30，不再产生 04:01/04:07 的触发。
 
-- A source generated at or after the fixed time uses its actual `generatedAt`.
-- When the fixed task publishes new versions, its source identities produce a new
-  attempt token and reconciliation schedules the next freshness from the actual
-  successful generation times.
-- A manual generation before the fixed time does not postpone or replace the fixed
-  daily boundary. Its freshness base is clamped to `scheduledBase`.
-- A manual generation after the fixed time behaves like any other same-day result
-  and uses its actual generation time.
+### 2. 当天固定任务成功或部分成功
 
-### Missed and failed fixed tasks
+固定任务在 scheduledBase 之后发布的新来源使用各自实际 `generatedAt`。任一来源
+成功发布后，新的 `versionId` 形成新的 attempt token；失败来源沿用现有 suppression
+规则，不参与本轮最小 deadline。成功来源按最早的实际生成时间安排下一次 freshness。
 
-- If the machine sleeps through the fixed time, the fallback deadline remains
-  `scheduledBase + freshnessSeconds`. Existing overdue handling may schedule the
-  launchd attempt for the next eligible minute or allow the page/CLI path to run it.
-- If the fixed task fails every source, the baseline freshness attempt remains
-  eligible at `scheduledBase + freshnessSeconds`, preserving same-day recovery.
-- If the fixed task publishes some sources and fails others, existing source
-  suppression excludes the failed source versions. Successful sources use their
-  post-schedule generation times and continue freshness normally.
+### 3. 当天固定任务全量失败
 
-## Implementation
+全量失败没有新 `versionId`，但仍需要同日恢复。scheduled owner 完成失败状态后调用
+freshness reconciliation，使用旧 current digest 和当天 scheduledBase 建立当日 cycle。
+此时不把三个失败来源全部 suppress，否则候选集为空会错误地禁用恢复。
 
-Change `calculatePeriodDigestFreshnessDeadline` in
-`src/lib/period-digest-freshness.ts`. A parsed `generatedAt` is eligible only when
-it is on the same local day as `now` and is not earlier than `scheduledBase`.
-Otherwise that source uses `scheduledBase`.
+如果已有同日 freshness attempt 正在运行，现有 running lease、period run lock 和
+completion retry 继续拥有优先权；reconcile 不重置同一个 attempt。
 
-No persisted state field or schema version changes are needed. The attempt token
-continues to include period, freshness configuration, schedule, current source
-identities, and suppression identities. A cross-midnight publication therefore
-retains its content identity while receiving the correct daily time floor; a
-later fixed-task publication still changes the identity and replaces the attempt.
+### 4. 休眠漏过固定时刻
 
-No orchestrator changes are planned. Its existing behavior already reconciles
-after at least one source publishes, suppresses failed source identities, and
-leaves the prior attempt available when every source fails.
+机器在 scheduledBase 之后恢复时，serve 启动 reconciliation 或页面/CLI freshness
+入口会把上一日 state 重建为当天 cycle。若 `scheduledBase + freshnessSeconds` 已过，
+launchd 计划按现有 overdue 规则钳制到下一可用分钟；页面/CLI 入口还可在取得 state
+锁后直接消费已到期 attempt。二者仍由 token 和锁去重。
 
-## Error Handling and Compatibility
+### 5. 手工生成
 
-- Invalid timestamps continue to use the fixed schedule fallback.
-- Deadlines that cross local midnight continue to return `null`, producing a
-  disabled freshness state.
-- Existing persisted states remain readable because no schema changes are made.
-- Token mismatch, already-running, retryable, page recovery, and launchd retry
-  behavior are outside this change and must remain covered by the existing suite.
-- Local-time comparison remains consistent with the current scheduler and launchd
-  calendar configuration; this change does not introduce UTC day boundaries.
+- scheduledBase 之前成功的手工生成使用 scheduledBase，不能取代当天固定任务边界。
+- scheduledBase 之后成功的手工生成使用实际 `generatedAt`，正常延后该来源 freshness。
+- 手工生成全量失败不单独建立 baseline；当天 cycle 由固定任务、serve 或跨日 trigger
+  入口建立。
 
-## Testing
+### 6. 跨日终止
 
-Add focused regression cases in `src/lib/period-digest-freshness.test.ts`:
+上一自然日的 `dueAt` 仍不能执行。consume 对未重建的旧 token 继续返回 `cross-day`；
+一旦真实入口完成 reconciliation，新 cycle 使用新 token，因此残留的旧 launchd 命令
+只能得到 `token-mismatch`，不能消费当天 attempt。
 
-1. A previous-day run whose sources complete shortly after midnight uses the 24h
-   07:30 baseline and cannot become due at 04:01/04:07.
-2. A pre-schedule manual result for Today uses the 07:00 baseline.
-3. Reconciliation after a missed fixed time retains the fixed-time fallback and
-   becomes recoverable once `scheduledBase + freshnessSeconds` is due.
-4. A fixed task with no successful replacement leaves the baseline deadline
-   available for same-day recovery.
-5. Post-schedule fixed-task results use their actual per-source generation times.
-6. A failed source is suppressed while successful post-schedule sources determine
-   the next deadline.
-7. Existing cross-day consumption and deadline-disable tests continue to pass.
+## 分层现状架构
 
-Run the focused freshness suite first, then the complete test suite and repository
-quality checks.
+```mermaid
+flowchart TB
+  subgraph L1[触发层]
+    Fixed[固定任务 launchd]
+    FreshAgent[一次性 freshness launchd]
+    Page[Today 页面 / freshness API]
+    Serve[serve 启动]
+    Config[调度配置保存]
+  end
 
-## Non-Goals
+  subgraph L2[编排层]
+    Orchestrator[period-digest-orchestrator]
+    Trigger[triggerDuePeriodDigestFreshness]
+    Reconcile[reconcilePeriodDigestFreshness]
+  end
 
-- Persisting a daily cycle or scheduled-run identity.
-- Changing fixed Today/24h launchd schedules.
-- Allowing a previous-day freshness attempt to execute on a new day.
-- Changing freshness retry counts, backoff, page recovery, or run locking.
-- Guaranteeing digest generation while the machine remains asleep or offline.
+  subgraph L3[状态与计算层]
+    Current[current digest store]
+    Calc[calculatePeriodDigestFreshnessDeadline]
+    State[freshness state JSON]
+    Lock[scheduler lease + period run lock]
+  end
+
+  Fixed --> Orchestrator
+  FreshAgent --> Trigger
+  Page --> Trigger
+  Serve --> Reconcile
+  Config --> Reconcile
+  Orchestrator --> Current
+  Orchestrator --> Reconcile
+  Trigger --> State
+  Trigger --> Reconcile
+  Reconcile --> Current
+  Reconcile --> Calc
+  Reconcile --> State
+  Trigger --> Lock
+  Reconcile --> Lock
+```
+
+当前缺口位于两层交界处：计算层没有 scheduledBase 下限；触发层只在 state 缺失时
+reconcile；编排层只在至少一个来源成功时 reconcile。三者叠加后，直接调用计算函数
+的测试可以通过，但跨日残留 state 和固定任务全量失败的生产路径仍可能没有当天 attempt。
+
+## 以变化为中心的 As-Is / To-Be
+
+| 变化点 | As-Is | To-Be |
+|---|---|---|
+| 来源有效基线 | 当天任意 `generatedAt`，包括 00:01 | 当天且不早于 scheduledBase 的 `generatedAt`，否则 scheduledBase |
+| attempt cycle | token 不显式包含自然日；来源版本不变时可能复用旧 token | token 始终包含当天 `scheduledBase.toISOString()` |
+| suppression 生命周期 | 相同 version identity 的 suppression 可跨日继承 | 仅同一 scheduledBase cycle 内继承；新一天从空 suppression 开始 |
+| 跨日页面/CLI 触发 | 仅 state 缺失时 reconcile；旧 `disabled/cross-day` 直接返回 | state 属于更早自然日时先 reconcile，再 consume 当天 state |
+| 固定任务全量失败 | `completedSources === 0` 时不 reconcile | scheduled trigger 全量失败仍 reconcile，且不 suppress 全部来源 |
+| 固定任务部分成功 | 成功后 reconcile，失败来源被 suppress | 保持现状，成功来源实际时间决定 deadline |
+| 上一日 launchd token | state 未重建时返回 cross-day | state 重建后因每日 token 不同返回 token-mismatch |
+
+### Deadline 计算
+
+As-Is：
+
+```ts
+const base =
+  Number.isFinite(generated.getTime()) && sameLocalDay(generated, now)
+    ? generated
+    : scheduledBase;
+```
+
+To-Be：
+
+```ts
+const generatedIsEligible =
+  Number.isFinite(generated.getTime()) &&
+  sameLocalDay(generated, now) &&
+  generated.getTime() >= scheduledBase.getTime();
+const base = generatedIsEligible ? generated : scheduledBase;
+```
+
+### 每日 attempt identity
+
+attempt token 的 hash 输入增加：
+
+```ts
+cycleBase: scheduledBase.toISOString()
+```
+
+同一 publication 自身的 `versionId` 不变，但跨午夜 publication 会产生新的
+`versionId`，固定任务后续发布又产生另一组新 `versionId`。`cycleBase` 解决的是另一种
+情况：当天没有新 publication 时，仍必须把旧来源版本置于新的自然日 attempt 生命周期。
+
+previous state 的 `suppressedSourceIdentities` 也必须以同一 cycle 为继承条件。显式传入的
+`suppressSources` 仍作用于当前 reconciliation；只有从 previous state 自动恢复的
+suppression 会在 cycle 日变化时清空。这样同一日部分失败仍被抑制，而上一日失败不会
+让新一天的 baseline 缺少候选来源。
+
+### 跨日 state 识别
+
+trigger 读取 state 后按以下顺序决定是否重建：
+
+1. `dueAt` 是有效时间时，以 `dueAt` 的本地自然日作为 state cycle 日。
+2. `dueAt` 为空或无效时，以 `updatedAt` 的本地自然日作为 disabled state 的 cycle 日。
+3. cycle 日早于 `now` 的本地自然日时调用 reconciliation。
+4. cycle 日等于今天时保留现状；未来日期不擅自覆盖，仍由 consume 拒绝。
+
+这能同时识别前一日普通 dueAt、前一日 `dueAt: ""` 的 disabled state，以及前一日
+任务跨午夜完成后才更新的 state。无需新增 `cycleDate` 持久化字段。
+
+## 跨午夜时序
+
+```mermaid
+sequenceDiagram
+  participant F as 上一日 freshness launchd
+  participant O as Orchestrator
+  participant C as Current Store
+  participant R as Freshness Reconcile
+  participant D as 当天固定任务 launchd
+
+  F->>O: 20 日 23:49 启动 freshness
+  O->>C: 21 日 00:01 发布 Following
+  O->>C: 21 日 00:07 发布 For You
+  O->>R: 部分成功后 reconcile
+  R->>R: generatedAt < 07:30，base 钳制为 07:30
+  R->>R: 建立 21 日 cycle token
+  R-->>F: 安排 11:30，不安排 04:01
+  D->>O: 21 日 07:30 启动固定任务
+  alt 至少一个来源成功
+    O->>C: 发布新 versionId
+    O->>R: suppress 失败来源并 reconcile
+    R-->>D: 按实际 generatedAt + freshness 重排
+  else 三个来源全部失败
+    O->>R: 不 suppress 来源，reconcile 当天 baseline
+    R-->>D: 保留或建立 11:30 恢复机会
+  end
+```
+
+分步说明：
+
+1. 跨午夜成功来源仍正常发布，数据不回滚。
+2. reconciliation 以 21 日 07:30 为时间下限，并以该 scheduledBase 区分每日 cycle。
+3. 因此 07:30 固定任务始终先于 freshness eligibility。
+4. 固定任务成功后以新内容重排；全量失败则保留 scheduledBase fallback。
+
+## 跨日触发重建时序
+
+```mermaid
+sequenceDiagram
+  participant P as 页面 / CLI
+  participant T as triggerDuePeriodDigestFreshness
+  participant S as Freshness State
+  participant R as Reconcile
+  participant O as Orchestrator
+
+  P->>T: 请求同日 freshness
+  T->>S: 读取上一日 disabled / cross-day state
+  T->>R: 重建当天 cycle 与 deadline
+  R->>S: 写入当天 token、dueAt、fireAt
+  alt dueAt 尚未到达
+    T-->>P: not-due + eligibleAt
+  else dueAt 已到达
+    T->>S: 原子消费当天 attempt
+    T->>O: 启动或加入 period digest run
+  end
+```
+
+## 编排与数据流
+
+### Reconciliation
+
+`reconcilePeriodDigestFreshnessInternal` 继续读取三个 current digest，计算来源时间、
+source identities 和 suppression identities。变化只有 deadline 下限与 token 的
+`cycleBase` 输入，以及 previous suppression 只在同一 cycle 内继承。schemaVersion 和
+state 文件结构保持不变。
+
+### Scheduled 全量失败
+
+orchestrator 的完成分支改为：
+
+- `completedSources > 0`：保持现有 reconciliation，失败来源进入 suppression。
+- `completedSources === 0 && request.trigger === "scheduled"`：调用 reconciliation，
+  使用 `replaceRunningAttempt: true`，但不传 `suppressSources`。
+- freshness 全量失败：保持现有路径，由 completion 回写进入 retryable/failed。
+- manual 全量失败：不建立新的 freshness attempt。
+
+reconciliation 失败仍被吞掉，不覆盖摘要批次的真实 phase；state 安装错误继续记录为
+`error`，由现有页面恢复机制处理。
+
+### Trigger 跨日重建
+
+`triggerDuePeriodDigestFreshness` 在 `disabled` 早返回和 consume 之前检查 state cycle。
+缺失或属于更早自然日的 state 通过同一个 reconciliation API 重建。重建与 consume
+分别取得现有 scheduler lease；中间若有另一个进程完成 reconciliation，稳定的每日
+token 和锁仍会收敛到同一个 attempt。
+
+## 验收标准重述
+
+Issue 中“07:00/07:30 前不会因跨午夜结果生成 freshness deadline”按可执行语义重述为：
+
+- 系统可以在固定时刻前持久化当天 deadline，以便 launchd 安装和失败恢复；
+- 该 deadline 不得早于 `scheduledBase + freshnessSeconds`；
+- 因此固定任务必然先到达，freshness 在固定时刻前既不能到期也不能触发；
+- 固定任务成功后 deadline 按实际生成时间更新，固定任务全量失败后 baseline deadline
+  仍作为同日恢复机会。
+
+## 晚时刻配置的明确后果
+
+现有规则要求 deadline 与 `now` 属于同一本地自然日。因此当
+`scheduledBase + freshnessSeconds` 跨午夜时，例如 21:00 + 4 小时，计算结果全天为
+`null`，freshness state 为 `disabled`。钳制后所有当天候选都不会早于 21:00，所以这类
+配置不是偶发禁用，而是确定性地全天禁用 freshness。
+
+本次不把 deadline 截断到 23:59，也不允许跨日执行，因为那会重新引入固定任务与
+前一日 freshness 的归属冲突。用户若需要同日 freshness，必须配置满足
+`scheduledBase + freshnessSeconds` 不跨午夜的组合。
+
+## 错误处理与兼容性
+
+- 缺失、无效、上一日或早于 scheduledBase 的 `generatedAt` 使用 scheduledBase。
+- deadline 跨本地午夜继续返回 `null` 并写入 disabled state。
+- 不修改 persisted state schema；旧 state 首次 reconciliation 时生成新的每日 token。
+- 升级前残留 launchd 使用旧 token，无法消费升级后或新一天的 attempt。
+- token mismatch、already-running、retryable、page recovery、reloader 和跨进程锁行为
+  保持现有契约。
+- 本地时区和 DST 继续沿用 JavaScript Date 与 launchd calendar 的现有语义，不引入
+  UTC 自然日。
+
+## 测试
+
+### Deadline 单测
+
+1. 24h 07:30、freshness 4 小时、00:01/00:07 跨午夜完成且 all 被 suppress 时，
+   deadline 为 11:30。
+2. Today 在 07:00 前手工生成时，deadline 为 11:00；07:00 后生成使用实际时间。
+3. 固定任务在 07:33 至 07:35 发布时，最早成功来源产生 11:33 deadline。
+4. 21:00 + 4 小时返回 `null`，明确覆盖全天 disabled 配置。
+
+### Trigger 与 state 单测
+
+5. 前一日有效 dueAt state 通过页面/CLI trigger 重建为当天 token，而不是返回 cross-day。
+6. 前一日 `dueAt: ""` 的 disabled state 通过 `updatedAt` 识别并重建。
+7. 当天 disabled state 不反复 reconcile；未来日期 state 不被覆盖。
+8. 旧 launchd token 在当天 state 重建后返回 token-mismatch。
+9. 休眠到 12:00 后重建得到已过期的 11:30 dueAt，launchd fireAt 使用下一可用分钟，
+   页面 trigger 只能原子启动一次。
+10. 上一日相同 version identity 的 suppression 不进入当天 cycle；同日 suppression
+    仍持续到该来源发布新 version。
+
+### Orchestrator 单测
+
+11. scheduled 固定任务全量失败时调用 reconciliation，传
+    `replaceRunningAttempt: true` 且不 suppress 三个旧来源。
+12. freshness 全量失败仍不由 orchestrator reconciliation 重置 attempt，继续由
+    completion retry 状态机处理。
+13. 部分成功继续 suppress 失败来源，并按成功来源实际时间重排。
+
+### 回归验证
+
+14. 跨午夜完成 -> 07:30 固定任务成功 -> 新 deadline 按实际生成时间更新。
+15. 跨午夜完成 -> 固定任务全量失败 -> 11:30 baseline 仍可触发同日恢复。
+16. 既有 cross-day、token mismatch、already-running、retryable、page recovery、reloader
+    和安装竞态测试全部通过。
+17. 先运行 freshness 与 orchestrator 聚焦套件，再运行全仓测试和质量检查。
+
+## 非目标
+
+- 持久化独立的 cycle/run identity 字段或升级 state schema。
+- 修改 Today/24h 固定 launchd 时刻。
+- 允许上一日 attempt 在新一天执行。
+- 修改 freshness retry 次数、退避、页面恢复次数或锁租约。
+- 保证机器持续休眠或离线时完成摘要。
+- 自动改写“晚固定时刻 + 长 freshness”的无可用窗口配置。
