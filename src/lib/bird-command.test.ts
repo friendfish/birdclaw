@@ -2,7 +2,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execFileAsyncMock = vi.fn();
 const accessMock = vi.fn();
@@ -21,15 +21,29 @@ vi.mock("node:fs/promises", () => ({
 
 const tempRoots: string[] = [];
 
+const managedEnvironmentKeys = [
+	"BIRDCLAW_BIRD_COMMAND",
+	"BIRDCLAW_CONFIG",
+	"BIRDCLAW_HOME",
+	"BIRDCLAW_COMMAND_TEST",
+];
+
+function clearManagedEnvironment() {
+	for (const key of managedEnvironmentKeys) {
+		delete process.env[key];
+	}
+}
+
 describe("bird command Effect boundary", () => {
+	beforeEach(() => {
+		clearManagedEnvironment();
+	});
+
 	afterEach(() => {
 		vi.resetModules();
 		execFileAsyncMock.mockReset();
 		accessMock.mockReset();
-		delete process.env.BIRDCLAW_BIRD_COMMAND;
-		delete process.env.BIRDCLAW_CONFIG;
-		delete process.env.BIRDCLAW_HOME;
-		delete process.env.BIRDCLAW_COMMAND_TEST;
+		clearManagedEnvironment();
 		for (const tempRoot of tempRoots.splice(0)) {
 			rmSync(tempRoot, { recursive: true, force: true });
 		}
@@ -39,6 +53,8 @@ describe("bird command Effect boundary", () => {
 		const tempDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-command-"));
 		const configPath = path.join(tempDir, "config.json");
 		writeFileSync(configPath, "{bad json", "utf8");
+		// Deliberately leaves BIRDCLAW_BIRD_COMMAND unset: getBirdCommand() short
+		// circuits on it and would never reach the config it is meant to parse.
 		process.env.BIRDCLAW_CONFIG = configPath;
 		const { runBirdCommand } = await import("./bird-command");
 		let promise: Promise<unknown> | undefined;
@@ -58,6 +74,7 @@ describe("bird command Effect boundary", () => {
 		);
 		tempRoots.push(tempDir);
 		process.env.BIRDCLAW_HOME = tempDir;
+		process.env.BIRDCLAW_BIRD_COMMAND = "bird";
 		process.env.BIRDCLAW_COMMAND_TEST = "process-value";
 		const { writeBirdCredentials } = await import("./bird-credentials");
 		writeBirdCredentials({
@@ -97,6 +114,7 @@ describe("bird command Effect boundary", () => {
 		);
 		tempRoots.push(tempDir);
 		process.env.BIRDCLAW_HOME = tempDir;
+		process.env.BIRDCLAW_BIRD_COMMAND = "bird";
 		const { writeBirdCredentials } = await import("./bird-credentials");
 		writeBirdCredentials({
 			authToken: "failure-auth",
