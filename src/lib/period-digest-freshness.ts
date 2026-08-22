@@ -109,6 +109,25 @@ function freshnessStateCycleDate(state: PeriodDigestFreshnessStateV1) {
 	return Number.isFinite(dueAt.getTime()) ? dueAt : new Date(state.updatedAt);
 }
 
+function isEarlierLocalDay(left: Date, right: Date) {
+	const leftDay = new Date(left);
+	leftDay.setHours(0, 0, 0, 0);
+	const rightDay = new Date(right);
+	rightDay.setHours(0, 0, 0, 0);
+	return (
+		Number.isFinite(leftDay.getTime()) &&
+		Number.isFinite(rightDay.getTime()) &&
+		leftDay.getTime() < rightDay.getTime()
+	);
+}
+
+function freshnessStateIsFromEarlierLocalDay(
+	state: PeriodDigestFreshnessStateV1,
+	now: Date,
+) {
+	return isEarlierLocalDay(freshnessStateCycleDate(state), now);
+}
+
 function roundUpToMinute(value: Date) {
 	const rounded = new Date(value);
 	if (rounded.getSeconds() !== 0 || rounded.getMilliseconds() !== 0) {
@@ -859,6 +878,7 @@ export async function triggerDuePeriodDigestFreshness({
 	clock,
 	requestRun,
 	completeAttempt = completePeriodDigestFreshnessAttempt,
+	reconcile = reconcilePeriodDigestFreshness,
 }: {
 	period: CurrentPeriodDigestPeriod;
 	origin: "page" | "cli";
@@ -874,13 +894,14 @@ export async function triggerDuePeriodDigestFreshness({
 		completion: Promise<{ phase: "completed" | "degraded" | "failed" }>;
 	}>;
 	completeAttempt?: typeof completePeriodDigestFreshnessAttempt;
+	reconcile?: typeof reconcilePeriodDigestFreshness;
 }) {
 	const effectiveNow = now ?? new Date();
 	const currentTime = clock ?? (now ? () => now : () => new Date());
 	let state = await readPeriodDigestFreshnessState(period);
-	if (!state) {
+	if (!state || freshnessStateIsFromEarlierLocalDay(state, effectiveNow)) {
 		state = (
-			await reconcilePeriodDigestFreshness({
+			await reconcile({
 				period,
 				now: effectiveNow,
 				clock: currentTime,

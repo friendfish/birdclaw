@@ -774,6 +774,185 @@ describe("period digest freshness", () => {
 		expect(requestRun).toHaveBeenCalledTimes(1);
 	});
 
+	it.each([
+		{
+			label: "cross-day dueAt",
+			dueAt: new Date(2026, 7, 20, 11, 30, 0).toISOString(),
+		},
+		{ label: "disabled state", dueAt: "" },
+	])(
+		"rebuilds an earlier $label before checking eligibility",
+		async ({ dueAt }) => {
+			await writePeriodDigestFreshnessState({
+				schemaVersion: 1,
+				period: "24h",
+				attemptToken: "old-cycle-token",
+				dueAt,
+				fireAt: "",
+				status: dueAt ? "scheduled" : "disabled",
+				updatedAt: new Date(2026, 7, 20, 23, 0, 0).toISOString(),
+			});
+			const install = vi.fn(
+				async () => ({ ok: true }) as LaunchAgentInstallResult,
+			);
+			const reconcile = vi.fn(
+				(input: Parameters<typeof reconcilePeriodDigestFreshness>[0]) =>
+					reconcilePeriodDigestFreshness({
+						...input,
+						freshnessSeconds: 4 * 60 * 60,
+						schedule: { hour: 7, minute: 30 },
+						install,
+					}),
+			);
+			const requestRun = vi.fn();
+			const input = {
+				period: "24h" as const,
+				origin: "page" as const,
+				now: new Date(2026, 7, 21, 8, 0, 0),
+				requestRun,
+				reconcile,
+			};
+
+			await expect(triggerDuePeriodDigestFreshness(input)).resolves.toEqual({
+				triggered: false,
+				reason: "not-due",
+				eligibleAt: new Date(2026, 7, 21, 11, 30, 0).toISOString(),
+			});
+			expect(reconcile).toHaveBeenCalledOnce();
+			expect(install).toHaveBeenCalledOnce();
+			expect(requestRun).not.toHaveBeenCalled();
+			await expect(
+				consumePeriodDigestFreshnessAttempt({
+					period: "24h",
+					attemptToken: "old-cycle-token",
+					origin: "launchd",
+					now: new Date(2026, 7, 21, 8, 1, 0),
+				}),
+			).resolves.toMatchObject({ valid: false, reason: "token-mismatch" });
+		},
+	);
+
+	it("does not loop when an active cross-day run prevents rebuilding", async () => {
+		const previous: PeriodDigestFreshnessStateV1 = {
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "running-old-cycle",
+			dueAt: new Date(2026, 7, 20, 23, 30, 0).toISOString(),
+			fireAt: new Date(2026, 7, 20, 23, 30, 0).toISOString(),
+			status: "running",
+			startedAt: new Date(2026, 7, 21, 0, 1, 0).toISOString(),
+			updatedAt: new Date(2026, 7, 21, 0, 1, 0).toISOString(),
+		};
+		await writePeriodDigestFreshnessState(previous);
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const reconcile = vi.fn(
+			(input: Parameters<typeof reconcilePeriodDigestFreshness>[0]) =>
+				reconcilePeriodDigestFreshness({
+					...input,
+					freshnessSeconds: 4 * 60 * 60,
+					schedule: { hour: 7, minute: 0 },
+					install,
+				}),
+		);
+		const requestRun = vi.fn();
+		const input = {
+			period: "today" as const,
+			origin: "page" as const,
+			now: new Date(2026, 7, 21, 0, 5, 0),
+			requestRun,
+			reconcile,
+		};
+
+		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toEqual({
+			triggered: false,
+			reason: "cross-day",
+		});
+		expect(reconcile).toHaveBeenCalledOnce();
+		expect(install).not.toHaveBeenCalled();
+		expect(requestRun).not.toHaveBeenCalled();
+	});
+
+	it("starts one overdue daily baseline after rebuilding stale disabled state", async () => {
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "24h",
+			attemptToken: "disabled-old-cycle",
+			dueAt: "",
+			fireAt: "",
+			status: "disabled",
+			updatedAt: new Date(2026, 7, 20, 23, 0, 0).toISOString(),
+		});
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const reconcile = vi.fn(
+			(input: Parameters<typeof reconcilePeriodDigestFreshness>[0]) =>
+				reconcilePeriodDigestFreshness({
+					...input,
+					freshnessSeconds: 4 * 60 * 60,
+					schedule: { hour: 7, minute: 30 },
+					install,
+				}),
+		);
+		const requestRun = vi.fn(async () => ({
+			runId: "overdue-run",
+			joined: false,
+			completion: new Promise<{ phase: "completed" }>(() => undefined),
+		}));
+		const input = {
+			period: "24h" as const,
+			origin: "page" as const,
+			now: new Date(2026, 7, 21, 12, 0, 0),
+			requestRun,
+			reconcile,
+		};
+
+		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toMatchObject({
+			triggered: true,
+			runId: "overdue-run",
+		});
+		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toMatchObject({
+			triggered: false,
+			reason: "already-running",
+		});
+		expect(reconcile).toHaveBeenCalledOnce();
+		expect(install).toHaveBeenCalledOnce();
+		expect(requestRun).toHaveBeenCalledOnce();
+	});
+
+	it.each([
+		{ label: "current", updatedAt: new Date(2026, 7, 21, 8, 0, 0) },
+		{ label: "future", updatedAt: new Date(2026, 7, 22, 8, 0, 0) },
+	])(
+		"does not rebuild a $label-day disabled state",
+		async ({ updatedAt }) => {
+			await writePeriodDigestFreshnessState({
+				schemaVersion: 1,
+				period: "today",
+				attemptToken: `${updatedAt.toISOString()}-disabled`,
+				dueAt: "",
+				fireAt: "",
+				status: "disabled",
+				updatedAt: updatedAt.toISOString(),
+			});
+			const reconcile = vi.fn();
+			const input = {
+				period: "today" as const,
+				origin: "page" as const,
+				now: new Date(2026, 7, 21, 9, 0, 0),
+				reconcile,
+			};
+
+			await expect(triggerDuePeriodDigestFreshness(input)).resolves.toEqual({
+				triggered: false,
+				reason: "disabled",
+			});
+			expect(reconcile).not.toHaveBeenCalled();
+		},
+	);
+
 	it("reports a page-triggered all-source failure to the state machine", async () => {
 		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
 		await writePeriodDigestFreshnessState({

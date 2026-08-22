@@ -277,7 +277,7 @@ node ./scripts/run-vitest.mjs run src/lib/period-digest-freshness.test.ts -t "ne
 
 Expected: the first test returns the previous consumed attempt; the second remains disabled because all source identities stay suppressed.
 
-- [ ] **Step 4: Add the shared state-cycle helpers**
+- [x] **Step 4: Add the shared state-cycle helpers**
 
 Add after `sameLocalDay`:
 
@@ -396,7 +396,7 @@ git commit -m "fix: scope freshness attempts to local day"
 - Modify: `src/lib/period-digest-freshness.test.ts:640-860`
 - Modify: `src/lib/period-digest-freshness.ts:849-899`
 
-- [ ] **Step 1: Write failing stale-state trigger tests**
+- [x] **Step 1: Write failing stale-state trigger tests**
 
 Add a parameterized test that writes both an old valid `dueAt` state and an old disabled `dueAt: ""` state, then calls `triggerDuePeriodDigestFreshness` with `now = 2026-08-21 08:00`. Pass the inferred input through a variable so the optional `reconcile` dependency is present at runtime before the production signature is extended:
 
@@ -546,7 +546,7 @@ it("starts one overdue daily baseline after rebuilding stale disabled state", as
 });
 ```
 
-- [ ] **Step 2: Run the trigger tests and verify RED**
+- [x] **Step 2: Run the trigger tests and verify RED**
 
 Run:
 
@@ -556,7 +556,7 @@ node ./scripts/run-vitest.mjs run src/lib/period-digest-freshness.test.ts -t "re
 
 Expected: stale states return `disabled` or `cross-day` without invoking the injected reconciliation.
 
-- [ ] **Step 3: Inject reconciliation and rebuild only earlier cycles**
+- [x] **Step 3: Inject reconciliation and rebuild only earlier cycles**
 
 Extend the trigger input with:
 
@@ -586,7 +586,7 @@ if (!state || freshnessStateIsFromEarlierLocalDay(state, effectiveNow)) {
 
 Do not retry reconciliation if it returns the old running state. Continue through the existing disabled and consume checks once, so `cross-day` or `already-running` remains authoritative.
 
-- [ ] **Step 4: Preserve current-day and future disabled states**
+- [x] **Step 4: Preserve current-day and future disabled states**
 
 Add this passing characterization after the production change:
 
@@ -620,7 +620,7 @@ it.each([
 });
 ```
 
-- [ ] **Step 5: Verify GREEN and existing trigger behavior**
+- [x] **Step 5: Verify GREEN and existing trigger behavior**
 
 Run:
 
@@ -630,7 +630,7 @@ node ./scripts/run-vitest.mjs run src/lib/period-digest-freshness.test.ts -t "pa
 
 Expected: all selected tests PASS. The new page path invokes direct installation once; no deferred reloader is introduced.
 
-- [ ] **Step 6: Commit the trigger boundary fix**
+- [x] **Step 6: Commit the trigger boundary fix**
 
 ```bash
 git add src/lib/period-digest-freshness.ts src/lib/period-digest-freshness.test.ts
