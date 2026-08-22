@@ -829,6 +829,83 @@ describe("period digest freshness", () => {
 		},
 	);
 
+	it("rebuilds freshness state when both cycle timestamps are invalid", async () => {
+		publishCurrentSources(
+			"24h",
+			new Date(2026, 7, 20, 9, 0, 0).toISOString(),
+		);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "24h",
+			attemptToken: "invalid-cycle-token",
+			dueAt: "invalid",
+			fireAt: "",
+			status: "scheduled",
+			updatedAt: "also-invalid",
+		});
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const reconcile = vi.fn(
+			(input: Parameters<typeof reconcilePeriodDigestFreshness>[0]) =>
+				reconcilePeriodDigestFreshness({
+					...input,
+					freshnessSeconds: 4 * 60 * 60,
+					schedule: { hour: 7, minute: 30 },
+					install,
+				}),
+		);
+		const requestRun = vi.fn();
+
+		await expect(
+			triggerDuePeriodDigestFreshness({
+				period: "24h",
+				origin: "page",
+				now: new Date(2026, 7, 21, 8, 0, 0),
+				requestRun,
+				reconcile,
+			}),
+		).resolves.toEqual({
+			triggered: false,
+			reason: "not-due",
+			eligibleAt: new Date(2026, 7, 21, 11, 30, 0).toISOString(),
+		});
+		expect(reconcile).toHaveBeenCalledOnce();
+		expect(install).toHaveBeenCalledOnce();
+		expect(requestRun).not.toHaveBeenCalled();
+	});
+
+	it("contains stale-state reconciliation failures at the trigger boundary", async () => {
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "stale-error-token",
+			dueAt: new Date(2026, 7, 20, 11, 0, 0).toISOString(),
+			fireAt: "",
+			status: "scheduled",
+			updatedAt: new Date(2026, 7, 20, 10, 0, 0).toISOString(),
+		});
+		const reconcile = vi.fn(async () =>
+			Promise.reject(new Error("scheduler locked")),
+		);
+		const requestRun = vi.fn();
+
+		await expect(
+			triggerDuePeriodDigestFreshness({
+				period: "today",
+				origin: "page",
+				now: new Date(2026, 7, 21, 8, 0, 0),
+				requestRun,
+				reconcile,
+			}),
+		).resolves.toEqual({
+			triggered: false,
+			reason: "reconcile-error",
+		});
+		expect(reconcile).toHaveBeenCalledOnce();
+		expect(requestRun).not.toHaveBeenCalled();
+	});
+
 	it("does not loop when an active cross-day run prevents rebuilding", async () => {
 		const previous: PeriodDigestFreshnessStateV1 = {
 			schemaVersion: 1,

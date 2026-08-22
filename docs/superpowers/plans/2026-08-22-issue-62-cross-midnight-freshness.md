@@ -843,7 +843,7 @@ Run the scheduled pre-sync and all-source failure tests. Expected: both PASS.
 - Modify: `src/lib/period-digest-freshness.test.ts`
 - Modify: `src/lib/period-digest-freshness.ts`
 
-- [ ] **Step 1: Write failing invalid-cycle and reconciliation-error tests**
+- [x] **Step 1: Write failing invalid-cycle and reconciliation-error tests**
 
 Add one test with `dueAt: "invalid"` and `updatedAt: "invalid"` that injects real
 reconciliation and expects today's `not-due` baseline. Add a second earlier-day state whose injected
@@ -858,11 +858,11 @@ reconciliation rejects and expect:
 
 Both tests must assert `requestRun` was not called.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run both new tests. Expected: invalid state returns `cross-day`; reconciliation rejection escapes.
 
-- [ ] **Step 3: Treat an unparseable cycle as stale**
+- [x] **Step 3: Treat an unparseable cycle as stale**
 
 Change the helper to:
 
@@ -878,12 +878,12 @@ function freshnessStateIsFromEarlierLocalDay(
 }
 ```
 
-- [ ] **Step 4: Catch reconciliation failures at the trigger boundary**
+- [x] **Step 4: Catch reconciliation failures at the trigger boundary**
 
 Wrap only the reconciliation call in `try/catch`; on failure return
 `{ triggered: false as const, reason: "reconcile-error" as const }`. Do not consume the old state.
 
-- [ ] **Step 5: Verify GREEN and existing trigger behavior**
+- [x] **Step 5: Verify GREEN and existing trigger behavior**
 
 Run the invalid-cycle, reconciliation-error, earlier-state, disabled, and running trigger tests.
 Expected: all PASS.

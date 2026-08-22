@@ -125,7 +125,10 @@ function freshnessStateIsFromEarlierLocalDay(
 	state: PeriodDigestFreshnessStateV1,
 	now: Date,
 ) {
-	return isEarlierLocalDay(freshnessStateCycleDate(state), now);
+	const cycleDate = freshnessStateCycleDate(state);
+	return (
+		!Number.isFinite(cycleDate.getTime()) || isEarlierLocalDay(cycleDate, now)
+	);
 }
 
 function roundUpToMinute(value: Date) {
@@ -900,13 +903,20 @@ export async function triggerDuePeriodDigestFreshness({
 	const currentTime = clock ?? (now ? () => now : () => new Date());
 	let state = await readPeriodDigestFreshnessState(period);
 	if (!state || freshnessStateIsFromEarlierLocalDay(state, effectiveNow)) {
-		state = (
-			await reconcile({
-				period,
-				now: effectiveNow,
-				clock: currentTime,
-			})
-		).state;
+		try {
+			state = (
+				await reconcile({
+					period,
+					now: effectiveNow,
+					clock: currentTime,
+				})
+			).state;
+		} catch {
+			return {
+				triggered: false as const,
+				reason: "reconcile-error" as const,
+			};
+		}
 	}
 	if (state.status === "disabled") {
 		return { triggered: false as const, reason: "disabled" as const };
