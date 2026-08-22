@@ -643,7 +643,7 @@ git commit -m "fix: rebuild daily freshness on page trigger"
 - Modify: `src/lib/period-digest-orchestrator.test.ts:782-805`
 - Modify: `src/lib/period-digest-orchestrator.ts:879-894`
 
-- [ ] **Step 1: Change the scheduled all-failure expectation and add symmetric trigger tests**
+- [x] **Step 1: Change the scheduled all-failure expectation and add symmetric trigger tests**
 
 Rename the existing test to `reconciles the daily baseline when every scheduled source fails` and replace its final assertion with:
 
@@ -681,7 +681,7 @@ it.each(["freshness", "manual"] as const)(
 );
 ```
 
-- [ ] **Step 2: Run the orchestrator tests and verify RED**
+- [x] **Step 2: Run the orchestrator tests and verify RED**
 
 Run:
 
@@ -691,7 +691,7 @@ node ./scripts/run-vitest.mjs run src/lib/period-digest-orchestrator.test.ts -t 
 
 Expected: scheduled case FAILS because reconciliation is not called; freshness and manual characterization cases PASS.
 
-- [ ] **Step 3: Reconcile scheduled failures without suppressing unchanged sources**
+- [x] **Step 3: Reconcile scheduled failures without suppressing unchanged sources**
 
 Replace the reconciliation guard with:
 
@@ -708,7 +708,7 @@ if (completedSources > 0 || request.trigger === "scheduled") {
 
 Keep the existing options construction. Because the scheduled all-failure branch has an empty `suppressSources`, it sends only `{ replaceRunningAttempt: true }`. Freshness all-failure remains outside the guard and continues through completion retry handling.
 
-- [ ] **Step 4: Verify GREEN and partial-success options**
+- [x] **Step 4: Verify GREEN and partial-success options**
 
 Run:
 
@@ -718,7 +718,7 @@ node ./scripts/run-vitest.mjs run src/lib/period-digest-orchestrator.test.ts -t 
 
 Expected: all selected tests PASS; partial failures still pass `suppressSources`, and launchd freshness success still passes `deferLaunchAgentReload`.
 
-- [ ] **Step 5: Commit the scheduled recovery path**
+- [x] **Step 5: Commit the scheduled recovery path**
 
 ```bash
 git add src/lib/period-digest-orchestrator.ts src/lib/period-digest-orchestrator.test.ts

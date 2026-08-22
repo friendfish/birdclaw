@@ -779,14 +779,12 @@ describe("period digest orchestrator", () => {
 		expect(audit).toHaveBeenCalledOnce();
 	});
 
-	it("marks a batch failed when every source generation fails", async () => {
+	it("reconciles the daily baseline when every scheduled source fails", async () => {
 		const deps = dependencies({
 			generate: vi.fn(async () =>
 				Promise.reject(new Error("model unavailable")),
 			),
-			reconcileFreshness: vi.fn(async () =>
-				Promise.reject(new Error("unused")),
-			),
+			reconcileFreshness: vi.fn(async () => undefined),
 		});
 
 		const run = await requestPeriodDigestRun(
@@ -801,8 +799,28 @@ describe("period digest orchestrator", () => {
 			expect.objectContaining({ state: "failed", attempts: 1 }),
 			expect.objectContaining({ state: "failed", attempts: 1 }),
 		]);
-		expect(deps.reconcileFreshness).not.toHaveBeenCalled();
+		expect(deps.reconcileFreshness).toHaveBeenCalledWith("today", {
+			replaceRunningAttempt: true,
+		});
 	});
+
+	it.each(["freshness", "manual"] as const)(
+		"does not replace freshness state when every %s source fails",
+		async (trigger) => {
+			const deps = dependencies({
+				generate: vi.fn(async () =>
+					Promise.reject(new Error("model unavailable")),
+				),
+			});
+			const run = await requestPeriodDigestRun(
+				{ period: "today", trigger, origin: "cli" },
+				deps,
+			);
+
+			expect((await run.completion).phase).toBe("failed");
+			expect(deps.reconcileFreshness).not.toHaveBeenCalled();
+		},
+	);
 
 	it("forwards account and language while tolerating post-publication hook failures", async () => {
 		const deps = dependencies({
