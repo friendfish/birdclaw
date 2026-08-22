@@ -104,6 +104,33 @@ function sameLocalDay(left: Date, right: Date) {
 	);
 }
 
+function freshnessStateCycleDate(state: PeriodDigestFreshnessStateV1) {
+	const dueAt = new Date(state.dueAt);
+	return Number.isFinite(dueAt.getTime()) ? dueAt : new Date(state.updatedAt);
+}
+
+function isEarlierLocalDay(left: Date, right: Date) {
+	const leftDay = new Date(left);
+	leftDay.setHours(0, 0, 0, 0);
+	const rightDay = new Date(right);
+	rightDay.setHours(0, 0, 0, 0);
+	return (
+		Number.isFinite(leftDay.getTime()) &&
+		Number.isFinite(rightDay.getTime()) &&
+		leftDay.getTime() < rightDay.getTime()
+	);
+}
+
+function freshnessStateIsFromEarlierLocalDay(
+	state: PeriodDigestFreshnessStateV1,
+	now: Date,
+) {
+	const cycleDate = freshnessStateCycleDate(state);
+	return (
+		!Number.isFinite(cycleDate.getTime()) || isEarlierLocalDay(cycleDate, now)
+	);
+}
+
 function roundUpToMinute(value: Date) {
 	const rounded = new Date(value);
 	if (rounded.getSeconds() !== 0 || rounded.getMilliseconds() !== 0) {
@@ -189,10 +216,11 @@ export function calculatePeriodDigestFreshnessDeadline({
 		(contentSource) => !suppressed.has(contentSource),
 	).map((contentSource) => {
 		const generated = new Date(generatedAt[contentSource] ?? "");
-		const base =
-			Number.isFinite(generated.getTime()) && sameLocalDay(generated, now)
-				? generated
-				: scheduledBase;
+		const generatedIsEligible =
+			Number.isFinite(generated.getTime()) &&
+			sameLocalDay(generated, now) &&
+			generated.getTime() >= scheduledBase.getTime();
+		const base = generatedIsEligible ? generated : scheduledBase;
 		return new Date(base.getTime() + freshnessSeconds * 1_000);
 	});
 	if (candidates.length === 0) return null;
@@ -853,6 +881,7 @@ export async function triggerDuePeriodDigestFreshness({
 	clock,
 	requestRun,
 	completeAttempt = completePeriodDigestFreshnessAttempt,
+	reconcile = reconcilePeriodDigestFreshness,
 }: {
 	period: CurrentPeriodDigestPeriod;
 	origin: "page" | "cli";
@@ -868,18 +897,26 @@ export async function triggerDuePeriodDigestFreshness({
 		completion: Promise<{ phase: "completed" | "degraded" | "failed" }>;
 	}>;
 	completeAttempt?: typeof completePeriodDigestFreshnessAttempt;
+	reconcile?: typeof reconcilePeriodDigestFreshness;
 }) {
 	const effectiveNow = now ?? new Date();
 	const currentTime = clock ?? (now ? () => now : () => new Date());
 	let state = await readPeriodDigestFreshnessState(period);
-	if (!state) {
-		state = (
-			await reconcilePeriodDigestFreshness({
-				period,
-				now: effectiveNow,
-				clock: currentTime,
-			})
-		).state;
+	if (!state || freshnessStateIsFromEarlierLocalDay(state, effectiveNow)) {
+		try {
+			state = (
+				await reconcile({
+					period,
+					now: effectiveNow,
+					clock: currentTime,
+				})
+			).state;
+		} catch {
+			return {
+				triggered: false as const,
+				reason: "reconcile-error" as const,
+			};
+		}
 	}
 	if (state.status === "disabled") {
 		return { triggered: false as const, reason: "disabled" as const };
@@ -989,6 +1026,9 @@ async function reconcilePeriodDigestFreshnessInternal({
 		]),
 	) as Record<PeriodDigestContentSource, string>;
 	const previous = await readPeriodDigestFreshnessState(period);
+	const previousIsSameCycle = Boolean(
+		previous && sameLocalDay(freshnessStateCycleDate(previous), calculationNow),
+	);
 	const suppressedSourceIdentities = Object.fromEntries(
 		CONTENT_SOURCES.flatMap((contentSource) => {
 			const currentIdentity = sourceIdentities[contentSource];
@@ -996,7 +1036,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 				return [[contentSource, currentIdentity]];
 			}
 			const previousIdentity =
-				previous?.freshnessSeconds === freshnessSeconds
+				previousIsSameCycle && previous?.freshnessSeconds === freshnessSeconds
 					? previous.suppressedSourceIdentities?.[contentSource]
 					: undefined;
 			return previousIdentity === currentIdentity
@@ -1022,6 +1062,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 				period,
 				freshnessSeconds,
 				schedule,
+				cycleBase: scheduledBase.toISOString(),
 				sourceIdentities,
 				suppressedSourceIdentities,
 			}),

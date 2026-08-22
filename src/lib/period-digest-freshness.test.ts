@@ -3,6 +3,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { useTestHome } from "../test/test-home";
+import type {
+	PeriodDigestContentSource,
+	PeriodDigestContext,
+	PeriodDigestRunResult,
+} from "./period-digest";
+import { publishCurrentPeriodDigest } from "./period-digest-current-store";
 import {
 	activatePeriodDigestFreshnessRetry,
 	buildPeriodDigestFreshnessLaunchAgent,
@@ -23,6 +29,72 @@ import type { LaunchAgent, LaunchAgentInstallResult } from "./launchd";
 
 const testHome = useTestHome({ prefix: "birdclaw-digest-freshness-" });
 
+function publishCurrentSources(period: "today" | "24h", generatedAt: string) {
+	const { db } = testHome();
+	for (const contentSource of [
+		"all",
+		"following",
+		"for_you",
+	] as const satisfies readonly PeriodDigestContentSource[]) {
+		const context: PeriodDigestContext = {
+			window: {
+				label: period === "today" ? "Today" : "Last 24 hours",
+				since: "2026-08-20T00:00:00.000Z",
+				until: "2026-08-21T08:00:00.000Z",
+			},
+			includeDms: false,
+			contentSource,
+			counts: {
+				home: 0,
+				mentions: 0,
+				authored: 0,
+				likes: 0,
+				bookmarks: 0,
+				dms: 0,
+				links: 0,
+			},
+			tweets: [],
+			dms: [],
+			links: [],
+			hash: `${period}:${contentSource}`,
+		};
+		const result: PeriodDigestRunResult = {
+			context,
+			digest: {
+				title: `${period} ${contentSource}`,
+				summary: "A complete digest",
+				keyTopics: [],
+				notableLinks: [],
+				people: [],
+				actionItems: [],
+				sourceTweetIds: [],
+			},
+			markdown: `# ${period} ${contentSource}`,
+			model: "gpt-5.5",
+			reasoningEffort: "medium",
+			serviceTier: "priority",
+			parseStatus: "structured",
+			cached: false,
+			updatedAt: generatedAt,
+		};
+		publishCurrentPeriodDigest(
+			{
+				period,
+				contentSource,
+				runId: "stable-run",
+				versionId: `stable-${contentSource}`,
+				generatedAt,
+				result,
+				promptHash: "prompt",
+				maxTweets: 5_000,
+				maxLinks: 20,
+				sync: { status: "fresh", steps: [] },
+			},
+			db,
+		);
+	}
+}
+
 describe("period digest freshness", () => {
 	it("uses each page generation time and the fixed schedule fallback", () => {
 		const now = new Date(2026, 7, 6, 10, 0, 0);
@@ -37,6 +109,34 @@ describe("period digest freshness", () => {
 		});
 
 		expect(due).toEqual(new Date(2026, 7, 6, 20, 0, 0));
+	});
+
+	it("clamps cross-midnight source generations to the fixed daily schedule", () => {
+		const due = calculatePeriodDigestFreshnessDeadline({
+			now: new Date(2026, 7, 21, 4, 2, 0),
+			freshnessSeconds: 4 * 60 * 60,
+			schedule: { hour: 7, minute: 30 },
+			generatedAt: {
+				following: new Date(2026, 7, 21, 0, 1, 0).toISOString(),
+				for_you: new Date(2026, 7, 21, 0, 7, 0).toISOString(),
+			},
+			suppressedSources: ["all"],
+		});
+
+		expect(due).toEqual(new Date(2026, 7, 21, 11, 30, 0));
+	});
+
+	it("returns null when the clamped daily baseline crosses midnight", () => {
+		const due = calculatePeriodDigestFreshnessDeadline({
+			now: new Date(2026, 7, 6, 20, 0, 0),
+			freshnessSeconds: 4 * 60 * 60,
+			schedule: { hour: 21, minute: 0 },
+			generatedAt: {
+				all: new Date(2026, 7, 6, 20, 30, 0).toISOString(),
+			},
+		});
+
+		expect(due).toBeNull();
 	});
 
 	it("suppresses a failed source version when calculating the next deadline", () => {
@@ -684,6 +784,260 @@ describe("period digest freshness", () => {
 		expect(requestRun).toHaveBeenCalledTimes(1);
 	});
 
+	it.each([
+		{
+			label: "cross-day dueAt",
+			dueAt: new Date(2026, 7, 20, 11, 30, 0).toISOString(),
+		},
+		{ label: "disabled state", dueAt: "" },
+	])(
+		"rebuilds an earlier $label before checking eligibility",
+		async ({ dueAt }) => {
+			await writePeriodDigestFreshnessState({
+				schemaVersion: 1,
+				period: "24h",
+				attemptToken: "old-cycle-token",
+				dueAt,
+				fireAt: "",
+				status: dueAt ? "scheduled" : "disabled",
+				updatedAt: new Date(2026, 7, 20, 23, 0, 0).toISOString(),
+			});
+			const install = vi.fn(
+				async () => ({ ok: true }) as LaunchAgentInstallResult,
+			);
+			const reconcile = vi.fn(
+				(input: Parameters<typeof reconcilePeriodDigestFreshness>[0]) =>
+					reconcilePeriodDigestFreshness({
+						...input,
+						freshnessSeconds: 4 * 60 * 60,
+						schedule: { hour: 7, minute: 30 },
+						install,
+					}),
+			);
+			const requestRun = vi.fn();
+			const input = {
+				period: "24h" as const,
+				origin: "page" as const,
+				now: new Date(2026, 7, 21, 8, 0, 0),
+				requestRun,
+				reconcile,
+			};
+
+			await expect(triggerDuePeriodDigestFreshness(input)).resolves.toEqual({
+				triggered: false,
+				reason: "not-due",
+				eligibleAt: new Date(2026, 7, 21, 11, 30, 0).toISOString(),
+			});
+			expect(reconcile).toHaveBeenCalledOnce();
+			expect(install).toHaveBeenCalledOnce();
+			expect(requestRun).not.toHaveBeenCalled();
+			await expect(
+				consumePeriodDigestFreshnessAttempt({
+					period: "24h",
+					attemptToken: "old-cycle-token",
+					origin: "launchd",
+					now: new Date(2026, 7, 21, 8, 1, 0),
+				}),
+			).resolves.toMatchObject({ valid: false, reason: "token-mismatch" });
+		},
+	);
+
+	it("rebuilds freshness state when both cycle timestamps are invalid", async () => {
+		publishCurrentSources("24h", new Date(2026, 7, 20, 9, 0, 0).toISOString());
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "24h",
+			attemptToken: "invalid-cycle-token",
+			dueAt: "invalid",
+			fireAt: "",
+			status: "scheduled",
+			updatedAt: "also-invalid",
+		});
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const reconcile = vi.fn(
+			(input: Parameters<typeof reconcilePeriodDigestFreshness>[0]) =>
+				reconcilePeriodDigestFreshness({
+					...input,
+					freshnessSeconds: 4 * 60 * 60,
+					schedule: { hour: 7, minute: 30 },
+					install,
+				}),
+		);
+		const requestRun = vi.fn();
+
+		await expect(
+			triggerDuePeriodDigestFreshness({
+				period: "24h",
+				origin: "page",
+				now: new Date(2026, 7, 21, 8, 0, 0),
+				requestRun,
+				reconcile,
+			}),
+		).resolves.toEqual({
+			triggered: false,
+			reason: "not-due",
+			eligibleAt: new Date(2026, 7, 21, 11, 30, 0).toISOString(),
+		});
+		expect(reconcile).toHaveBeenCalledOnce();
+		expect(install).toHaveBeenCalledOnce();
+		expect(requestRun).not.toHaveBeenCalled();
+	});
+
+	it("contains stale-state reconciliation failures at the trigger boundary", async () => {
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "stale-error-token",
+			dueAt: new Date(2026, 7, 20, 11, 0, 0).toISOString(),
+			fireAt: "",
+			status: "scheduled",
+			updatedAt: new Date(2026, 7, 20, 10, 0, 0).toISOString(),
+		});
+		const reconcile = vi.fn(async () =>
+			Promise.reject(new Error("scheduler locked")),
+		);
+		const requestRun = vi.fn();
+
+		await expect(
+			triggerDuePeriodDigestFreshness({
+				period: "today",
+				origin: "page",
+				now: new Date(2026, 7, 21, 8, 0, 0),
+				requestRun,
+				reconcile,
+			}),
+		).resolves.toEqual({
+			triggered: false,
+			reason: "reconcile-error",
+		});
+		expect(reconcile).toHaveBeenCalledOnce();
+		expect(requestRun).not.toHaveBeenCalled();
+	});
+
+	it("does not loop when an active cross-day run prevents rebuilding", async () => {
+		const previous: PeriodDigestFreshnessStateV1 = {
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "running-old-cycle",
+			dueAt: new Date(2026, 7, 20, 23, 30, 0).toISOString(),
+			fireAt: new Date(2026, 7, 20, 23, 30, 0).toISOString(),
+			status: "running",
+			startedAt: new Date(2026, 7, 21, 0, 1, 0).toISOString(),
+			updatedAt: new Date(2026, 7, 21, 0, 1, 0).toISOString(),
+		};
+		await writePeriodDigestFreshnessState(previous);
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const reconcile = vi.fn(
+			(input: Parameters<typeof reconcilePeriodDigestFreshness>[0]) =>
+				reconcilePeriodDigestFreshness({
+					...input,
+					freshnessSeconds: 4 * 60 * 60,
+					schedule: { hour: 7, minute: 0 },
+					install,
+				}),
+		);
+		const requestRun = vi.fn();
+		const input = {
+			period: "today" as const,
+			origin: "page" as const,
+			now: new Date(2026, 7, 21, 0, 5, 0),
+			requestRun,
+			reconcile,
+		};
+
+		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toEqual({
+			triggered: false,
+			reason: "cross-day",
+		});
+		expect(reconcile).toHaveBeenCalledOnce();
+		expect(install).not.toHaveBeenCalled();
+		expect(requestRun).not.toHaveBeenCalled();
+	});
+
+	it("starts one overdue daily baseline after rebuilding stale disabled state", async () => {
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "24h",
+			attemptToken: "disabled-old-cycle",
+			dueAt: "",
+			fireAt: "",
+			status: "disabled",
+			updatedAt: new Date(2026, 7, 20, 23, 0, 0).toISOString(),
+		});
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const reconcile = vi.fn(
+			(input: Parameters<typeof reconcilePeriodDigestFreshness>[0]) =>
+				reconcilePeriodDigestFreshness({
+					...input,
+					freshnessSeconds: 4 * 60 * 60,
+					schedule: { hour: 7, minute: 30 },
+					install,
+				}),
+		);
+		const requestRun = vi.fn(async () => ({
+			runId: "overdue-run",
+			joined: false,
+			completion: new Promise<{ phase: "completed" }>(() => undefined),
+		}));
+		const input = {
+			period: "24h" as const,
+			origin: "page" as const,
+			now: new Date(2026, 7, 21, 12, 0, 0),
+			requestRun,
+			reconcile,
+		};
+
+		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toMatchObject(
+			{
+				triggered: true,
+				runId: "overdue-run",
+			},
+		);
+		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toMatchObject(
+			{
+				triggered: false,
+				reason: "already-running",
+			},
+		);
+		expect(reconcile).toHaveBeenCalledOnce();
+		expect(install).toHaveBeenCalledOnce();
+		expect(requestRun).toHaveBeenCalledOnce();
+	});
+
+	it.each([
+		{ label: "current", updatedAt: new Date(2026, 7, 21, 8, 0, 0) },
+		{ label: "future", updatedAt: new Date(2026, 7, 22, 8, 0, 0) },
+	])("does not rebuild a $label-day disabled state", async ({ updatedAt }) => {
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: `${updatedAt.toISOString()}-disabled`,
+			dueAt: "",
+			fireAt: "",
+			status: "disabled",
+			updatedAt: updatedAt.toISOString(),
+		});
+		const reconcile = vi.fn();
+		const input = {
+			period: "today" as const,
+			origin: "page" as const,
+			now: new Date(2026, 7, 21, 9, 0, 0),
+			reconcile,
+		};
+
+		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toEqual({
+			triggered: false,
+			reason: "disabled",
+		});
+		expect(reconcile).not.toHaveBeenCalled();
+	});
+
 	it("reports a page-triggered all-source failure to the state machine", async () => {
 		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
 		await writePeriodDigestFreshnessState({
@@ -894,6 +1248,119 @@ describe("period digest freshness", () => {
 		});
 		expect(second.state.status).toBe("scheduled");
 		expect(maximumActiveInstalls).toBe(1);
+	});
+
+	it("starts a new daily attempt when source versions are unchanged", async () => {
+		publishCurrentSources(
+			"today",
+			new Date(2026, 7, 20, 9, 0, 0).toISOString(),
+		);
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+		const first = await reconcilePeriodDigestFreshness({
+			period: "today",
+			now: new Date(2026, 7, 20, 10, 0, 0),
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		});
+		await writePeriodDigestFreshnessState({
+			...first.state,
+			status: "consumed",
+			consumedAt: new Date(2026, 7, 20, 10, 1, 0).toISOString(),
+			completedAt: new Date(2026, 7, 20, 10, 1, 0).toISOString(),
+		});
+		install.mockClear();
+
+		const second = await reconcilePeriodDigestFreshness({
+			period: "today",
+			now: new Date(2026, 7, 21, 8, 30, 0),
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		});
+
+		expect(second.state).toMatchObject({
+			status: "scheduled",
+			dueAt: new Date(2026, 7, 21, 9, 0, 0).toISOString(),
+		});
+		expect(second.state.attemptToken).not.toBe(first.state.attemptToken);
+		expect(install).toHaveBeenCalledOnce();
+	});
+
+	it("does not inherit source suppressions from an earlier local day", async () => {
+		publishCurrentSources("24h", new Date(2026, 7, 20, 9, 0, 0).toISOString());
+		const sourceIdentities = {
+			all: "stable-all",
+			following: "stable-following",
+			for_you: "stable-for_you",
+		};
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "24h",
+			attemptToken: "previous-cycle",
+			dueAt: new Date(2026, 7, 20, 12, 0, 0).toISOString(),
+			fireAt: "",
+			status: "disabled",
+			updatedAt: new Date(2026, 7, 20, 23, 0, 0).toISOString(),
+			freshnessSeconds: 60 * 60,
+			sourceIdentities,
+			suppressedSourceIdentities: sourceIdentities,
+		});
+		const install = vi.fn(
+			async () => ({ ok: true }) as LaunchAgentInstallResult,
+		);
+
+		const reconciled = await reconcilePeriodDigestFreshness({
+			period: "24h",
+			now: new Date(2026, 7, 21, 8, 30, 0),
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install,
+		});
+
+		expect(reconciled.state).toMatchObject({
+			status: "scheduled",
+			dueAt: new Date(2026, 7, 21, 9, 0, 0).toISOString(),
+		});
+		expect(reconciled.state.suppressedSourceIdentities).toEqual({});
+		expect(install).toHaveBeenCalledOnce();
+	});
+
+	it("retains source suppressions within the same local day", async () => {
+		publishCurrentSources(
+			"today",
+			new Date(2026, 7, 20, 9, 0, 0).toISOString(),
+		);
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: "same-cycle",
+			dueAt: new Date(2026, 7, 20, 10, 0, 0).toISOString(),
+			fireAt: new Date(2026, 7, 20, 10, 0, 0).toISOString(),
+			status: "scheduled",
+			updatedAt: new Date(2026, 7, 20, 9, 30, 0).toISOString(),
+			freshnessSeconds: 60 * 60,
+			sourceIdentities: {
+				all: "stable-all",
+				following: "stable-following",
+				for_you: "stable-for_you",
+			},
+			suppressedSourceIdentities: { all: "stable-all" },
+		});
+
+		const reconciled = await reconcilePeriodDigestFreshness({
+			period: "today",
+			now: new Date(2026, 7, 20, 10, 0, 0),
+			freshnessSeconds: 60 * 60,
+			schedule: { hour: 8, minute: 0 },
+			install: vi.fn(async () => ({ ok: true }) as LaunchAgentInstallResult),
+		});
+
+		expect(reconciled.state.suppressedSourceIdentities).toEqual({
+			all: "stable-all",
+		});
 	});
 
 	it("disables reconciliation when the next-minute fire time crosses days", async () => {

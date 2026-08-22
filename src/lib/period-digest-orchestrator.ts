@@ -876,10 +876,14 @@ async function runOwnedBatch({
 			dependencies.now(),
 		);
 		if (!finalState) throw new Error("Period digest run ownership was lost");
-		if (completedSources > 0) {
-			const suppressSources = DEFAULT_SOURCE_ORDER.filter(
-				(contentSource) => finalState.sources[contentSource].state === "failed",
-			);
+		if (completedSources > 0 || request.trigger === "scheduled") {
+			const suppressSources =
+				completedSources > 0
+					? DEFAULT_SOURCE_ORDER.filter(
+							(contentSource) =>
+								finalState.sources[contentSource].state === "failed",
+						)
+					: [];
 			const deferLaunchAgentReload =
 				request.trigger === "freshness" && request.origin === "launchd";
 			const reconciliationOptions = {
@@ -911,6 +915,13 @@ async function runOwnedBatch({
 			dependencies.now(),
 		);
 		if (failed) {
+			if (request.trigger === "scheduled") {
+				const reconciliation = dependencies.reconcileFreshness?.(
+					request.period,
+					{ replaceRunningAttempt: true },
+				);
+				await reconciliation?.catch(() => undefined);
+			}
 			const observedFailed = await withJoinedTriggers(failed);
 			await dependencies.audit?.(observedFailed).catch(() => undefined);
 			return observedFailed;
