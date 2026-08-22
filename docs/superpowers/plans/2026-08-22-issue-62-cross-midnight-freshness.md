@@ -30,7 +30,7 @@ export PATH=/Users/friendfish/.nvm/versions/node/v26.5.0/bin:$PATH
 - Modify: `src/lib/period-digest-freshness.test.ts:26`
 - Modify: `src/lib/period-digest-freshness.ts:178`
 
-- [ ] **Step 1: Write the issue reproduction test**
+- [x] **Step 1: Write the issue reproduction test**
 
 Add this test after the first calculator test:
 
@@ -51,7 +51,7 @@ it("clamps cross-midnight source generations to the fixed daily schedule", () =>
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -61,7 +61,7 @@ node ./scripts/run-vitest.mjs run src/lib/period-digest-freshness.test.ts -t "cl
 
 Expected: FAIL because the current result is `2026-08-21 04:01` local time instead of 11:30.
 
-- [ ] **Step 3: Apply the minimum deadline floor**
+- [x] **Step 3: Apply the minimum deadline floor**
 
 Replace the source base selection with:
 
@@ -73,7 +73,7 @@ const generatedIsEligible =
 const base = generatedIsEligible ? generated : scheduledBase;
 ```
 
-- [ ] **Step 4: Verify GREEN and existing calculator behavior**
+- [x] **Step 4: Verify GREEN and existing calculator behavior**
 
 Run:
 
@@ -83,7 +83,7 @@ node ./scripts/run-vitest.mjs run src/lib/period-digest-freshness.test.ts -t "ge
 
 Expected: all selected calculator tests PASS, including the existing cross-midnight-disable case.
 
-- [ ] **Step 5: Commit the isolated calculator fix**
+- [x] **Step 5: Commit the isolated calculator fix**
 
 ```bash
 git add src/lib/period-digest-freshness.ts src/lib/period-digest-freshness.test.ts

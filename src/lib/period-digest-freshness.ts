@@ -189,10 +189,11 @@ export function calculatePeriodDigestFreshnessDeadline({
 		(contentSource) => !suppressed.has(contentSource),
 	).map((contentSource) => {
 		const generated = new Date(generatedAt[contentSource] ?? "");
-		const base =
-			Number.isFinite(generated.getTime()) && sameLocalDay(generated, now)
-				? generated
-				: scheduledBase;
+		const generatedIsEligible =
+			Number.isFinite(generated.getTime()) &&
+			sameLocalDay(generated, now) &&
+			generated.getTime() >= scheduledBase.getTime();
+		const base = generatedIsEligible ? generated : scheduledBase;
 		return new Date(base.getTime() + freshnessSeconds * 1_000);
 	});
 	if (candidates.length === 0) return null;

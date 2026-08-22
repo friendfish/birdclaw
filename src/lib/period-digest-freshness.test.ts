@@ -39,6 +39,21 @@ describe("period digest freshness", () => {
 		expect(due).toEqual(new Date(2026, 7, 6, 20, 0, 0));
 	});
 
+	it("clamps cross-midnight source generations to the fixed daily schedule", () => {
+		const due = calculatePeriodDigestFreshnessDeadline({
+			now: new Date(2026, 7, 21, 4, 2, 0),
+			freshnessSeconds: 4 * 60 * 60,
+			schedule: { hour: 7, minute: 30 },
+			generatedAt: {
+				following: new Date(2026, 7, 21, 0, 1, 0).toISOString(),
+				for_you: new Date(2026, 7, 21, 0, 7, 0).toISOString(),
+			},
+			suppressedSources: ["all"],
+		});
+
+		expect(due).toEqual(new Date(2026, 7, 21, 11, 30, 0));
+	});
+
 	it("suppresses a failed source version when calculating the next deadline", () => {
 		const due = calculatePeriodDigestFreshnessDeadline({
 			now: new Date(2026, 7, 6, 10, 0, 0),
