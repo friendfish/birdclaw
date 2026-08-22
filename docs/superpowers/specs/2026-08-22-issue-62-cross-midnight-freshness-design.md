@@ -170,6 +170,16 @@ previous state 的 `suppressedSourceIdentities` 也必须以同一 cycle 为继�
 suppression 会在 cycle 日变化时清空。这样同一日部分失败仍被抑制，而上一日失败不会
 让新一天的 baseline 缺少候选来源。
 
+“同一 cycle”复用下文“跨日 state 识别”的规则：有效 `dueAt` 所在本地自然日优先，
+否则使用 `updatedAt` 所在本地自然日。previous cycle 日只有与 calculationNow 属于
+同一本地自然日时，才允许按 freshnessSeconds 和 version identity 继承 suppression。
+这不是可选清理：如果上一日三个来源都被 suppress 且 version 未变，新一天固定任务
+又全量失败，跨日继承会让候选集为空、deadline 变成 `null`，直接抵消全量失败恢复。
+
+`sourceIdentities` 中现有的 `scheduled:${scheduledBase.toISOString()}` fallback 继续保留，
+它只为“该来源从未有 current digest”提供来源身份。新增的顶层 `cycleBase` 对所有来源
+生效，用来区分自然日生命周期；两者职责不同，不能互相替代。
+
 ### 跨日 state 识别
 
 trigger 读取 state 后按以下顺序决定是否重建：
@@ -230,12 +240,19 @@ sequenceDiagram
   P->>T: 请求同日 freshness
   T->>S: 读取上一日 disabled / cross-day state
   T->>R: 重建当天 cycle 与 deadline
-  R->>S: 写入当天 token、dueAt、fireAt
-  alt dueAt 尚未到达
-    T-->>P: not-due + eligibleAt
-  else dueAt 已到达
-    T->>S: 原子消费当天 attempt
-    T->>O: 启动或加入 period digest run
+  alt 上一日 running lease 或 period run lock 仍有效
+    R-->>T: 原样返回旧 state
+    T->>S: 仅执行一次正常 consume
+    S-->>T: cross-day / already-running
+    T-->>P: 返回拒绝原因，不循环 reconcile
+  else 允许重建
+    R->>S: 写入当天 token、dueAt、fireAt
+    alt dueAt 尚未到达
+      T-->>P: not-due + eligibleAt
+    else dueAt 已到达
+      T->>S: 原子消费当天 attempt
+      T->>O: 启动或加入 period digest run
+    end
   end
 ```
 
@@ -268,6 +285,17 @@ reconciliation 失败仍被吞掉，不覆盖摘要批次的真实 phase；state
 分别取得现有 scheduler lease；中间若有另一个进程完成 reconciliation，稳定的每日
 token 和锁仍会收敛到同一个 attempt。
 
+reconciliation 可能因 previous state 仍为 `running` 且 running lease 未过期，或真实
+period run lock 仍存在，而原样返回上一日 state。trigger 不把“调用成功”误判为“已经
+重建”，也不进入重试循环；它只把返回的 state 交给一次正常 consume，并传播
+`cross-day` 或 `already-running`。当前运行结束后的 publication reconciliation、
+completion 回写或下一次页面请求再负责建立当天 cycle。
+
+页面触发的跨日 reconciliation 保留默认 direct `installLaunchAgent`。这会让当天第一次
+页面请求同步执行一次 launchctl，可能增加少量延迟，但能确保页面关闭后仍有后台任务。
+不传 `deferLaunchAgentReload: true`：该选项会创建 helper 并等待调用者 PID 退出；在 web
+server 中调用会等待常驻 server 进程，最长 6 小时，反而延迟当天 freshness。
+
 ## 验收标准重述
 
 Issue 中“07:00/07:30 前不会因跨午夜结果生成 freshness deadline”按可执行语义重述为：
@@ -295,6 +323,9 @@ Issue 中“07:00/07:30 前不会因跨午夜结果生成 freshness deadline”�
 - deadline 跨本地午夜继续返回 `null` 并写入 disabled state。
 - 不修改 persisted state schema；旧 state 首次 reconciliation 时生成新的每日 token。
 - 升级前残留 launchd 使用旧 token，无法消费升级后或新一天的 attempt。
+- 上一日进入 retryable 或等待 reloader 的 pending attempt 在跨午夜后视为放弃；若当天
+  cycle 已重建则激活得到 token-mismatch，未重建时仍被 cross-day 规则拒绝。reloader
+  无论激活结果如何都会 unlink helper plist 并移除 helper label，不遗留调度项。
 - token mismatch、already-running、retryable、page recovery、reloader 和跨进程锁行为
   保持现有契约。
 - 本地时区和 DST 继续沿用 JavaScript Date 与 launchd calendar 的现有语义，不引入
@@ -327,15 +358,16 @@ Issue 中“07:00/07:30 前不会因跨午夜结果生成 freshness deadline”�
     `replaceRunningAttempt: true` 且不 suppress 三个旧来源。
 12. freshness 全量失败仍不由 orchestrator reconciliation 重置 attempt，继续由
     completion retry 状态机处理。
-13. 部分成功继续 suppress 失败来源，并按成功来源实际时间重排。
+13. manual 全量失败不触发 reconciliation，也不建立新的 freshness attempt。
+14. 部分成功继续 suppress 失败来源，并按成功来源实际时间重排。
 
 ### 回归验证
 
-14. 跨午夜完成 -> 07:30 固定任务成功 -> 新 deadline 按实际生成时间更新。
-15. 跨午夜完成 -> 固定任务全量失败 -> 11:30 baseline 仍可触发同日恢复。
-16. 既有 cross-day、token mismatch、already-running、retryable、page recovery、reloader
+15. 跨午夜完成 -> 07:30 固定任务成功 -> 新 deadline 按实际生成时间更新。
+16. 跨午夜完成 -> 固定任务全量失败 -> 11:30 baseline 仍可触发同日恢复。
+17. 既有 cross-day、token mismatch、already-running、retryable、page recovery、reloader
     和安装竞态测试全部通过。
-17. 先运行 freshness 与 orchestrator 聚焦套件，再运行全仓测试和质量检查。
+18. 先运行 freshness 与 orchestrator 聚焦套件，再运行全仓测试和质量检查。
 
 ## 非目标
 
