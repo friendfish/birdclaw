@@ -320,6 +320,15 @@ Issue 中“07:00/07:30 前不会因跨午夜结果生成 freshness deadline”�
 ## 错误处理与兼容性
 
 - 缺失、无效、上一日或早于 scheduledBase 的 `generatedAt` 使用 scheduledBase。
+- scheduled 批次在 pre-sync、凭证读取、context 收集等批次级阶段抛异常时，只要 owner
+  仍能成功写入 failed state，就用 `replaceRunningAttempt: true` reconciliation 建立当天
+  baseline；reconciliation 错误继续被吞掉，不覆盖批次失败原因。ownership 已丢失时不
+  reconciliation，避免旧 owner 覆盖新 owner 的状态。
+- persisted freshness state 的 `dueAt` 与 `updatedAt` 都无法解析时，cycle 无法归属，按
+  陈旧 state 处理并重建，而不是永久返回 cross-day。
+- 页面/CLI trigger 的跨日 reconciliation 若因 scheduler lease 超时或其他异常失败，返回
+  `{ triggered: false, reason: "reconcile-error" }`；不消费旧 token，也不让页面请求变成
+  500。下一次页面轮询仍可重试。
 - deadline 跨本地午夜继续返回 `null` 并写入 disabled state。
 - 不修改 persisted state schema；旧 state 首次 reconciliation 时生成新的每日 token。
 - 升级前残留 launchd 使用旧 token，无法消费升级后或新一天的 attempt。
@@ -360,14 +369,25 @@ Issue 中“07:00/07:30 前不会因跨午夜结果生成 freshness deadline”�
     completion retry 状态机处理。
 13. manual 全量失败不触发 reconciliation，也不建立新的 freshness attempt。
 14. 部分成功继续 suppress 失败来源，并按成功来源实际时间重排。
+15. scheduled 在 pre-sync 等批次级阶段抛异常时仍 reconciliation 当天 baseline；
+    freshness/manual 的批次级异常不建立新 attempt。
+
+### 损坏状态与错误边界单测
+
+16. `dueAt` 与 `updatedAt` 都不可解析的 persisted state 会先重建，再按当天 deadline
+    返回 not-due 或触发，不会永久 cross-day。
+17. 跨日 reconciliation 抛异常时 trigger 返回 `reconcile-error`，不调用 requestRun，
+    route 仍返回成功响应而不是 500。
+18. 21:00 固定时刻、4 小时 freshness、当天 21:00 前生成的候选经钳制后跨午夜，明确
+    断言 deadline 为 `null`。
 
 ### 回归验证
 
-15. 跨午夜完成 -> 07:30 固定任务成功 -> 新 deadline 按实际生成时间更新。
-16. 跨午夜完成 -> 固定任务全量失败 -> 11:30 baseline 仍可触发同日恢复。
-17. 既有 cross-day、token mismatch、already-running、retryable、page recovery、reloader
+19. 跨午夜完成 -> 07:30 固定任务成功 -> 新 deadline 按实际生成时间更新。
+20. 跨午夜完成 -> 固定任务全量失败或批次级异常 -> 11:30 baseline 仍可触发同日恢复。
+21. 既有 cross-day、token mismatch、already-running、retryable、page recovery、reloader
     和安装竞态测试全部通过。
-18. 先运行 freshness 与 orchestrator 聚焦套件，再运行全仓测试和质量检查。
+22. 先运行 freshness 与 orchestrator 聚焦套件，再运行全仓测试和质量检查。
 
 ## 非目标
 

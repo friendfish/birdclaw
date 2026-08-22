@@ -780,3 +780,145 @@ gh pr comment 63 --body "Implementation added with red/green coverage for the da
 ```
 
 Expected: PR #63 points at the final implementation commit and CI starts for the new head.
+
+### Task 6: Reconcile Scheduled Batch-Level Failures
+
+**Files:**
+- Modify: `src/lib/period-digest-orchestrator.test.ts`
+- Modify: `src/lib/period-digest-orchestrator.ts`
+
+- [ ] **Step 1: Write the failing scheduled pre-sync test**
+
+Add a scheduled counterpart to the existing pre-sync failure test:
+
+```ts
+it("reconciles the daily baseline when scheduled pre-sync fails", async () => {
+	const deps = dependencies({
+		preSync: vi.fn(async () => Promise.reject(new Error("sync unavailable"))),
+	});
+	const run = await requestPeriodDigestRun(
+		{ period: "24h", trigger: "scheduled", origin: "launchd" },
+		deps,
+	);
+
+	expect((await run.completion).phase).toBe("failed");
+	expect(deps.reconcileFreshness).toHaveBeenCalledWith("24h", {
+		replaceRunningAttempt: true,
+	});
+});
+```
+
+- [ ] **Step 2: Verify RED**
+
+Run:
+
+```bash
+node ./scripts/run-vitest.mjs run src/lib/period-digest-orchestrator.test.ts -t "scheduled pre-sync fails"
+```
+
+Expected: FAIL because the catch branch never calls `reconcileFreshness`.
+
+- [ ] **Step 3: Reconcile only after the failed state is owned and persisted**
+
+Inside `if (failed)`, before audit, add:
+
+```ts
+if (request.trigger === "scheduled") {
+	const reconciliation = dependencies.reconcileFreshness?.(request.period, {
+		replaceRunningAttempt: true,
+	});
+	await reconciliation?.catch(() => undefined);
+}
+```
+
+Keeping this inside `if (failed)` prevents an owner that lost its lease from rebuilding freshness.
+
+- [ ] **Step 4: Verify GREEN**
+
+Run the scheduled pre-sync and all-source failure tests. Expected: both PASS.
+
+### Task 7: Recover Invalid Cycles and Contain Trigger Reconciliation Errors
+
+**Files:**
+- Modify: `src/lib/period-digest-freshness.test.ts`
+- Modify: `src/lib/period-digest-freshness.ts`
+
+- [ ] **Step 1: Write failing invalid-cycle and reconciliation-error tests**
+
+Add one test with `dueAt: "invalid"` and `updatedAt: "invalid"` that injects real
+reconciliation and expects today's `not-due` baseline. Add a second earlier-day state whose injected
+reconciliation rejects and expect:
+
+```ts
+{
+	triggered: false,
+	reason: "reconcile-error",
+}
+```
+
+Both tests must assert `requestRun` was not called.
+
+- [ ] **Step 2: Verify RED**
+
+Run both new tests. Expected: invalid state returns `cross-day`; reconciliation rejection escapes.
+
+- [ ] **Step 3: Treat an unparseable cycle as stale**
+
+Change the helper to:
+
+```ts
+function freshnessStateIsFromEarlierLocalDay(
+	state: PeriodDigestFreshnessStateV1,
+	now: Date,
+) {
+	const cycleDate = freshnessStateCycleDate(state);
+	return (
+		!Number.isFinite(cycleDate.getTime()) || isEarlierLocalDay(cycleDate, now)
+	);
+}
+```
+
+- [ ] **Step 4: Catch reconciliation failures at the trigger boundary**
+
+Wrap only the reconciliation call in `try/catch`; on failure return
+`{ triggered: false as const, reason: "reconcile-error" as const }`. Do not consume the old state.
+
+- [ ] **Step 5: Verify GREEN and existing trigger behavior**
+
+Run the invalid-cycle, reconciliation-error, earlier-state, disabled, and running trigger tests.
+Expected: all PASS.
+
+### Task 8: Cover the Clamped Cross-Midnight Deadline
+
+**Files:**
+- Modify: `src/lib/period-digest-freshness.test.ts`
+
+- [ ] **Step 1: Add the missing deadline test**
+
+```ts
+it("returns null when the clamped daily baseline crosses midnight", () => {
+	const due = calculatePeriodDigestFreshnessDeadline({
+		now: new Date(2026, 7, 6, 20, 0, 0),
+		freshnessSeconds: 4 * 60 * 60,
+		schedule: { hour: 21, minute: 0 },
+		generatedAt: {
+			all: new Date(2026, 7, 6, 20, 30, 0).toISOString(),
+		},
+	});
+
+	expect(due).toBeNull();
+});
+```
+
+- [ ] **Step 2: Verify the characterization test passes**
+
+Run the deadline tests. Expected: PASS; this is coverage for already-approved behavior, not a
+production change.
+
+### Task 9: Final Verification and PR Follow-Up
+
+- [ ] **Step 1:** Run both complete focused suites.
+- [ ] **Step 2:** Run the full test suite.
+- [ ] **Step 3:** Run format, lint, and typecheck separately through Corepack.
+- [ ] **Step 4:** Inspect the final diff and clean worktree, then commit and push.
+- [ ] **Step 5:** Reply to the latest PR review with each residual item's implementation and CI result.
