@@ -71,8 +71,10 @@ describe("bird command Effect boundary", () => {
 			env: { AUTH_TOKEN: "explicit-auth", EXPLICIT_ONLY: "yes" },
 		});
 
+		// getBirdCommand() resolves `bird` to an absolute path when it is on PATH,
+		// so match the basename instead of pinning the host's PATH layout.
 		expect(execFileAsyncMock).toHaveBeenCalledWith(
-			"bird",
+			expect.stringMatching(/(^|\/)bird$/u),
 			["whoami"],
 			expect.objectContaining({
 				env: expect.objectContaining({
