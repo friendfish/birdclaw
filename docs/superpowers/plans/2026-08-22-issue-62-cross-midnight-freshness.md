@@ -98,7 +98,7 @@ git commit -m "fix: clamp freshness to daily schedule"
 - Modify: `src/lib/period-digest-freshness.ts:99-105`
 - Modify: `src/lib/period-digest-freshness.ts:970-1030`
 
-- [ ] **Step 1: Add current-digest test fixtures**
+- [x] **Step 1: Add current-digest test fixtures**
 
 Add these imports:
 
@@ -184,7 +184,7 @@ function publishCurrentSources(
 }
 ```
 
-- [ ] **Step 2: Write failing daily-token and suppression tests**
+- [x] **Step 2: Write failing daily-token and suppression tests**
 
 Add these reconciliation tests:
 
@@ -267,7 +267,7 @@ it("does not inherit source suppressions from an earlier local day", async () =>
 });
 ```
 
-- [ ] **Step 3: Run both tests and verify RED**
+- [x] **Step 3: Run both tests and verify RED**
 
 Run:
 
@@ -307,7 +307,7 @@ function freshnessStateIsFromEarlierLocalDay(
 }
 ```
 
-- [ ] **Step 5: Scope suppression inheritance and token identity to the daily cycle**
+- [x] **Step 5: Scope suppression inheritance and token identity to the daily cycle**
 
 Before `suppressedSourceIdentities`, calculate:
 
@@ -332,7 +332,7 @@ Add the cycle base to the token hash input:
 cycleBase: scheduledBase.toISOString(),
 ```
 
-- [ ] **Step 6: Preserve same-cycle suppression behavior**
+- [x] **Step 6: Preserve same-cycle suppression behavior**
 
 Add this passing characterization test:
 
@@ -373,7 +373,7 @@ it("retains source suppressions within the same local day", async () => {
 });
 ```
 
-- [ ] **Step 7: Verify GREEN and the reconciliation lifecycle suite**
+- [x] **Step 7: Verify GREEN and the reconciliation lifecycle suite**
 
 Run:
 
@@ -383,7 +383,7 @@ node ./scripts/run-vitest.mjs run src/lib/period-digest-freshness.test.ts -t "da
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 8: Commit the daily-cycle behavior**
+- [x] **Step 8: Commit the daily-cycle behavior**
 
 ```bash
 git add src/lib/period-digest-freshness.ts src/lib/period-digest-freshness.test.ts

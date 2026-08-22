@@ -104,6 +104,11 @@ function sameLocalDay(left: Date, right: Date) {
 	);
 }
 
+function freshnessStateCycleDate(state: PeriodDigestFreshnessStateV1) {
+	const dueAt = new Date(state.dueAt);
+	return Number.isFinite(dueAt.getTime()) ? dueAt : new Date(state.updatedAt);
+}
+
 function roundUpToMinute(value: Date) {
 	const rounded = new Date(value);
 	if (rounded.getSeconds() !== 0 || rounded.getMilliseconds() !== 0) {
@@ -990,6 +995,9 @@ async function reconcilePeriodDigestFreshnessInternal({
 		]),
 	) as Record<PeriodDigestContentSource, string>;
 	const previous = await readPeriodDigestFreshnessState(period);
+	const previousIsSameCycle = Boolean(
+		previous && sameLocalDay(freshnessStateCycleDate(previous), calculationNow),
+	);
 	const suppressedSourceIdentities = Object.fromEntries(
 		CONTENT_SOURCES.flatMap((contentSource) => {
 			const currentIdentity = sourceIdentities[contentSource];
@@ -997,7 +1005,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 				return [[contentSource, currentIdentity]];
 			}
 			const previousIdentity =
-				previous?.freshnessSeconds === freshnessSeconds
+				previousIsSameCycle && previous?.freshnessSeconds === freshnessSeconds
 					? previous.suppressedSourceIdentities?.[contentSource]
 					: undefined;
 			return previousIdentity === currentIdentity
@@ -1023,6 +1031,7 @@ async function reconcilePeriodDigestFreshnessInternal({
 				period,
 				freshnessSeconds,
 				schedule,
+				cycleBase: scheduledBase.toISOString(),
 				sourceIdentities,
 				suppressedSourceIdentities,
 			}),
