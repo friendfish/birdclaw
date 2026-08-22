@@ -843,10 +843,7 @@ describe("period digest freshness", () => {
 	);
 
 	it("rebuilds freshness state when both cycle timestamps are invalid", async () => {
-		publishCurrentSources(
-			"24h",
-			new Date(2026, 7, 20, 9, 0, 0).toISOString(),
-		);
+		publishCurrentSources("24h", new Date(2026, 7, 20, 9, 0, 0).toISOString());
 		await writePeriodDigestFreshnessState({
 			schemaVersion: 1,
 			period: "24h",

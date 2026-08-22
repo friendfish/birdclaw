@@ -328,7 +328,7 @@ Issue 中“07:00/07:30 前不会因跨午夜结果生成 freshness deadline”�
   陈旧 state 处理并重建，而不是永久返回 cross-day。
 - 页面/CLI trigger 的跨日 reconciliation 若因 scheduler lease 超时或其他异常失败，返回
   `{ triggered: false, reason: "reconcile-error" }`；不消费旧 token，也不让页面请求变成
-  500。下一次页面轮询仍可重试。
+  500。后续新的页面请求或组件生命周期可以重试；本次不新增客户端定时重试。
 - deadline 跨本地午夜继续返回 `null` 并写入 disabled state。
 - 不修改 persisted state schema；旧 state 首次 reconciliation 时生成新的每日 token。
 - 升级前残留 launchd 使用旧 token，无法消费升级后或新一天的 attempt。

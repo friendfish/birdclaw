@@ -782,9 +782,7 @@ describe("period digest orchestrator", () => {
 
 	it("reconciles the daily baseline when scheduled pre-sync fails", async () => {
 		const deps = dependencies({
-			preSync: vi.fn(async () =>
-				Promise.reject(new Error("sync unavailable")),
-			),
+			preSync: vi.fn(async () => Promise.reject(new Error("sync unavailable"))),
 		});
 		const run = await requestPeriodDigestRun(
 			{ period: "24h", trigger: "scheduled", origin: "launchd" },
