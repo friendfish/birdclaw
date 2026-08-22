@@ -126,6 +126,19 @@ describe("period digest freshness", () => {
 		expect(due).toEqual(new Date(2026, 7, 21, 11, 30, 0));
 	});
 
+	it("returns null when the clamped daily baseline crosses midnight", () => {
+		const due = calculatePeriodDigestFreshnessDeadline({
+			now: new Date(2026, 7, 6, 20, 0, 0),
+			freshnessSeconds: 4 * 60 * 60,
+			schedule: { hour: 21, minute: 0 },
+			generatedAt: {
+				all: new Date(2026, 7, 6, 20, 30, 0).toISOString(),
+			},
+		});
+
+		expect(due).toBeNull();
+	});
+
 	it("suppresses a failed source version when calculating the next deadline", () => {
 		const due = calculatePeriodDigestFreshnessDeadline({
 			now: new Date(2026, 7, 6, 10, 0, 0),

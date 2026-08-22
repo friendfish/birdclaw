@@ -893,7 +893,7 @@ Expected: all PASS.
 **Files:**
 - Modify: `src/lib/period-digest-freshness.test.ts`
 
-- [ ] **Step 1: Add the missing deadline test**
+- [x] **Step 1: Add the missing deadline test**
 
 ```ts
 it("returns null when the clamped daily baseline crosses midnight", () => {
@@ -910,7 +910,7 @@ it("returns null when the clamped daily baseline crosses midnight", () => {
 });
 ```
 
-- [ ] **Step 2: Verify the characterization test passes**
+- [x] **Step 2: Verify the characterization test passes**
 
 Run the deadline tests. Expected: PASS; this is coverage for already-approved behavior, not a
 production change.
