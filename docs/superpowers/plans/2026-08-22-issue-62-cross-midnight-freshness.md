@@ -921,4 +921,4 @@ production change.
 - [x] **Step 2:** Run the full test suite.
 - [x] **Step 3:** Run format, lint, and typecheck separately through Corepack.
 - [x] **Step 4:** Inspect the final diff and clean worktree, then commit and push.
-- [ ] **Step 5:** Reply to the latest PR review with each residual item's implementation and CI result.
+- [x] **Step 5:** Reply to the latest PR review with each residual item's implementation and CI result.
