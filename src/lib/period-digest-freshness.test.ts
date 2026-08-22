@@ -29,10 +29,7 @@ import type { LaunchAgent, LaunchAgentInstallResult } from "./launchd";
 
 const testHome = useTestHome({ prefix: "birdclaw-digest-freshness-" });
 
-function publishCurrentSources(
-	period: "today" | "24h",
-	generatedAt: string,
-) {
+function publishCurrentSources(period: "today" | "24h", generatedAt: string) {
 	const { db } = testHome();
 	for (const contentSource of [
 		"all",
@@ -909,14 +906,18 @@ describe("period digest freshness", () => {
 			reconcile,
 		};
 
-		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toMatchObject({
-			triggered: true,
-			runId: "overdue-run",
-		});
-		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toMatchObject({
-			triggered: false,
-			reason: "already-running",
-		});
+		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toMatchObject(
+			{
+				triggered: true,
+				runId: "overdue-run",
+			},
+		);
+		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toMatchObject(
+			{
+				triggered: false,
+				reason: "already-running",
+			},
+		);
 		expect(reconcile).toHaveBeenCalledOnce();
 		expect(install).toHaveBeenCalledOnce();
 		expect(requestRun).toHaveBeenCalledOnce();
@@ -925,33 +926,30 @@ describe("period digest freshness", () => {
 	it.each([
 		{ label: "current", updatedAt: new Date(2026, 7, 21, 8, 0, 0) },
 		{ label: "future", updatedAt: new Date(2026, 7, 22, 8, 0, 0) },
-	])(
-		"does not rebuild a $label-day disabled state",
-		async ({ updatedAt }) => {
-			await writePeriodDigestFreshnessState({
-				schemaVersion: 1,
-				period: "today",
-				attemptToken: `${updatedAt.toISOString()}-disabled`,
-				dueAt: "",
-				fireAt: "",
-				status: "disabled",
-				updatedAt: updatedAt.toISOString(),
-			});
-			const reconcile = vi.fn();
-			const input = {
-				period: "today" as const,
-				origin: "page" as const,
-				now: new Date(2026, 7, 21, 9, 0, 0),
-				reconcile,
-			};
+	])("does not rebuild a $label-day disabled state", async ({ updatedAt }) => {
+		await writePeriodDigestFreshnessState({
+			schemaVersion: 1,
+			period: "today",
+			attemptToken: `${updatedAt.toISOString()}-disabled`,
+			dueAt: "",
+			fireAt: "",
+			status: "disabled",
+			updatedAt: updatedAt.toISOString(),
+		});
+		const reconcile = vi.fn();
+		const input = {
+			period: "today" as const,
+			origin: "page" as const,
+			now: new Date(2026, 7, 21, 9, 0, 0),
+			reconcile,
+		};
 
-			await expect(triggerDuePeriodDigestFreshness(input)).resolves.toEqual({
-				triggered: false,
-				reason: "disabled",
-			});
-			expect(reconcile).not.toHaveBeenCalled();
-		},
-	);
+		await expect(triggerDuePeriodDigestFreshness(input)).resolves.toEqual({
+			triggered: false,
+			reason: "disabled",
+		});
+		expect(reconcile).not.toHaveBeenCalled();
+	});
 
 	it("reports a page-triggered all-source failure to the state machine", async () => {
 		const dueAt = new Date(2026, 7, 6, 10, 30, 0);
@@ -1205,10 +1203,7 @@ describe("period digest freshness", () => {
 	});
 
 	it("does not inherit source suppressions from an earlier local day", async () => {
-		publishCurrentSources(
-			"24h",
-			new Date(2026, 7, 20, 9, 0, 0).toISOString(),
-		);
+		publishCurrentSources("24h", new Date(2026, 7, 20, 9, 0, 0).toISOString());
 		const sourceIdentities = {
 			all: "stable-all",
 			following: "stable-following",
@@ -1273,9 +1268,7 @@ describe("period digest freshness", () => {
 			now: new Date(2026, 7, 20, 10, 0, 0),
 			freshnessSeconds: 60 * 60,
 			schedule: { hour: 8, minute: 0 },
-			install: vi.fn(
-				async () => ({ ok: true }) as LaunchAgentInstallResult,
-			),
+			install: vi.fn(async () => ({ ok: true }) as LaunchAgentInstallResult),
 		});
 
 		expect(reconciled.state.suppressedSourceIdentities).toEqual({

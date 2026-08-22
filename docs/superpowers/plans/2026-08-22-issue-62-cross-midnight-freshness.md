@@ -734,7 +734,7 @@ git commit -m "fix: retain freshness after scheduled failure"
 - Verify: `src/lib/period-digest-orchestrator.ts`
 - Verify: `src/lib/period-digest-orchestrator.test.ts`
 
-- [ ] **Step 1: Run both focused suites**
+- [x] **Step 1: Run both focused suites**
 
 ```bash
 node ./scripts/run-vitest.mjs run src/lib/period-digest-freshness.test.ts src/lib/period-digest-orchestrator.test.ts
@@ -742,7 +742,7 @@ node ./scripts/run-vitest.mjs run src/lib/period-digest-freshness.test.ts src/li
 
 Expected: all freshness and orchestrator tests PASS.
 
-- [ ] **Step 2: Run the complete test suite**
+- [x] **Step 2: Run the complete test suite**
 
 ```bash
 corepack pnpm run test
@@ -750,7 +750,7 @@ corepack pnpm run test
 
 Expected: all test files and tests PASS.
 
-- [ ] **Step 3: Run repository quality checks separately**
+- [x] **Step 3: Run repository quality checks separately**
 
 The host has a non-standard `pnpm` wrapper, so invoke each aggregate component through Corepack:
 
@@ -762,7 +762,7 @@ corepack pnpm run typecheck
 
 Expected: formatting clean, lint has zero warnings, typecheck exits 0.
 
-- [ ] **Step 4: Inspect the final patch**
+- [x] **Step 4: Inspect the final patch**
 
 ```bash
 git diff --check origin/main...HEAD
@@ -772,7 +772,7 @@ git log --oneline origin/main..HEAD
 
 Expected: no whitespace errors, clean worktree, and only Issue #62 design/implementation commits.
 
-- [ ] **Step 5: Push and update PR #63**
+- [x] **Step 5: Push and update PR #63**
 
 ```bash
 git push
