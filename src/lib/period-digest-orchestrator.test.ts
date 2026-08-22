@@ -776,7 +776,25 @@ describe("period digest orchestrator", () => {
 			sync: { status: "skipped" },
 		});
 		expect(deps.readCredentials).not.toHaveBeenCalled();
+		expect(deps.reconcileFreshness).not.toHaveBeenCalled();
 		expect(audit).toHaveBeenCalledOnce();
+	});
+
+	it("reconciles the daily baseline when scheduled pre-sync fails", async () => {
+		const deps = dependencies({
+			preSync: vi.fn(async () =>
+				Promise.reject(new Error("sync unavailable")),
+			),
+		});
+		const run = await requestPeriodDigestRun(
+			{ period: "24h", trigger: "scheduled", origin: "launchd" },
+			deps,
+		);
+
+		expect((await run.completion).phase).toBe("failed");
+		expect(deps.reconcileFreshness).toHaveBeenCalledWith("24h", {
+			replaceRunningAttempt: true,
+		});
 	});
 
 	it("reconciles the daily baseline when every scheduled source fails", async () => {

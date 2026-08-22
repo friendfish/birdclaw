@@ -787,7 +787,7 @@ Expected: PR #63 points at the final implementation commit and CI starts for the
 - Modify: `src/lib/period-digest-orchestrator.test.ts`
 - Modify: `src/lib/period-digest-orchestrator.ts`
 
-- [ ] **Step 1: Write the failing scheduled pre-sync test**
+- [x] **Step 1: Write the failing scheduled pre-sync test**
 
 Add a scheduled counterpart to the existing pre-sync failure test:
 
@@ -808,7 +808,7 @@ it("reconciles the daily baseline when scheduled pre-sync fails", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -818,7 +818,7 @@ node ./scripts/run-vitest.mjs run src/lib/period-digest-orchestrator.test.ts -t 
 
 Expected: FAIL because the catch branch never calls `reconcileFreshness`.
 
-- [ ] **Step 3: Reconcile only after the failed state is owned and persisted**
+- [x] **Step 3: Reconcile only after the failed state is owned and persisted**
 
 Inside `if (failed)`, before audit, add:
 
@@ -833,7 +833,7 @@ if (request.trigger === "scheduled") {
 
 Keeping this inside `if (failed)` prevents an owner that lost its lease from rebuilding freshness.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run the scheduled pre-sync and all-source failure tests. Expected: both PASS.
 

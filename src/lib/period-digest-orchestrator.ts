@@ -915,6 +915,13 @@ async function runOwnedBatch({
 			dependencies.now(),
 		);
 		if (failed) {
+			if (request.trigger === "scheduled") {
+				const reconciliation = dependencies.reconcileFreshness?.(
+					request.period,
+					{ replaceRunningAttempt: true },
+				);
+				await reconciliation?.catch(() => undefined);
+			}
 			const observedFailed = await withJoinedTriggers(failed);
 			await dependencies.audit?.(observedFailed).catch(() => undefined);
 			return observedFailed;
