@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { resolveUserPath } from "./launchd";
 
 export interface BirdclawPaths {
 	rootDir: string;
@@ -29,6 +30,11 @@ export interface DigestScheduleTime {
 	hour?: number;
 	minute?: number;
 	weekday?: number;
+}
+
+export interface BookmarkExportSchedule {
+	hour?: number;
+	minute?: number;
 }
 
 export const DEFAULT_DIGEST_FRESHNESS_SECONDS = 12 * 60 * 60;
@@ -60,6 +66,10 @@ export interface BirdclawConfig {
 	};
 	actions?: {
 		transport?: ActionsTransport;
+	};
+	bookmarks?: {
+		archiveDir?: string;
+		exportSchedule?: BookmarkExportSchedule;
 	};
 	digest?: {
 		freshnessSeconds?: number;
@@ -256,6 +266,32 @@ export function resolveDigestArchiveDir(requested?: string): string {
 	if (configuredDir) return path.resolve(configuredDir);
 
 	return path.join(getBirdclawPaths().rootDir, "digest-archive");
+}
+
+export function resolveBookmarkArchiveDir(requested?: string): string {
+	const configured = getBirdclawConfig().bookmarks?.archiveDir?.trim();
+	const selected = requested?.trim() || configured;
+	return selected
+		? resolveUserPath(selected)
+		: path.join(getBirdclawPaths().rootDir, "bookmark-archive");
+}
+
+export function resolveBookmarkExportSchedule() {
+	const configured = getBirdclawConfig().bookmarks?.exportSchedule;
+	return {
+		hour:
+			Number.isInteger(configured?.hour) &&
+			(configured?.hour ?? -1) >= 0 &&
+			(configured?.hour ?? 24) <= 23
+				? (configured?.hour ?? 3)
+				: 3,
+		minute:
+			Number.isInteger(configured?.minute) &&
+			(configured?.minute ?? -1) >= 0 &&
+			(configured?.minute ?? 60) <= 59
+				? (configured?.minute ?? 0)
+				: 0,
+	};
 }
 
 export function resolveActionsTransport(

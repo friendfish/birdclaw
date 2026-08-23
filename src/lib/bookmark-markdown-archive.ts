@@ -1,0 +1,351 @@
+import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { renderTweetMarkdown, renderTweetPlainText } from "./tweet-render";
+import type { TweetEntities, TweetMediaItem } from "./types";
+
+const USER_NOTES_START = "<!-- birdclaw:user-notes:start -->";
+const USER_NOTES_END = "<!-- birdclaw:user-notes:end -->";
+const CONTENT_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+
+export interface BookmarkArchiveRecord {
+	accountId: string;
+	accountHandle: string;
+	tweetId: string;
+	tweetUrl: string;
+	authorHandle: string;
+	authorName: string;
+	text: string;
+	tweetCreatedAt: string;
+	bookmarkedAt: string | null;
+	sourceUpdatedAt: string;
+	entities: TweetEntities;
+	media: TweetMediaItem[];
+}
+
+export interface BookmarkArchiveMetadata {
+	schemaVersion: 1;
+	accountId: string;
+	accountHandle: string;
+	tweetId: string;
+	tweetUrl: string;
+	authorHandle: string;
+	authorName: string;
+	tweetCreatedAt: string;
+	bookmarkedAt: string | null;
+	firstArchivedAt: string;
+	sourceUpdatedAt: string;
+	contentHash: string;
+	excerpt: string;
+}
+
+export interface ParsedBookmarkArchiveFile {
+	metadata: BookmarkArchiveMetadata;
+	userNotes: string;
+}
+
+interface RenderBookmarkArchiveState {
+	firstArchivedAt: string;
+	userNotes: string;
+}
+
+function stableValue(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(stableValue);
+	if (!value || typeof value !== "object") return value;
+	return Object.fromEntries(
+		Object.entries(value as Record<string, unknown>)
+			.sort(([left], [right]) => left.localeCompare(right))
+			.map(([key, entry]) => [key, stableValue(entry)]),
+	);
+}
+
+function bookmarkContentHash(record: BookmarkArchiveRecord) {
+	const canonical = JSON.stringify(
+		stableValue({
+			schemaVersion: 1,
+			accountId: record.accountId,
+			accountHandle: record.accountHandle,
+			tweetId: record.tweetId,
+			tweetUrl: record.tweetUrl,
+			authorHandle: record.authorHandle,
+			authorName: record.authorName,
+			text: record.text,
+			tweetCreatedAt: record.tweetCreatedAt,
+			bookmarkedAt: record.bookmarkedAt,
+			sourceUpdatedAt: record.sourceUpdatedAt,
+			entities: record.entities,
+			media: record.media,
+		}),
+	);
+	return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
+}
+
+function excerptForRecord(record: BookmarkArchiveRecord) {
+	return renderTweetPlainText(record.text, record.entities)
+		.replaceAll(/\s+/g, " ")
+		.trim()
+		.slice(0, 160);
+}
+
+function safePathSegment(value: string) {
+	if (!value || /[\u0000-\u001f\u007f]/u.test(value)) {
+		throw new Error("Invalid bookmark archive path segment");
+	}
+	const encoded = encodeURIComponent(value);
+	if (encoded === ".") return "%2E";
+	if (encoded === "..") return "%2E%2E";
+	return encoded;
+}
+
+function archiveDateParts(value: string) {
+	const date = new Date(value);
+	if (!Number.isFinite(date.getTime())) return null;
+	return {
+		year: String(date.getFullYear()).padStart(4, "0"),
+		month: String(date.getMonth() + 1).padStart(2, "0"),
+	};
+}
+
+function assertContainedPath(root: string, candidate: string) {
+	const relative = path.relative(root, candidate);
+	if (
+		relative === ".." ||
+		relative.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(relative)
+	) {
+		throw new Error("Bookmark archive path escapes archive directory");
+	}
+}
+
+export function resolveBookmarkArchiveItemPath(
+	archiveDir: string,
+	record: BookmarkArchiveRecord,
+) {
+	const root = path.resolve(archiveDir);
+	const accountSegment = safePathSegment(record.accountId);
+	const tweetSegment = safePathSegment(record.tweetId);
+	const date = archiveDateParts(record.tweetCreatedAt);
+	const candidate = date
+		? path.resolve(
+				root,
+				"accounts",
+				accountSegment,
+				date.year,
+				date.month,
+				`${tweetSegment}.md`,
+			)
+		: path.resolve(
+				root,
+				"accounts",
+				accountSegment,
+				"unknown-date",
+				`${tweetSegment}.md`,
+			);
+	assertContainedPath(root, candidate);
+	return candidate;
+}
+
+function yamlScalar(value: string | number | null) {
+	return value === null ? "null" : JSON.stringify(value);
+}
+
+function escapeMarkdownLabel(value: string) {
+	return value.replaceAll(/([\\`*_[\]<>])/g, "\\$1");
+}
+
+function mediaLabel(item: TweetMediaItem) {
+	if (item.type === "image") return "Image";
+	if (item.type === "video") return "Video";
+	if (item.type === "gif") return "GIF";
+	return "Media";
+}
+
+function renderLinks(record: BookmarkArchiveRecord) {
+	const seen = new Set<string>();
+	const lines: string[] = [];
+	for (const item of record.entities.urls ?? []) {
+		const url = item.expandedUrl || item.url;
+		if (!url || seen.has(url)) continue;
+		seen.add(url);
+		const label = item.displayUrl || url;
+		lines.push(`- [${escapeMarkdownLabel(label)}](${url})`);
+	}
+	return lines;
+}
+
+function renderMedia(record: BookmarkArchiveRecord) {
+	return record.media.map((item) => {
+		const label = item.altText?.trim() || "View media";
+		return `- ${mediaLabel(item)}: [${escapeMarkdownLabel(label)}](${item.url})`;
+	});
+}
+
+export function renderBookmarkArchiveFile(
+	record: BookmarkArchiveRecord,
+	state: RenderBookmarkArchiveState,
+) {
+	const metadata: BookmarkArchiveMetadata = {
+		schemaVersion: 1,
+		accountId: record.accountId,
+		accountHandle: record.accountHandle,
+		tweetId: record.tweetId,
+		tweetUrl: record.tweetUrl,
+		authorHandle: record.authorHandle,
+		authorName: record.authorName,
+		tweetCreatedAt: record.tweetCreatedAt,
+		bookmarkedAt: record.bookmarkedAt,
+		firstArchivedAt: state.firstArchivedAt,
+		sourceUpdatedAt: record.sourceUpdatedAt,
+		contentHash: bookmarkContentHash(record),
+		excerpt: excerptForRecord(record),
+	};
+	const frontmatter = [
+		"---",
+		`birdclaw_schema: ${yamlScalar(metadata.schemaVersion)}`,
+		`account_id: ${yamlScalar(metadata.accountId)}`,
+		`account_handle: ${yamlScalar(metadata.accountHandle)}`,
+		`tweet_id: ${yamlScalar(metadata.tweetId)}`,
+		`tweet_url: ${yamlScalar(metadata.tweetUrl)}`,
+		`author_handle: ${yamlScalar(metadata.authorHandle)}`,
+		`author_name: ${yamlScalar(metadata.authorName)}`,
+		`tweet_created_at: ${yamlScalar(metadata.tweetCreatedAt)}`,
+		`bookmarked_at: ${yamlScalar(metadata.bookmarkedAt)}`,
+		`first_archived_at: ${yamlScalar(metadata.firstArchivedAt)}`,
+		`source_updated_at: ${yamlScalar(metadata.sourceUpdatedAt)}`,
+		`birdclaw_content_hash: ${yamlScalar(metadata.contentHash)}`,
+		`excerpt: ${yamlScalar(metadata.excerpt)}`,
+		"---",
+	];
+	const dateLabel = archiveDateParts(record.tweetCreatedAt)
+		? record.tweetCreatedAt.slice(0, 10)
+		: "Unknown date";
+	const lines = [
+		...frontmatter,
+		"",
+		`# @${record.authorHandle} · ${dateLabel}`,
+		"",
+		"## Bookmark",
+		"",
+		renderTweetMarkdown(record.text, record.entities),
+		"",
+	];
+	const links = renderLinks(record);
+	if (links.length > 0) lines.push("## Links", "", ...links, "");
+	const media = renderMedia(record);
+	if (media.length > 0) lines.push("## Media", "", ...media, "");
+	lines.push(
+		"## Source",
+		"",
+		`- [Open on X](${record.tweetUrl})`,
+		`- Tweet ID: \`${record.tweetId}\``,
+		"",
+		"## My Notes",
+		"",
+		`${USER_NOTES_START}${state.userNotes}${USER_NOTES_END}`,
+		"",
+	);
+	return lines.join("\n");
+}
+
+function parseFrontmatter(markdown: string) {
+	if (!markdown.startsWith("---\n")) {
+		throw new Error("Invalid Birdclaw bookmark frontmatter");
+	}
+	const closing = markdown.indexOf("\n---\n", 4);
+	if (closing < 0) throw new Error("Invalid Birdclaw bookmark frontmatter");
+	const values = new Map<string, unknown>();
+	for (const line of markdown.slice(4, closing).split("\n")) {
+		const separator = line.indexOf(":");
+		if (separator <= 0)
+			throw new Error("Invalid Birdclaw bookmark frontmatter");
+		const key = line.slice(0, separator).trim();
+		if (!key || values.has(key)) {
+			throw new Error("Invalid Birdclaw bookmark frontmatter");
+		}
+		try {
+			values.set(key, JSON.parse(line.slice(separator + 1).trim()));
+		} catch {
+			throw new Error("Invalid Birdclaw bookmark frontmatter");
+		}
+	}
+	return values;
+}
+
+function requiredString(values: Map<string, unknown>, key: string) {
+	const value = values.get(key);
+	if (typeof value !== "string") {
+		throw new Error("Invalid Birdclaw bookmark frontmatter");
+	}
+	return value;
+}
+
+function nullableString(values: Map<string, unknown>, key: string) {
+	const value = values.get(key);
+	if (value !== null && typeof value !== "string") {
+		throw new Error("Invalid Birdclaw bookmark frontmatter");
+	}
+	return value;
+}
+
+function extractUserNotes(markdown: string) {
+	const start = markdown.indexOf(USER_NOTES_START);
+	const end = markdown.indexOf(USER_NOTES_END);
+	if (
+		start < 0 ||
+		end < start + USER_NOTES_START.length ||
+		start !== markdown.lastIndexOf(USER_NOTES_START) ||
+		end !== markdown.lastIndexOf(USER_NOTES_END)
+	) {
+		throw new Error("Invalid Birdclaw user notes markers");
+	}
+	return markdown.slice(start + USER_NOTES_START.length, end);
+}
+
+export function parseBookmarkArchiveFile(
+	markdown: string,
+): ParsedBookmarkArchiveFile {
+	const values = parseFrontmatter(markdown);
+	if (values.get("birdclaw_schema") !== 1) {
+		throw new Error("Invalid Birdclaw bookmark frontmatter");
+	}
+	const contentHash = requiredString(values, "birdclaw_content_hash");
+	if (!CONTENT_HASH_PATTERN.test(contentHash)) {
+		throw new Error("Invalid Birdclaw bookmark frontmatter");
+	}
+	return {
+		metadata: {
+			schemaVersion: 1,
+			accountId: requiredString(values, "account_id"),
+			accountHandle: requiredString(values, "account_handle"),
+			tweetId: requiredString(values, "tweet_id"),
+			tweetUrl: requiredString(values, "tweet_url"),
+			authorHandle: requiredString(values, "author_handle"),
+			authorName: requiredString(values, "author_name"),
+			tweetCreatedAt: requiredString(values, "tweet_created_at"),
+			bookmarkedAt: nullableString(values, "bookmarked_at"),
+			firstArchivedAt: requiredString(values, "first_archived_at"),
+			sourceUpdatedAt: requiredString(values, "source_updated_at"),
+			contentHash,
+			excerpt: requiredString(values, "excerpt"),
+		},
+		userNotes: extractUserNotes(markdown),
+	};
+}
+
+export async function writeTextFileAtomically(
+	filePath: string,
+	content: string,
+) {
+	const directory = path.dirname(filePath);
+	await fs.mkdir(directory, { recursive: true });
+	const temporaryPath = path.join(
+		directory,
+		`.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
+	);
+	try {
+		await fs.writeFile(temporaryPath, content, "utf8");
+		await fs.rename(temporaryPath, filePath);
+	} finally {
+		await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+	}
+}

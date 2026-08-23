@@ -11,6 +11,8 @@ import {
 	getDefaultAccountSelector,
 	resetBirdclawPathsForTests,
 	resolveActionsTransport,
+	resolveBookmarkArchiveDir,
+	resolveBookmarkExportSchedule,
 	resolveDigestArchiveDir,
 	resolveDigestFreshnessSeconds,
 	resolveDigestLaunchdExecution,
@@ -258,6 +260,59 @@ describe("config", () => {
 		expect(resolveDigestArchiveDir("/tmp/from-param")).toBe(
 			path.resolve("/tmp/from-param"),
 		);
+	});
+
+	it("resolves the bookmark archive directory in explicit > config > default order", () => {
+		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
+		tempRoots.push(tempRoot);
+		process.env.BIRDCLAW_HOME = tempRoot;
+
+		expect(resolveBookmarkArchiveDir()).toBe(
+			path.join(tempRoot, "bookmark-archive"),
+		);
+
+		writeFileSync(
+			path.join(tempRoot, "config.json"),
+			JSON.stringify({
+				bookmarks: { archiveDir: "~/Documents/Birdclaw/Bookmarks" },
+			}),
+		);
+		resetBirdclawPathsForTests();
+		process.env.BIRDCLAW_HOME = tempRoot;
+		expect(resolveBookmarkArchiveDir()).toBe(
+			path.join(os.homedir(), "Documents", "Birdclaw", "Bookmarks"),
+		);
+		expect(resolveBookmarkArchiveDir("~/urgent-bookmarks")).toBe(
+			path.join(os.homedir(), "urgent-bookmarks"),
+		);
+	});
+
+	it("resolves a valid bookmark export schedule and falls back per field", () => {
+		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
+		tempRoots.push(tempRoot);
+		process.env.BIRDCLAW_HOME = tempRoot;
+
+		expect(resolveBookmarkExportSchedule()).toEqual({ hour: 3, minute: 0 });
+
+		writeFileSync(
+			path.join(tempRoot, "config.json"),
+			JSON.stringify({
+				bookmarks: { exportSchedule: { hour: 23, minute: 59 } },
+			}),
+		);
+		resetBirdclawPathsForTests();
+		process.env.BIRDCLAW_HOME = tempRoot;
+		expect(resolveBookmarkExportSchedule()).toEqual({ hour: 23, minute: 59 });
+
+		writeFileSync(
+			path.join(tempRoot, "config.json"),
+			JSON.stringify({
+				bookmarks: { exportSchedule: { hour: 24, minute: -1 } },
+			}),
+		);
+		resetBirdclawPathsForTests();
+		process.env.BIRDCLAW_HOME = tempRoot;
+		expect(resolveBookmarkExportSchedule()).toEqual({ hour: 3, minute: 0 });
 	});
 
 	it("accepts 1-24 hour digest freshness and rejects invalid config values", () => {
