@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	buildBookmarkArchiveIndex,
 	parseBookmarkArchiveFile,
 	renderBookmarkArchiveFile,
 	resolveBookmarkArchiveItemPath,
@@ -190,5 +191,77 @@ describe("bookmark markdown archive", () => {
 
 		expect(await fs.readFile(filePath, "utf8")).toBe("second\n");
 		expect(await fs.readdir(path.dirname(filePath))).toEqual(["bookmark.md"]);
+	});
+
+	it("builds a permanent disk-derived index with deterministic ordering", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "bookmark-archive-"));
+		tempRoots.push(root);
+		const fixtures = [
+			makeRecord({
+				tweetId: "1950000000000000002",
+				tweetCreatedAt: "2026-08-23T12:00:00.000Z",
+				text: "Newest [bookmark]",
+				entities: {},
+			}),
+			makeRecord({
+				tweetId: "1950000000000000001",
+				tweetCreatedAt: "2026-08-23T12:00:00.000Z",
+				text: "Older tie-break bookmark",
+				entities: {},
+			}),
+			makeRecord({
+				accountId: "acct_secondary",
+				accountHandle: "secondary",
+				tweetId: "1800000000000000000",
+				tweetCreatedAt: "2025-01-02T08:00:00.000Z",
+				text: "Retained disk-only history",
+				entities: {},
+			}),
+			makeRecord({
+				tweetId: "1700000000000000000",
+				tweetCreatedAt: "unknown",
+				text: "Unknown date bookmark",
+				entities: {},
+			}),
+		];
+		for (const record of fixtures) {
+			await writeTextFileAtomically(
+				resolveBookmarkArchiveItemPath(root, record),
+				renderBookmarkArchiveFile(record, {
+					firstArchivedAt: "2026-08-24T03:00:00.000Z",
+					userNotes: "\n\n",
+				}),
+			);
+		}
+		const malformedPath = path.join(
+			root,
+			"accounts",
+			"acct_primary",
+			"2026",
+			"08",
+			"broken.md",
+		);
+		await writeTextFileAtomically(malformedPath, "not frontmatter\n");
+
+		const index = await buildBookmarkArchiveIndex(
+			root,
+			"2026-08-24T03:05:00.000Z",
+		);
+
+		expect(index.entryCount).toBe(4);
+		expect(index.unindexed).toHaveLength(1);
+		expect(index.markdown).toContain("- Total archived: 4");
+		expect(index.markdown).toContain("- Accounts: 2");
+		expect(index.markdown).toContain("- Date range: 2025-01-02 — 2026-08-23");
+		expect(index.markdown).toContain("## 2026-08 · 2");
+		expect(index.markdown).toContain("## 2025-01 · 1");
+		expect(index.markdown).toContain("## Unknown date · 1");
+		expect(index.markdown).toContain("## Unindexed files");
+		expect(index.markdown).toContain("accounts/acct_primary/2026/08/broken.md");
+		expect(index.markdown).toContain("Retained disk-only history");
+		expect(index.markdown).toContain("Newest \\[bookmark\\]");
+		expect(index.markdown.indexOf("1950000000000000002.md")).toBeLessThan(
+			index.markdown.indexOf("1950000000000000001.md"),
+		);
 	});
 });

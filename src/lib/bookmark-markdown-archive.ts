@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { renderTweetMarkdown, renderTweetPlainText } from "./tweet-render";
@@ -42,6 +43,23 @@ export interface BookmarkArchiveMetadata {
 export interface ParsedBookmarkArchiveFile {
 	metadata: BookmarkArchiveMetadata;
 	userNotes: string;
+}
+
+export interface BookmarkArchiveEntry {
+	path: string;
+	relativePath: string;
+	metadata: BookmarkArchiveMetadata;
+}
+
+export interface BookmarkArchiveProblem {
+	path: string;
+	relativePath: string;
+	error: string;
+}
+
+export interface BookmarkArchiveScanResult {
+	entries: BookmarkArchiveEntry[];
+	unindexed: BookmarkArchiveProblem[];
 }
 
 interface RenderBookmarkArchiveState {
@@ -329,6 +347,177 @@ export function parseBookmarkArchiveFile(
 			excerpt: requiredString(values, "excerpt"),
 		},
 		userNotes: extractUserNotes(markdown),
+	};
+}
+
+function errorMessage(error: unknown) {
+	return error instanceof Error ? error.message : String(error);
+}
+
+async function listMarkdownFiles(directory: string): Promise<string[]> {
+	let entries: Dirent[];
+	try {
+		entries = await fs.readdir(directory, { withFileTypes: true });
+	} catch (error) {
+		if (
+			typeof error === "object" &&
+			error !== null &&
+			"code" in error &&
+			error.code === "ENOENT"
+		) {
+			return [];
+		}
+		throw error;
+	}
+	const files: string[] = [];
+	for (const entry of entries) {
+		const entryPath = path.join(directory, entry.name);
+		if (entry.isDirectory()) {
+			files.push(...(await listMarkdownFiles(entryPath)));
+		} else if (entry.isFile() && entry.name.endsWith(".md")) {
+			files.push(entryPath);
+		}
+	}
+	return files;
+}
+
+function relativeArchivePath(root: string, filePath: string) {
+	return path.relative(root, filePath).split(path.sep).join("/");
+}
+
+export async function scanBookmarkArchive(
+	archiveDir: string,
+): Promise<BookmarkArchiveScanResult> {
+	const root = path.resolve(archiveDir);
+	const files = await listMarkdownFiles(path.join(root, "accounts"));
+	const result: BookmarkArchiveScanResult = { entries: [], unindexed: [] };
+	for (const filePath of files.sort()) {
+		const relativePath = relativeArchivePath(root, filePath);
+		try {
+			const parsed = parseBookmarkArchiveFile(
+				await fs.readFile(filePath, "utf8"),
+			);
+			result.entries.push({
+				path: filePath,
+				relativePath,
+				metadata: parsed.metadata,
+			});
+		} catch (error) {
+			result.unindexed.push({
+				path: filePath,
+				relativePath,
+				error: errorMessage(error),
+			});
+		}
+	}
+	return result;
+}
+
+function indexDate(value: string) {
+	const date = new Date(value);
+	if (!Number.isFinite(date.getTime())) return null;
+	const year = String(date.getFullYear()).padStart(4, "0");
+	const month = String(date.getMonth() + 1).padStart(2, "0");
+	const day = String(date.getDate()).padStart(2, "0");
+	return { date: `${year}-${month}-${day}`, month: `${year}-${month}` };
+}
+
+function compareArchiveEntries(
+	left: BookmarkArchiveEntry,
+	right: BookmarkArchiveEntry,
+) {
+	const byCreatedAt = right.metadata.tweetCreatedAt.localeCompare(
+		left.metadata.tweetCreatedAt,
+	);
+	return byCreatedAt === 0
+		? right.metadata.tweetId.localeCompare(left.metadata.tweetId)
+		: byCreatedAt;
+}
+
+function renderIndexEntry(entry: BookmarkArchiveEntry) {
+	const date = indexDate(entry.metadata.tweetCreatedAt)?.date ?? "Unknown date";
+	const label = escapeMarkdownLabel(
+		`@${entry.metadata.authorHandle} — ${entry.metadata.excerpt}`,
+	);
+	return `- ${date} · [${label}](${entry.relativePath})`;
+}
+
+export async function buildBookmarkArchiveIndex(
+	archiveDir: string,
+	generatedAt: string,
+) {
+	const scan = await scanBookmarkArchive(archiveDir);
+	const accounts = new Map<string, { handle: string; count: number }>();
+	const dated = new Map<string, BookmarkArchiveEntry[]>();
+	const unknown: BookmarkArchiveEntry[] = [];
+	const calendarDates: string[] = [];
+	for (const entry of scan.entries) {
+		const account = accounts.get(entry.metadata.accountId);
+		accounts.set(entry.metadata.accountId, {
+			handle: entry.metadata.accountHandle,
+			count: (account?.count ?? 0) + 1,
+		});
+		const date = indexDate(entry.metadata.tweetCreatedAt);
+		if (!date) {
+			unknown.push(entry);
+			continue;
+		}
+		calendarDates.push(date.date);
+		const monthEntries = dated.get(date.month) ?? [];
+		monthEntries.push(entry);
+		dated.set(date.month, monthEntries);
+	}
+	calendarDates.sort();
+	const dateRange =
+		calendarDates.length > 0
+			? `${calendarDates[0]} — ${calendarDates.at(-1)}`
+			: "Unknown";
+	const lines = [
+		"# Bookmark Archive",
+		"",
+		`- Total archived: ${String(scan.entries.length)}`,
+		`- Accounts: ${String(accounts.size)}`,
+		`- Date range: ${dateRange}`,
+		`- Last export: ${generatedAt}`,
+		"",
+		"## Accounts",
+		"",
+	];
+	for (const [accountId, account] of [...accounts.entries()].sort(
+		([leftId, left], [rightId, right]) =>
+			left.handle.localeCompare(right.handle) || leftId.localeCompare(rightId),
+	)) {
+		lines.push(
+			`- @${escapeMarkdownLabel(account.handle)} (\`${accountId}\`): ${String(account.count)}`,
+		);
+	}
+	lines.push("");
+	for (const month of [...dated.keys()].sort().reverse()) {
+		const entries = dated.get(month) ?? [];
+		entries.sort(compareArchiveEntries);
+		lines.push(`## ${month} · ${String(entries.length)}`, "");
+		for (const entry of entries) lines.push(renderIndexEntry(entry));
+		lines.push("");
+	}
+	if (unknown.length > 0) {
+		unknown.sort(compareArchiveEntries);
+		lines.push(`## Unknown date · ${String(unknown.length)}`, "");
+		for (const entry of unknown) lines.push(renderIndexEntry(entry));
+		lines.push("");
+	}
+	if (scan.unindexed.length > 0) {
+		lines.push("## Unindexed files", "");
+		for (const problem of scan.unindexed) {
+			lines.push(
+				`- [${escapeMarkdownLabel(problem.relativePath)}](${problem.relativePath}): ${escapeMarkdownLabel(problem.error)}`,
+			);
+		}
+		lines.push("");
+	}
+	return {
+		markdown: `${lines.join("\n").trimEnd()}\n`,
+		entryCount: scan.entries.length,
+		unindexed: scan.unindexed,
 	};
 }
 
