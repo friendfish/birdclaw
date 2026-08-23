@@ -81,6 +81,8 @@ const parseAccountSyncStepsMock = vi.hoisted(() => vi.fn());
 const runBookmarkSyncJobMock = vi.hoisted(() => vi.fn());
 const installBookmarkSyncLaunchAgentMock = vi.hoisted(() => vi.fn());
 const exportBookmarksMock = vi.hoisted(() => vi.fn());
+const runBookmarkExportJobMock = vi.hoisted(() => vi.fn());
+const installBookmarkExportLaunchAgentMock = vi.hoisted(() => vi.fn());
 const runDigestArchiveJobMock = vi.hoisted(() => vi.fn());
 const installDigestArchiveLaunchAgentMock = vi.hoisted(() => vi.fn());
 const installAllDigestArchiveLaunchAgentsMock = vi.hoisted(() => vi.fn());
@@ -151,6 +153,13 @@ vi.mock("#/lib/bookmark-sync-job", () => ({
 
 vi.mock("#/lib/bookmark-export", () => ({
 	exportBookmarks: (...args: unknown[]) => exportBookmarksMock(...args),
+}));
+
+vi.mock("#/lib/bookmark-export-job", () => ({
+	runBookmarkExportJob: (...args: unknown[]) =>
+		runBookmarkExportJobMock(...args),
+	installBookmarkExportLaunchAgent: (...args: unknown[]) =>
+		installBookmarkExportLaunchAgentMock(...args),
 }));
 
 vi.mock("#/lib/digest-archive-job", async (importOriginal) => {
@@ -495,6 +504,8 @@ describe("cli", () => {
 		runBookmarkSyncJobMock.mockReset();
 		installBookmarkSyncLaunchAgentMock.mockReset();
 		exportBookmarksMock.mockReset();
+		runBookmarkExportJobMock.mockReset();
+		installBookmarkExportLaunchAgentMock.mockReset();
 		runDigestArchiveJobMock.mockReset();
 		installDigestArchiveLaunchAgentMock.mockReset();
 		installAllDigestArchiveLaunchAgentsMock.mockReset();
@@ -796,6 +807,14 @@ describe("cli", () => {
 			startedAt: "2026-08-24T03:00:00.000Z",
 			finishedAt: "2026-08-24T03:00:01.000Z",
 		});
+		runBookmarkExportJobMock.mockResolvedValue({
+			job: "bookmark-export",
+			ok: true,
+		});
+		installBookmarkExportLaunchAgentMock.mockResolvedValue({
+			ok: true,
+			label: "com.steipete.birdclaw.bookmark-export",
+		});
 		requestPeriodDigestRunMock.mockResolvedValue({
 			runId: "credential-run",
 			joined: false,
@@ -925,6 +944,129 @@ describe("cli", () => {
 		expect(consoleLogMock).toHaveBeenLastCalledWith(
 			"Bookmark archive: 0 created, 0 updated, 1 unchanged, 1 conflicted",
 		);
+	});
+
+	it("forwards scheduled bookmark export and LaunchAgent options", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"--json",
+			"jobs",
+			"export-bookmarks",
+			"--account",
+			"acct_primary",
+			"--archive-dir",
+			"~/Archive/bookmarks",
+			"--full",
+			"--log",
+			"~/audit/bookmarks.jsonl",
+		]);
+
+		expect(runBookmarkExportJobMock).toHaveBeenCalledWith({
+			account: "acct_primary",
+			archiveDir: "~/Archive/bookmarks",
+			full: true,
+			logPath: "~/audit/bookmarks.jsonl",
+		});
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"--json",
+			"jobs",
+			"install-bookmark-export-launchd",
+			"--account",
+			"acct_primary",
+			"--archive-dir",
+			"~/Archive/bookmarks",
+			"--full",
+			"--hour",
+			"4",
+			"--minute",
+			"15",
+			"--program",
+			"/opt/homebrew/bin/birdclaw",
+			"--log",
+			"~/audit/bookmarks.jsonl",
+			"--env-path",
+			"~/private/bird.env",
+			"--stdout",
+			"~/logs/bookmarks.out.log",
+			"--stderr",
+			"~/logs/bookmarks.err.log",
+			"--launch-agents-dir",
+			"~/Library/LaunchAgents",
+			"--no-load",
+		]);
+
+		expect(installBookmarkExportLaunchAgentMock).toHaveBeenCalledWith({
+			account: "acct_primary",
+			archiveDir: "~/Archive/bookmarks",
+			full: true,
+			hour: 4,
+			minute: 15,
+			label: undefined,
+			program: "/opt/homebrew/bin/birdclaw",
+			logPath: "~/audit/bookmarks.jsonl",
+			envFile: "~/private/bird.env",
+			stdoutPath: "~/logs/bookmarks.out.log",
+			stderrPath: "~/logs/bookmarks.err.log",
+			launchAgentsDir: "~/Library/LaunchAgents",
+			load: false,
+		});
+	});
+
+	it("keeps configured bookmark schedule defaults and rejects invalid overrides", async () => {
+		const { runCli } = await loadCli();
+
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"install-bookmark-export-launchd",
+		]);
+		expect(installBookmarkExportLaunchAgentMock).toHaveBeenLastCalledWith(
+			expect.objectContaining({ hour: undefined, minute: undefined }),
+		);
+
+		installBookmarkExportLaunchAgentMock.mockClear();
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"install-bookmark-export-launchd",
+			"--hour",
+			"24",
+		]);
+		expect(process.exitCode).toBe(1);
+		expect(installBookmarkExportLaunchAgentMock).not.toHaveBeenCalled();
+
+		process.exitCode = undefined;
+		await runCli([
+			"node",
+			"birdclaw",
+			"jobs",
+			"install-bookmark-export-launchd",
+			"--minute",
+			"60",
+		]);
+		expect(process.exitCode).toBe(1);
+		expect(installBookmarkExportLaunchAgentMock).not.toHaveBeenCalled();
+	});
+
+	it("sets a failing exit code for a failed scheduled bookmark export", async () => {
+		runBookmarkExportJobMock.mockResolvedValue({
+			job: "bookmark-export",
+			ok: false,
+			error: "archive disk is full",
+		});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "jobs", "export-bookmarks"]);
+
+		expect(process.exitCode).toBe(1);
 	});
 
 	it("forwards account job mode only when explicitly selected", async () => {
