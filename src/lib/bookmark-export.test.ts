@@ -185,6 +185,61 @@ describe("bookmark export", () => {
 		).toBe(notes);
 	});
 
+	it("moves a bookmark when its source date changes and preserves user notes", async () => {
+		const home = seedDefaultAccount();
+		insertTestTweet(home.db, {
+			id: "tweet:moved",
+			authorProfileId: "profile:author",
+			text: "A bookmark whose timestamp was corrected",
+			createdAt: "2026-07-31T12:00:00.000Z",
+		});
+		insertBookmarkCollection(home.db, { tweetId: "tweet:moved" });
+		const archiveDir = home.makeTempDir("birdclaw-bookmarks-");
+		const now = () => new Date("2026-08-24T03:00:00.000Z");
+		await exportBookmarks({ archiveDir, db: home.db, now });
+		const oldPath = archivePath(
+			archiveDir,
+			"account:primary",
+			"2026",
+			"07",
+			"tweet:moved",
+		);
+		const notes = "\nkeep this note exactly  \n";
+		await fs.writeFile(
+			oldPath,
+			(await fs.readFile(oldPath, "utf8")).replace(
+				`${USER_NOTES_START}\n\n${USER_NOTES_END}`,
+				`${USER_NOTES_START}${notes}${USER_NOTES_END}`,
+			),
+			"utf8",
+		);
+		home.db
+			.prepare("update tweets set created_at = ? where id = ?")
+			.run("2026-08-01T00:01:00.000Z", "tweet:moved");
+
+		const result = await exportBookmarks({ archiveDir, db: home.db, now });
+		const newPath = archivePath(
+			archiveDir,
+			"account:primary",
+			"2026",
+			"08",
+			"tweet:moved",
+		);
+
+		expect(result).toMatchObject({
+			ok: true,
+			created: 0,
+			updated: 1,
+			unchanged: 0,
+			conflicted: 0,
+			indexEntries: 1,
+		});
+		await expect(fs.stat(oldPath)).rejects.toMatchObject({ code: "ENOENT" });
+		expect(
+			parseBookmarkArchiveFile(await fs.readFile(newPath, "utf8")).userNotes,
+		).toBe(notes);
+	});
+
 	it("leaves malformed user-note regions untouched and reports a conflict", async () => {
 		const home = seedDefaultAccount();
 		insertTestTweet(home.db, {
@@ -228,6 +283,37 @@ describe("bookmark export", () => {
 		await expect(
 			fs.readFile(path.join(archiveDir, "INDEX.md"), "utf8"),
 		).resolves.toContain("## Unindexed files");
+	});
+
+	it("reports completion after publishing the archive index", async () => {
+		const home = seedDefaultAccount();
+		insertTestTweet(home.db, {
+			id: "tweet:timing",
+			authorProfileId: "profile:author",
+			text: "Measure the completed export",
+			createdAt: "2026-08-23T12:00:00.000Z",
+		});
+		insertBookmarkCollection(home.db, { tweetId: "tweet:timing" });
+		const archiveDir = home.makeTempDir("birdclaw-bookmarks-");
+		const timestamps = [
+			"2026-08-24T03:00:00.000Z",
+			"2026-08-24T03:00:01.000Z",
+			"2026-08-24T03:00:02.000Z",
+		];
+		let timestampIndex = 0;
+
+		const result = await exportBookmarks({
+			archiveDir,
+			db: home.db,
+			acquireLock: false,
+			now: () => new Date(timestamps[timestampIndex++] ?? timestamps.at(-1)),
+		});
+
+		expect(result.startedAt).toBe(timestamps[0]);
+		expect(result.finishedAt).toBe(timestamps[2]);
+		await expect(
+			fs.readFile(path.join(archiveDir, "INDEX.md"), "utf8"),
+		).resolves.toContain(`- Last export: ${timestamps[1]}`);
 	});
 
 	it("isolates the same bookmark by account and preserves a null collected time", async () => {
@@ -333,6 +419,42 @@ describe("bookmark export", () => {
 		});
 		await expect(
 			fs.stat(path.join(archiveDir, "accounts")),
+		).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("rejects writes through symlinked directories inside the archive", async () => {
+		const home = seedDefaultAccount();
+		insertTestTweet(home.db, {
+			id: "tweet:symlink",
+			authorProfileId: "profile:author",
+			text: "This must remain inside the archive root",
+			createdAt: "2026-08-23T12:00:00.000Z",
+		});
+		insertBookmarkCollection(home.db, { tweetId: "tweet:symlink" });
+		const archiveDir = home.makeTempDir("birdclaw-bookmarks-");
+		const outsideDir = home.makeTempDir("birdclaw-bookmarks-outside-");
+		await fs.mkdir(path.join(archiveDir, "accounts"), { recursive: true });
+		await fs.symlink(
+			outsideDir,
+			path.join(archiveDir, "accounts", encodeURIComponent("account:primary")),
+		);
+
+		const result = await exportBookmarks({
+			archiveDir,
+			db: home.db,
+			now: () => new Date("2026-08-24T03:00:00.000Z"),
+		});
+
+		expect(result).toMatchObject({
+			ok: false,
+			created: 0,
+			updated: 0,
+			conflicted: 1,
+			indexEntries: 0,
+		});
+		expect(result.errors[0]?.error).toMatch(/symbolic link/iu);
+		await expect(
+			fs.stat(path.join(outsideDir, "2026", "08", "tweet%3Asymlink.md")),
 		).rejects.toMatchObject({ code: "ENOENT" });
 	});
 });

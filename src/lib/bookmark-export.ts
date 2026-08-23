@@ -4,9 +4,12 @@ import { findOperationAccount } from "./account-selection";
 import {
 	buildBookmarkArchiveIndex,
 	parseBookmarkArchiveFile,
+	removeFileWithinDirectory,
 	renderBookmarkArchiveFile,
 	resolveBookmarkArchiveItemPath,
+	scanBookmarkArchive,
 	writeTextFileAtomically,
+	type BookmarkArchiveEntry,
 	type BookmarkArchiveRecord,
 } from "./bookmark-markdown-archive";
 import { getBirdclawPaths, resolveBookmarkArchiveDir } from "./config";
@@ -131,6 +134,24 @@ function toArchiveRecord(row: BookmarkExportRow): BookmarkArchiveRecord {
 	};
 }
 
+function bookmarkIdentity(accountId: string, tweetId: string) {
+	return JSON.stringify([accountId, tweetId]);
+}
+
+function groupArchiveEntriesByIdentity(entries: BookmarkArchiveEntry[]) {
+	const grouped = new Map<string, BookmarkArchiveEntry[]>();
+	for (const entry of entries) {
+		const key = bookmarkIdentity(
+			entry.metadata.accountId,
+			entry.metadata.tweetId,
+		);
+		const matches = grouped.get(key) ?? [];
+		matches.push(entry);
+		grouped.set(key, matches);
+	}
+	return grouped;
+}
+
 async function readExistingFile(filePath: string) {
 	try {
 		return await fs.readFile(filePath, "utf8");
@@ -193,12 +214,37 @@ export async function exportBookmarks(
 	let updated = 0;
 	let unchanged = 0;
 	let conflicted = 0;
+	const existingEntries = groupArchiveEntriesByIdentity(
+		(await scanBookmarkArchive(archiveDir)).entries,
+	);
 
 	for (const row of readBookmarkRows(db, account.id)) {
 		const record = toArchiveRecord(row);
 		const filePath = resolveBookmarkArchiveItemPath(archiveDir, record);
 		try {
-			const existing = await readExistingFile(filePath);
+			const matches =
+				existingEntries.get(
+					bookmarkIdentity(record.accountId, record.tweetId),
+				) ?? [];
+			let existingPath = filePath;
+			let existing = await readExistingFile(filePath);
+			const otherMatches = matches.filter(
+				(entry) => path.resolve(entry.path) !== path.resolve(filePath),
+			);
+			if (existing !== undefined && otherMatches.length > 0) {
+				throw new Error(
+					`Multiple archive files exist for account ${record.accountId} and tweet ${record.tweetId}: ${[filePath, ...otherMatches.map((entry) => entry.path)].join(", ")}`,
+				);
+			}
+			if (existing === undefined && matches.length > 1) {
+				throw new Error(
+					`Multiple archive files exist for account ${record.accountId} and tweet ${record.tweetId}: ${matches.map((entry) => entry.path).join(", ")}`,
+				);
+			}
+			if (existing === undefined && matches.length === 1) {
+				existingPath = matches[0].path;
+				existing = await readExistingFile(existingPath);
+			}
 			if (existing === undefined) {
 				await writeTextFileAtomically(
 					filePath,
@@ -206,6 +252,7 @@ export async function exportBookmarks(
 						firstArchivedAt: startedAt,
 						userNotes: "\n\n",
 					}),
+					{ containmentRoot: archiveDir },
 				);
 				created += 1;
 				continue;
@@ -217,12 +264,21 @@ export async function exportBookmarks(
 				userNotes: parsedExisting.userNotes,
 			});
 			const nextHash = parseBookmarkArchiveFile(rendered).metadata.contentHash;
-			if (!options.full && nextHash === parsedExisting.metadata.contentHash) {
+			if (
+				existingPath === filePath &&
+				!options.full &&
+				nextHash === parsedExisting.metadata.contentHash
+			) {
 				unchanged += 1;
 				continue;
 			}
 
-			await writeTextFileAtomically(filePath, rendered);
+			await writeTextFileAtomically(filePath, rendered, {
+				containmentRoot: archiveDir,
+			});
+			if (existingPath !== filePath) {
+				await removeFileWithinDirectory(archiveDir, existingPath);
+			}
 			updated += 1;
 		} catch (error) {
 			conflicted += 1;
@@ -230,10 +286,10 @@ export async function exportBookmarks(
 		}
 	}
 
-	const finishedAt = now().toISOString();
+	const indexGeneratedAt = now().toISOString();
 	let indexEntries = 0;
 	try {
-		const index = await buildBookmarkArchiveIndex(archiveDir, finishedAt);
+		const index = await buildBookmarkArchiveIndex(archiveDir, indexGeneratedAt);
 		indexEntries = index.entryCount;
 		for (const problem of index.unindexed) {
 			errorsByPath.set(problem.path, problem.error);
@@ -241,10 +297,12 @@ export async function exportBookmarks(
 		await writeTextFileAtomically(
 			path.join(archiveDir, "INDEX.md"),
 			index.markdown,
+			{ containmentRoot: archiveDir },
 		);
 	} catch (error) {
 		errorsByPath.set(path.join(archiveDir, "INDEX.md"), errorMessage(error));
 	}
+	const finishedAt = now().toISOString();
 
 	const errors = [...errorsByPath.entries()]
 		.sort(([left], [right]) => left.localeCompare(right))

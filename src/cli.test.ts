@@ -942,7 +942,7 @@ describe("cli", () => {
 
 		expect(process.exitCode).toBe(1);
 		expect(consoleLogMock).toHaveBeenLastCalledWith(
-			"Bookmark archive: 0 created, 0 updated, 1 unchanged, 1 conflicted",
+			"Bookmark archive: 0 created, 0 updated, 1 unchanged, 1 conflicted\nErrors:\n- broken.md: Invalid markers",
 		);
 	});
 

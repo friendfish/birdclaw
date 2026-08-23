@@ -22,14 +22,14 @@ export function registerBookmarkCommands({
 				archiveDir: options.archiveDir,
 				full: Boolean(options.full),
 			});
-			print(
-				asJson()
-					? result
-					: result.skipped
-						? `Bookmark archive: skipped (${result.skipped})`
-						: `Bookmark archive: ${String(result.created)} created, ${String(result.updated)} updated, ${String(result.unchanged)} unchanged, ${String(result.conflicted)} conflicted`,
-				asJson(),
-			);
+			const summary = result.skipped
+				? `Bookmark archive: skipped (${result.skipped})`
+				: `Bookmark archive: ${String(result.created)} created, ${String(result.updated)} updated, ${String(result.unchanged)} unchanged, ${String(result.conflicted)} conflicted`;
+			const humanResult =
+				result.errors.length === 0
+					? summary
+					: `${summary}\nErrors:\n${result.errors.map((entry) => `- ${entry.path}: ${entry.error}`).join("\n")}`;
+			print(asJson() ? result : humanResult, asJson());
 			if (!result.ok) process.exitCode = 1;
 		});
 }

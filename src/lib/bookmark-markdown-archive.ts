@@ -67,6 +67,10 @@ interface RenderBookmarkArchiveState {
 	userNotes: string;
 }
 
+interface AtomicWriteOptions {
+	containmentRoot?: string;
+}
+
 function stableValue(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(stableValue);
 	if (!value || typeof value !== "object") return value;
@@ -133,6 +137,58 @@ function assertContainedPath(root: string, candidate: string) {
 	) {
 		throw new Error("Bookmark archive path escapes archive directory");
 	}
+}
+
+function isErrorCode(error: unknown, code: string) {
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		"code" in error &&
+		error.code === code
+	);
+}
+
+async function assertSafeContainedParent(
+	containmentRoot: string,
+	filePath: string,
+	createMissing: boolean,
+) {
+	const root = path.resolve(containmentRoot);
+	const candidate = path.resolve(filePath);
+	const directory = path.dirname(candidate);
+	assertContainedPath(root, candidate);
+	assertContainedPath(root, directory);
+	await fs.mkdir(root, { recursive: true });
+
+	let current = root;
+	const relativeDirectory = path.relative(root, directory);
+	for (const segment of relativeDirectory.split(path.sep).filter(Boolean)) {
+		current = path.join(current, segment);
+		let stats;
+		try {
+			stats = await fs.lstat(current);
+		} catch (error) {
+			if (!createMissing || !isErrorCode(error, "ENOENT")) throw error;
+			try {
+				await fs.mkdir(current);
+			} catch (mkdirError) {
+				if (!isErrorCode(mkdirError, "EEXIST")) throw mkdirError;
+			}
+			stats = await fs.lstat(current);
+		}
+		if (stats.isSymbolicLink()) {
+			throw new Error(
+				`Bookmark archive path contains a symbolic link: ${current}`,
+			);
+		}
+		if (!stats.isDirectory()) {
+			throw new Error(`Bookmark archive parent is not a directory: ${current}`);
+		}
+	}
+
+	const realRoot = await fs.realpath(root);
+	const realDirectory = await fs.realpath(directory);
+	assertContainedPath(realRoot, realDirectory);
 }
 
 export function resolveBookmarkArchiveItemPath(
@@ -443,7 +499,19 @@ function renderIndexEntry(entry: BookmarkArchiveEntry) {
 	const label = escapeMarkdownLabel(
 		`@${entry.metadata.authorHandle} — ${entry.metadata.excerpt}`,
 	);
-	return `- ${date} · [${label}](${entry.relativePath})`;
+	return `- ${date} · [${label}](${markdownPathDestination(entry.relativePath)})`;
+}
+
+function markdownPathDestination(relativePath: string) {
+	return relativePath
+		.split("/")
+		.map((segment) =>
+			encodeURIComponent(segment).replaceAll(
+				/[!'()*]/gu,
+				(character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+			),
+		)
+		.join("/");
 }
 
 export async function buildBookmarkArchiveIndex(
@@ -513,7 +581,7 @@ export async function buildBookmarkArchiveIndex(
 		lines.push("## Unindexed files", "");
 		for (const problem of scan.unindexed) {
 			lines.push(
-				`- [${escapeMarkdownLabel(problem.relativePath)}](${problem.relativePath}): ${escapeMarkdownLabel(problem.error)}`,
+				`- [${escapeMarkdownLabel(problem.relativePath)}](${markdownPathDestination(problem.relativePath)}): ${escapeMarkdownLabel(problem.error)}`,
 			);
 		}
 		lines.push("");
@@ -528,9 +596,14 @@ export async function buildBookmarkArchiveIndex(
 export async function writeTextFileAtomically(
 	filePath: string,
 	content: string,
+	options: AtomicWriteOptions = {},
 ) {
 	const directory = path.dirname(filePath);
-	await fs.mkdir(directory, { recursive: true });
+	if (options.containmentRoot) {
+		await assertSafeContainedParent(options.containmentRoot, filePath, true);
+	} else {
+		await fs.mkdir(directory, { recursive: true });
+	}
 	const temporaryPath = path.join(
 		directory,
 		`.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
@@ -541,4 +614,12 @@ export async function writeTextFileAtomically(
 	} finally {
 		await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
 	}
+}
+
+export async function removeFileWithinDirectory(
+	containmentRoot: string,
+	filePath: string,
+) {
+	await assertSafeContainedParent(containmentRoot, filePath, false);
+	await fs.rm(filePath);
 }

@@ -238,7 +238,7 @@ describe("bookmark markdown archive", () => {
 				entities: {},
 			}),
 			makeRecord({
-				accountId: "acct_secondary",
+				accountId: "acct/secondary",
 				accountHandle: "secondary",
 				tweetId: "1800000000000000000",
 				tweetCreatedAt: "2025-01-02T08:00:00.000Z",
@@ -287,6 +287,9 @@ describe("bookmark markdown archive", () => {
 		expect(index.markdown).toContain("## Unindexed files");
 		expect(index.markdown).toContain("accounts/acct_primary/2026/08/broken.md");
 		expect(index.markdown).toContain("Retained disk-only history");
+		expect(index.markdown).toContain(
+			"(accounts/acct%252Fsecondary/2025/01/1800000000000000000.md)",
+		);
 		expect(index.markdown).toContain("Newest \\[bookmark\\]");
 		expect(index.markdown.indexOf("1950000000000000002.md")).toBeLessThan(
 			index.markdown.indexOf("1950000000000000001.md"),
