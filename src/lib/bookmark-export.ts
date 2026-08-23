@@ -1,9 +1,9 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import { findOperationAccount } from "./account-selection";
 import {
 	buildBookmarkArchiveIndex,
 	parseBookmarkArchiveFile,
+	readTextFileWithinDirectory,
 	renderBookmarkArchiveFile,
 	resolveBookmarkArchiveItemPath,
 	scanBookmarkArchive,
@@ -137,6 +137,13 @@ function bookmarkIdentity(accountId: string, tweetId: string) {
 	return JSON.stringify([accountId, tweetId]);
 }
 
+function unresolvedBookmarkLocation(
+	archiveDir: string,
+	row: BookmarkExportRow,
+) {
+	return `${path.join(archiveDir, "accounts")} [account=${JSON.stringify(row.account_id)}, tweet=${JSON.stringify(row.tweet_id)}]`;
+}
+
 function groupArchiveEntriesByIdentity(entries: BookmarkArchiveEntry[]) {
 	const grouped = new Map<string, BookmarkArchiveEntry[]>();
 	for (const entry of entries) {
@@ -151,9 +158,9 @@ function groupArchiveEntriesByIdentity(entries: BookmarkArchiveEntry[]) {
 	return grouped;
 }
 
-async function readExistingFile(filePath: string) {
+async function readExistingFile(archiveDir: string, filePath: string) {
 	try {
-		return await fs.readFile(filePath, "utf8");
+		return await readTextFileWithinDirectory(archiveDir, filePath);
 	} catch (error) {
 		if (isNotFound(error)) return undefined;
 		throw error;
@@ -218,7 +225,7 @@ export async function exportBookmarks(
 	);
 
 	for (const row of readBookmarkRows(db, account.id)) {
-		let errorPath = path.join(archiveDir, "accounts");
+		let errorPath = unresolvedBookmarkLocation(archiveDir, row);
 		try {
 			const record = toArchiveRecord(row);
 			const filePath = resolveBookmarkArchiveItemPath(archiveDir, record);
@@ -228,7 +235,7 @@ export async function exportBookmarks(
 					bookmarkIdentity(record.accountId, record.tweetId),
 				) ?? [];
 			let existingPath = filePath;
-			let existing = await readExistingFile(filePath);
+			let existing = await readExistingFile(archiveDir, filePath);
 			const otherMatches = matches.filter(
 				(entry) => path.resolve(entry.path) !== path.resolve(filePath),
 			);
@@ -244,7 +251,7 @@ export async function exportBookmarks(
 			}
 			if (existing === undefined && matches.length === 1) {
 				existingPath = matches[0].path;
-				existing = await readExistingFile(existingPath);
+				existing = await readExistingFile(archiveDir, existingPath);
 			}
 			if (existing === undefined) {
 				await writeTextFileAtomically(

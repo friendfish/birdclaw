@@ -449,6 +449,14 @@ describe("bookmark export", () => {
 		const archiveDir = home.makeTempDir("birdclaw-bookmarks-");
 		const outsideDir = home.makeTempDir("birdclaw-bookmarks-outside-");
 		await fs.mkdir(path.join(archiveDir, "accounts"), { recursive: true });
+		const outsideFile = path.join(
+			outsideDir,
+			"2026",
+			"08",
+			"tweet%3Asymlink.md",
+		);
+		await fs.mkdir(path.dirname(outsideFile), { recursive: true });
+		await fs.writeFile(outsideFile, "external file must not be read\n", "utf8");
 		await fs.symlink(
 			outsideDir,
 			path.join(archiveDir, "accounts", encodeURIComponent("account:primary")),
@@ -467,10 +475,13 @@ describe("bookmark export", () => {
 			conflicted: 1,
 			indexEntries: 0,
 		});
-		expect(result.errors[0]?.error).toMatch(/symbolic link/iu);
-		await expect(
-			fs.stat(path.join(outsideDir, "2026", "08", "tweet%3Asymlink.md")),
-		).rejects.toMatchObject({ code: "ENOENT" });
+		expect(
+			result.errors.find((entry) => entry.path.endsWith("tweet%3Asymlink.md"))
+				?.error,
+		).toMatch(/symbolic link/iu);
+		await expect(fs.readFile(outsideFile, "utf8")).resolves.toBe(
+			"external file must not be read\n",
+		);
 	});
 
 	it("reports an unsafe bookmark id and continues exporting other items", async () => {
@@ -487,8 +498,15 @@ describe("bookmark export", () => {
 			text: "This bookmark has an unsafe id",
 			createdAt: "2026-08-22T12:00:00.000Z",
 		});
+		insertTestTweet(home.db, {
+			id: "tweet:\u0001unsafe",
+			authorProfileId: "profile:author",
+			text: "This second bookmark also has an unsafe id",
+			createdAt: "2026-08-21T12:00:00.000Z",
+		});
 		insertBookmarkCollection(home.db, { tweetId: "tweet:safe" });
 		insertBookmarkCollection(home.db, { tweetId: "tweet:\u0000unsafe" });
+		insertBookmarkCollection(home.db, { tweetId: "tweet:\u0001unsafe" });
 		const archiveDir = home.makeTempDir("birdclaw-bookmarks-");
 
 		const result = await exportBookmarks({
@@ -502,13 +520,19 @@ describe("bookmark export", () => {
 			created: 1,
 			updated: 0,
 			unchanged: 0,
-			conflicted: 1,
+			conflicted: 2,
 			indexEntries: 1,
 		});
-		expect(result.errors).toEqual([
-			expect.objectContaining({
-				error: "Invalid bookmark archive path segment",
-			}),
+		expect(result.errors).toHaveLength(2);
+		expect(result.errors.map((entry) => entry.path).join("\n")).toContain(
+			"tweet:\\u0000unsafe",
+		);
+		expect(result.errors.map((entry) => entry.path).join("\n")).toContain(
+			"tweet:\\u0001unsafe",
+		);
+		expect(result.errors.map((entry) => entry.error)).toEqual([
+			"Invalid bookmark archive path segment",
+			"Invalid bookmark archive path segment",
 		]);
 		await expect(
 			fs.readFile(

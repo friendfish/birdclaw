@@ -521,7 +521,7 @@ export async function scanBookmarkArchive(
 		const relativePath = relativeArchivePath(root, filePath);
 		try {
 			const parsed = parseBookmarkArchiveFile(
-				await fs.readFile(filePath, "utf8"),
+				await readTextFileWithinDirectory(root, filePath),
 			);
 			result.entries.push({
 				path: filePath,
@@ -660,6 +660,21 @@ export async function buildBookmarkArchiveIndex(
 		entryCount: scan.entries.length,
 		unindexed: scan.unindexed,
 	};
+}
+
+export async function readTextFileWithinDirectory(
+	containmentRoot: string,
+	filePath: string,
+) {
+	await assertSafeContainedParent(containmentRoot, filePath, false);
+	const stats = await fs.lstat(filePath);
+	if (stats.isSymbolicLink()) {
+		throw new Error(`Bookmark archive file is a symbolic link: ${filePath}`);
+	}
+	if (!stats.isFile()) {
+		throw new Error(`Bookmark archive path is not a file: ${filePath}`);
+	}
+	return fs.readFile(filePath, "utf8");
 }
 
 export async function writeTextFileAtomically(
