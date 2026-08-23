@@ -24,6 +24,7 @@ Status: WIP. Real and usable. Not done. Expect schema churn, transport gaps, and
 - merge-safe archive re-imports that preserve destination-only rows, with `--restore` for deliberate exact replacement
 - source-attributed tombstones for explicit deleted-tweet records, including subordinate media/quote tombstones and observable edit-chain revisions
 - archive import for bookmark exports when present
+- permanent one-file-per-bookmark Markdown export with protected notes, a disk-derived index, and daily scheduling
 - explicit, disabled-by-default import of named public tweets through the fixed read-only FxTwitter endpoint, with durable source provenance
 - archive import streams bundled media files into the local originals cache and extracts `video_info.variants[]` for video and animated-GIF rows
 - live authored sync through `xurl`, plus likes and bookmarks through `xurl` or `bird`
@@ -121,6 +122,7 @@ Default root:
 Important paths:
 
 - DB: `~/.birdclaw/birdclaw.sqlite`
+- bookmark Markdown archive: `~/.birdclaw/bookmark-archive`
 - media cache: `~/.birdclaw/media`
 - archive-extracted media: `~/.birdclaw/media/originals/archive/<kind>/<id>/<filename>` where `<kind>` is one of `tweets`, `dms`, `community`, `deleted`, `profile`, `moments`, `dmGroup`
 - avatar cache: `~/.birdclaw/media/thumbs/avatars`
@@ -435,6 +437,24 @@ birdclaw research "codex" --limit 20 --thread-depth 10 --json
 birdclaw research --account acct_primary --out ~/research/codex.md
 ```
 
+### Archive bookmarks as Markdown
+
+`birdclaw bookmarks export` maintains a permanent local reading archive without
+contacting X. It writes one file per bookmark, preserves notes inside an explicit
+user-owned marker region, never removes historical files, and rebuilds a root
+`INDEX.md` from everything still on disk:
+
+```bash
+birdclaw bookmarks export
+birdclaw bookmarks export --archive-dir ~/Documents/bookmarks --full
+birdclaw --json bookmarks export --account acct_primary
+```
+
+The default directory is `~/.birdclaw/bookmark-archive`; configure
+`bookmarks.archiveDir` for a persistent override. See
+[Bookmark Markdown Archive](docs/bookmark-archive.md) for the layout and
+ownership contract.
+
 ### Discuss keyword searches
 
 `birdclaw discuss` fetches live keyword matches through `bird` or `xurl`, stores them as local `search` tweets, then streams an OpenAI Markdown summary and discussion. DMs are excluded unless explicitly included.
@@ -690,6 +710,21 @@ If the machine uses `bird` with browser cookies that are not available to launch
 
 The LaunchAgent writes `~/Library/LaunchAgents/com.steipete.birdclaw.bookmarks-sync.plist`, runs at load, then every 10,800 seconds. It writes the audit log to `~/.birdclaw/audit/bookmarks-sync.jsonl` and stdout/stderr to `~/.birdclaw/logs/bookmarks-sync.*.log`. A lock file prevents overlapping runs and records an `already-running` skip when needed. The default job fetches up to 5 pages every 3 hours; pass `--all` if you want every retrievable page each run.
 
+Markdown export is intentionally a separate local-only daily job. It does not
+need X credentials and does not run immediately when installed:
+
+```bash
+birdclaw --json jobs install-bookmark-export-launchd \
+  --hour 3 \
+  --minute 0 \
+  --program /opt/homebrew/bin/birdclaw
+tail -n 5 ~/.birdclaw/audit/bookmark-export.jsonl | jq .
+```
+
+The schedule can also come from `bookmarks.exportSchedule` in config. The job
+uses `~/.birdclaw/locks/bookmark-export.lock` and keeps live refresh under the
+independent `sync-bookmarks` workflow.
+
 Useful checks:
 
 ```bash
@@ -793,5 +828,6 @@ Workflow: [ci.yml](.github/workflows/ci.yml)
 
 - [spec.md](docs/spec.md)
 - [cli.md](docs/cli.md)
+- [bookmark-archive.md](docs/bookmark-archive.md)
 - [data-architecture.md](docs/data-architecture.md)
 - [follow-graph.md](docs/follow-graph.md)

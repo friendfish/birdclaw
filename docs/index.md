@@ -21,6 +21,10 @@ birdclaw import tweet 20 --fxtwitter --json
 birdclaw sync timeline --limit 100 --refresh --json
 birdclaw sync bookmarks --mode auto --all --json
 
+# Export local bookmarks as permanent Markdown files.
+birdclaw bookmarks export
+birdclaw jobs install-bookmark-export-launchd --hour 3 --minute 0
+
 # Search every tweet you've ever liked, locally, with FTS5.
 birdclaw search tweets "local-first" --json
 birdclaw search tweets --bookmarked --hide-low-quality --limit 100 --json
@@ -55,6 +59,7 @@ Stable `--json` envelopes go to stdout, progress and warnings to stderr — pipe
 - **Have a Twitter archive ZIP.** [Archive import](archive.md) walks through autodiscovery, selected re-imports, and idempotent re-runs.
 - **Need a few named public tweets without X credentials.** [Public tweet import](public-tweets.md) documents the explicit FxTwitter opt-in and third-party disclosure tradeoff.
 - **Already initialized, want fresh live data.** [Sync](sync.md) covers likes, bookmarks, timeline, mention threads, and rate-limit-aware resumable runs.
+- **Building a permanent reading archive.** [Bookmark Markdown Archive](bookmark-archive.md) covers one-file-per-bookmark export, protected notes, `INDEX.md`, and daily scheduling.
 - **Triaging mentions or DMs.** [Search](search.md), [Mentions](mentions.md), [DMs](dms.md), and [Inbox](inbox.md).
 - **Exploring your network.** [Network Map](network-map.md) plots current followers/following by profile location.
 - **Maintaining a blocklist.** [Moderation](moderation.md) covers blocks, mutes, ban/unban, and bulk imports.
