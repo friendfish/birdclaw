@@ -4,7 +4,6 @@ import { findOperationAccount } from "./account-selection";
 import {
 	buildBookmarkArchiveIndex,
 	parseBookmarkArchiveFile,
-	removeFileWithinDirectory,
 	renderBookmarkArchiveFile,
 	resolveBookmarkArchiveItemPath,
 	scanBookmarkArchive,
@@ -219,9 +218,11 @@ export async function exportBookmarks(
 	);
 
 	for (const row of readBookmarkRows(db, account.id)) {
-		const record = toArchiveRecord(row);
-		const filePath = resolveBookmarkArchiveItemPath(archiveDir, record);
+		let errorPath = path.join(archiveDir, "accounts");
 		try {
+			const record = toArchiveRecord(row);
+			const filePath = resolveBookmarkArchiveItemPath(archiveDir, record);
+			errorPath = filePath;
 			const matches =
 				existingEntries.get(
 					bookmarkIdentity(record.accountId, record.tweetId),
@@ -264,25 +265,18 @@ export async function exportBookmarks(
 				userNotes: parsedExisting.userNotes,
 			});
 			const nextHash = parseBookmarkArchiveFile(rendered).metadata.contentHash;
-			if (
-				existingPath === filePath &&
-				!options.full &&
-				nextHash === parsedExisting.metadata.contentHash
-			) {
+			if (!options.full && nextHash === parsedExisting.metadata.contentHash) {
 				unchanged += 1;
 				continue;
 			}
 
-			await writeTextFileAtomically(filePath, rendered, {
+			await writeTextFileAtomically(existingPath, rendered, {
 				containmentRoot: archiveDir,
 			});
-			if (existingPath !== filePath) {
-				await removeFileWithinDirectory(archiveDir, existingPath);
-			}
 			updated += 1;
 		} catch (error) {
 			conflicted += 1;
-			errorsByPath.set(filePath, errorMessage(error));
+			errorsByPath.set(errorPath, errorMessage(error));
 		}
 	}
 

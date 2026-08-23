@@ -126,6 +126,8 @@ If either marker is missing, duplicated, or reversed, Birdclaw treats the file a
 
 Export never deletes item files. If a bookmark is later removed from X or from local SQLite, its existing Markdown file remains permanently in the archive. `--full` also does not prune historical files.
 
+The path chosen on first export remains stable. If a later local sync corrects the tweet timestamp into another month, Birdclaw updates the existing file in place and preserves its notes instead of moving or deleting it.
+
 Every run rebuilds `INDEX.md` by scanning `accounts/**/*.md` on disk, not by listing only current database bookmarks. The index therefore remains a panoramic catalog of current and historical exports across accounts and months. It includes account totals, the known date range, newest-first monthly sections, unknown-date entries, and malformed files that could not be indexed.
 
 Because permanent retention is intentional, deleting a historical file is a manual user decision. A deleted file can only be recreated automatically while the corresponding bookmark still exists in the selected account's local collection.

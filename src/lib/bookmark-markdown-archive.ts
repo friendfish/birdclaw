@@ -55,6 +55,7 @@ export interface BookmarkArchiveProblem {
 	path: string;
 	relativePath: string;
 	error: string;
+	linkable?: boolean;
 }
 
 export interface BookmarkArchiveScanResult {
@@ -414,31 +415,93 @@ function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : String(error);
 }
 
-async function listMarkdownFiles(directory: string): Promise<string[]> {
+interface MarkdownFileListing {
+	files: string[];
+	problems: BookmarkArchiveProblem[];
+}
+
+function scanProblem(
+	root: string,
+	problemPath: string,
+	error: string,
+): BookmarkArchiveProblem {
+	return {
+		path: problemPath,
+		relativePath: relativeArchivePath(root, problemPath),
+		error,
+		linkable: false,
+	};
+}
+
+async function listMarkdownFiles(
+	root: string,
+	directory: string,
+): Promise<MarkdownFileListing> {
+	let stats;
+	try {
+		stats = await fs.lstat(directory);
+	} catch (error) {
+		if (isErrorCode(error, "ENOENT")) return { files: [], problems: [] };
+		return {
+			files: [],
+			problems: [scanProblem(root, directory, errorMessage(error))],
+		};
+	}
+	if (stats.isSymbolicLink()) {
+		return {
+			files: [],
+			problems: [
+				scanProblem(
+					root,
+					directory,
+					"Bookmark archive scan path is a symbolic link",
+				),
+			],
+		};
+	}
+	if (!stats.isDirectory()) {
+		return {
+			files: [],
+			problems: [
+				scanProblem(
+					root,
+					directory,
+					"Bookmark archive scan path is not a directory",
+				),
+			],
+		};
+	}
+
 	let entries: Dirent[];
 	try {
 		entries = await fs.readdir(directory, { withFileTypes: true });
 	} catch (error) {
-		if (
-			typeof error === "object" &&
-			error !== null &&
-			"code" in error &&
-			error.code === "ENOENT"
-		) {
-			return [];
-		}
-		throw error;
+		return {
+			files: [],
+			problems: [scanProblem(root, directory, errorMessage(error))],
+		};
 	}
 	const files: string[] = [];
+	const problems: BookmarkArchiveProblem[] = [];
 	for (const entry of entries) {
 		const entryPath = path.join(directory, entry.name);
 		if (entry.isDirectory()) {
-			files.push(...(await listMarkdownFiles(entryPath)));
+			const nested = await listMarkdownFiles(root, entryPath);
+			files.push(...nested.files);
+			problems.push(...nested.problems);
+		} else if (entry.isSymbolicLink()) {
+			problems.push(
+				scanProblem(
+					root,
+					entryPath,
+					"Bookmark archive scan path is a symbolic link",
+				),
+			);
 		} else if (entry.isFile() && entry.name.endsWith(".md")) {
 			files.push(entryPath);
 		}
 	}
-	return files;
+	return { files, problems };
 }
 
 function relativeArchivePath(root: string, filePath: string) {
@@ -449,9 +512,12 @@ export async function scanBookmarkArchive(
 	archiveDir: string,
 ): Promise<BookmarkArchiveScanResult> {
 	const root = path.resolve(archiveDir);
-	const files = await listMarkdownFiles(path.join(root, "accounts"));
-	const result: BookmarkArchiveScanResult = { entries: [], unindexed: [] };
-	for (const filePath of files.sort()) {
+	const listing = await listMarkdownFiles(root, path.join(root, "accounts"));
+	const result: BookmarkArchiveScanResult = {
+		entries: [],
+		unindexed: listing.problems,
+	};
+	for (const filePath of listing.files.sort()) {
 		const relativePath = relativeArchivePath(root, filePath);
 		try {
 			const parsed = parseBookmarkArchiveFile(
@@ -580,9 +646,12 @@ export async function buildBookmarkArchiveIndex(
 	if (scan.unindexed.length > 0) {
 		lines.push("## Unindexed files", "");
 		for (const problem of scan.unindexed) {
-			lines.push(
-				`- [${escapeMarkdownLabel(problem.relativePath)}](${markdownPathDestination(problem.relativePath)}): ${escapeMarkdownLabel(problem.error)}`,
-			);
+			const problemLabel = escapeMarkdownLabel(problem.relativePath);
+			const problemLocation =
+				problem.linkable === false
+					? problemLabel
+					: `[${problemLabel}](${markdownPathDestination(problem.relativePath)})`;
+			lines.push(`- ${problemLocation}: ${escapeMarkdownLabel(problem.error)}`);
 		}
 		lines.push("");
 	}
@@ -614,12 +683,4 @@ export async function writeTextFileAtomically(
 	} finally {
 		await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
 	}
-}
-
-export async function removeFileWithinDirectory(
-	containmentRoot: string,
-	filePath: string,
-) {
-	await assertSafeContainedParent(containmentRoot, filePath, false);
-	await fs.rm(filePath);
 }

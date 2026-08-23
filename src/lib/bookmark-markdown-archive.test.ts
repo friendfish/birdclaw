@@ -8,6 +8,7 @@ import {
 	parseBookmarkArchiveFile,
 	renderBookmarkArchiveFile,
 	resolveBookmarkArchiveItemPath,
+	scanBookmarkArchive,
 	writeTextFileAtomically,
 	type BookmarkArchiveRecord,
 } from "./bookmark-markdown-archive";
@@ -219,6 +220,46 @@ describe("bookmark markdown archive", () => {
 
 		expect(await fs.readFile(filePath, "utf8")).toBe("second\n");
 		expect(await fs.readdir(path.dirname(filePath))).toEqual(["bookmark.md"]);
+	});
+
+	it("does not follow a symlinked accounts directory while scanning", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "bookmark-archive-"));
+		const outside = await fs.mkdtemp(
+			path.join(os.tmpdir(), "bookmark-archive-outside-"),
+		);
+		tempRoots.push(root, outside);
+		const outsideRecord = makeRecord({ text: "Outside archive content" });
+		const outsidePath = path.join(
+			outside,
+			"acct_primary",
+			"2026",
+			"08",
+			"1950123456789012345.md",
+		);
+		await writeTextFileAtomically(
+			outsidePath,
+			renderBookmarkArchiveFile(outsideRecord, {
+				firstArchivedAt: "2026-08-24T03:00:01.000Z",
+				userNotes: "\noutside notes\n",
+			}),
+		);
+		await fs.symlink(outside, path.join(root, "accounts"));
+
+		const scan = await scanBookmarkArchive(root);
+		const index = await buildBookmarkArchiveIndex(
+			root,
+			"2026-08-24T03:05:00.000Z",
+		);
+
+		expect(scan.entries).toHaveLength(0);
+		expect(scan.unindexed).toEqual([
+			expect.objectContaining({
+				relativePath: "accounts",
+				error: expect.stringMatching(/symbolic link/iu),
+			}),
+		]);
+		expect(index.entryCount).toBe(0);
+		expect(index.markdown).not.toContain("Outside archive content");
 	});
 
 	it("builds a permanent disk-derived index with deterministic ordering", async () => {

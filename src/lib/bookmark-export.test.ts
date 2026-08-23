@@ -185,7 +185,7 @@ describe("bookmark export", () => {
 		).toBe(notes);
 	});
 
-	it("moves a bookmark when its source date changes and preserves user notes", async () => {
+	it("keeps the original archive path when the source date changes", async () => {
 		const home = seedDefaultAccount();
 		insertTestTweet(home.db, {
 			id: "tweet:moved",
@@ -218,7 +218,7 @@ describe("bookmark export", () => {
 			.run("2026-08-01T00:01:00.000Z", "tweet:moved");
 
 		const result = await exportBookmarks({ archiveDir, db: home.db, now });
-		const newPath = archivePath(
+		const correctedDatePath = archivePath(
 			archiveDir,
 			"account:primary",
 			"2026",
@@ -234,10 +234,25 @@ describe("bookmark export", () => {
 			conflicted: 0,
 			indexEntries: 1,
 		});
-		await expect(fs.stat(oldPath)).rejects.toMatchObject({ code: "ENOENT" });
 		expect(
-			parseBookmarkArchiveFile(await fs.readFile(newPath, "utf8")).userNotes,
+			parseBookmarkArchiveFile(await fs.readFile(oldPath, "utf8")).userNotes,
 		).toBe(notes);
+		expect(
+			parseBookmarkArchiveFile(await fs.readFile(oldPath, "utf8")).metadata
+				.tweetCreatedAt,
+		).toBe("2026-08-01T00:01:00.000Z");
+		await expect(fs.stat(correctedDatePath)).rejects.toMatchObject({
+			code: "ENOENT",
+		});
+
+		const repeated = await exportBookmarks({ archiveDir, db: home.db, now });
+		expect(repeated).toMatchObject({
+			created: 0,
+			updated: 0,
+			unchanged: 1,
+			conflicted: 0,
+			indexEntries: 1,
+		});
 	});
 
 	it("leaves malformed user-note regions untouched and reports a conflict", async () => {
@@ -456,5 +471,50 @@ describe("bookmark export", () => {
 		await expect(
 			fs.stat(path.join(outsideDir, "2026", "08", "tweet%3Asymlink.md")),
 		).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("reports an unsafe bookmark id and continues exporting other items", async () => {
+		const home = seedDefaultAccount();
+		insertTestTweet(home.db, {
+			id: "tweet:safe",
+			authorProfileId: "profile:author",
+			text: "This bookmark should still be exported",
+			createdAt: "2026-08-23T12:00:00.000Z",
+		});
+		insertTestTweet(home.db, {
+			id: "tweet:\u0000unsafe",
+			authorProfileId: "profile:author",
+			text: "This bookmark has an unsafe id",
+			createdAt: "2026-08-22T12:00:00.000Z",
+		});
+		insertBookmarkCollection(home.db, { tweetId: "tweet:safe" });
+		insertBookmarkCollection(home.db, { tweetId: "tweet:\u0000unsafe" });
+		const archiveDir = home.makeTempDir("birdclaw-bookmarks-");
+
+		const result = await exportBookmarks({
+			archiveDir,
+			db: home.db,
+			now: () => new Date("2026-08-24T03:00:00.000Z"),
+		});
+
+		expect(result).toMatchObject({
+			ok: false,
+			created: 1,
+			updated: 0,
+			unchanged: 0,
+			conflicted: 1,
+			indexEntries: 1,
+		});
+		expect(result.errors).toEqual([
+			expect.objectContaining({
+				error: "Invalid bookmark archive path segment",
+			}),
+		]);
+		await expect(
+			fs.readFile(
+				archivePath(archiveDir, "account:primary", "2026", "08", "tweet:safe"),
+				"utf8",
+			),
+		).resolves.toContain("This bookmark should still be exported");
 	});
 });
