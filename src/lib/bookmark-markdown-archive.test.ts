@@ -181,6 +181,34 @@ describe("bookmark markdown archive", () => {
 		}
 	});
 
+	it("escapes reserved note markers that appear in managed tweet content", () => {
+		const start = "<!-- birdclaw:user-notes:start -->";
+		const end = "<!-- birdclaw:user-notes:end -->";
+		const markdown = renderBookmarkArchiveFile(
+			makeRecord({
+				text: `A quoted protocol ${start} example ${end}`,
+				entities: {},
+			}),
+			{
+				firstArchivedAt: "2026-08-24T03:00:01.000Z",
+				userNotes: "\nprotected notes\n",
+			},
+		);
+
+		expect(markdown.match(/<!-- birdclaw:user-notes:start -->/gu)).toHaveLength(
+			1,
+		);
+		expect(markdown.match(/<!-- birdclaw:user-notes:end -->/gu)).toHaveLength(
+			1,
+		);
+		expect(markdown).toContain(
+			"A quoted protocol &lt;!-- birdclaw:user-notes:start --> example &lt;!-- birdclaw:user-notes:end -->",
+		);
+		expect(parseBookmarkArchiveFile(markdown).userNotes).toBe(
+			"\nprotected notes\n",
+		);
+	});
+
 	it("atomically replaces a text file without leaving temporary files", async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), "bookmark-archive-"));
 		tempRoots.push(root);

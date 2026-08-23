@@ -198,6 +198,12 @@ function renderMedia(record: BookmarkArchiveRecord) {
 	});
 }
 
+function escapeReservedUserNoteMarkers(value: string) {
+	return value
+		.replaceAll(USER_NOTES_START, "&lt;!-- birdclaw:user-notes:start -->")
+		.replaceAll(USER_NOTES_END, "&lt;!-- birdclaw:user-notes:end -->");
+}
+
 export function renderBookmarkArchiveFile(
 	record: BookmarkArchiveRecord,
 	state: RenderBookmarkArchiveState,
@@ -259,10 +265,8 @@ export function renderBookmarkArchiveFile(
 		"",
 		"## My Notes",
 		"",
-		`${USER_NOTES_START}${state.userNotes}${USER_NOTES_END}`,
-		"",
 	);
-	return lines.join("\n");
+	return `${escapeReservedUserNoteMarkers(lines.join("\n"))}\n${USER_NOTES_START}${state.userNotes}${USER_NOTES_END}\n`;
 }
 
 function parseFrontmatter(markdown: string) {
