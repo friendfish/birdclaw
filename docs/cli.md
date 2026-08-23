@@ -182,6 +182,8 @@ mentions keys remain aliases for compatibility.
 - preserves exact user-note bytes between the Birdclaw note markers
 - skips unchanged item files; `--full` re-renders every current managed item
 - accepts `--account <username-or-id>` and `--archive-dir <path>`
+- shares `~/.birdclaw/locks/bookmark-export.lock` with the scheduled job and
+  returns `skipped: "already-running"` without writing when it is held
 - emits `created`, `updated`, `unchanged`, `conflicted`, and `indexEntries` in JSON mode
 - exits non-zero on conflicts without overwriting the affected files
 - does not sync X, download media, invoke AI, or trigger backup hooks

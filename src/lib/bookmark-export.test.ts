@@ -300,4 +300,39 @@ describe("bookmark export", () => {
 			)?.metadata.bookmarkedAt,
 		).toBeNull();
 	});
+
+	it("shares the scheduled lock and skips a concurrent manual export", async () => {
+		const home = seedDefaultAccount();
+		insertTestTweet(home.db, {
+			id: "tweet:locked",
+			authorProfileId: "profile:author",
+			text: "Do not write while another export owns the lock",
+			createdAt: "2026-08-23T12:00:00.000Z",
+		});
+		insertBookmarkCollection(home.db, { tweetId: "tweet:locked" });
+		const archiveDir = home.makeTempDir("birdclaw-bookmarks-");
+		const lockPath = path.join(home.root, "locks", "bookmark-export.lock");
+		await fs.mkdir(path.dirname(lockPath), { recursive: true });
+		await fs.writeFile(lockPath, "{}\n", "utf8");
+
+		const result = await exportBookmarks({
+			archiveDir,
+			db: home.db,
+			lockPath,
+			now: () => new Date("2026-08-24T03:00:00.000Z"),
+		});
+
+		expect(result).toMatchObject({
+			ok: true,
+			skipped: "already-running",
+			created: 0,
+			updated: 0,
+			unchanged: 0,
+			conflicted: 0,
+			indexEntries: 0,
+		});
+		await expect(
+			fs.stat(path.join(archiveDir, "accounts")),
+		).rejects.toMatchObject({ code: "ENOENT" });
+	});
 });

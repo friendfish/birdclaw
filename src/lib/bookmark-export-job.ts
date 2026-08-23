@@ -1,6 +1,10 @@
 import path from "node:path";
 import { Effect } from "effect";
-import { exportBookmarks, type BookmarkExportResult } from "./bookmark-export";
+import {
+	exportBookmarks,
+	getDefaultBookmarkExportLockPath,
+	type BookmarkExportResult,
+} from "./bookmark-export";
 import {
 	ensureBirdclawDirs,
 	getBirdclawPaths,
@@ -74,9 +78,7 @@ export function getDefaultBookmarkExportAuditLogPath() {
 	);
 }
 
-export function getDefaultBookmarkExportLockPath() {
-	return path.join(getBirdclawPaths().rootDir, "locks", "bookmark-export.lock");
-}
+export { getDefaultBookmarkExportLockPath } from "./bookmark-export";
 
 function toError(error: unknown) {
 	return error instanceof Error ? error : new Error(String(error));
@@ -147,6 +149,8 @@ export function runBookmarkExportJobEffect({
 						account,
 						archiveDir: resolvedArchiveDir,
 						full,
+						lockPath: resolvedLockPath,
+						acquireLock: false,
 					}),
 				catch: toError,
 			}).pipe(

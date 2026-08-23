@@ -946,6 +946,32 @@ describe("cli", () => {
 		);
 	});
 
+	it("reports when a manual bookmark export shares an already-held job lock", async () => {
+		exportBookmarksMock.mockResolvedValue({
+			ok: true,
+			accountId: "acct_primary",
+			archiveDir: "/tmp/bookmark-archive",
+			mode: "incremental",
+			created: 0,
+			updated: 0,
+			unchanged: 0,
+			conflicted: 0,
+			indexEntries: 0,
+			errors: [],
+			startedAt: "2026-08-24T03:00:00.000Z",
+			finishedAt: "2026-08-24T03:00:00.000Z",
+			skipped: "already-running",
+		});
+		const { runCli } = await loadCli();
+
+		await runCli(["node", "birdclaw", "bookmarks", "export"]);
+
+		expect(process.exitCode).toBeUndefined();
+		expect(consoleLogMock).toHaveBeenLastCalledWith(
+			"Bookmark archive: skipped (already-running)",
+		);
+	});
+
 	it("forwards scheduled bookmark export and LaunchAgent options", async () => {
 		const { runCli } = await loadCli();
 

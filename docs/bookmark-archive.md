@@ -33,6 +33,11 @@ Normal incremental runs do not rewrite unchanged item files. `--full` re-renders
 
 The command reports `created`, `updated`, `unchanged`, `conflicted`, and `indexEntries`. A conflict or unindexed archive file makes `ok` false and sets a non-zero CLI exit code; the original item file is left untouched.
 
+Manual and scheduled exports share
+`~/.birdclaw/locks/bookmark-export.lock`. If another export is active, the
+manual command returns `skipped: "already-running"` without writing item files
+or `INDEX.md`.
+
 ## Configure the directory and daily time
 
 Add the optional `bookmarks` section to `~/.birdclaw/config.json`:
@@ -75,7 +80,11 @@ birdclaw --json jobs install-bookmark-export-launchd \
   --program /opt/homebrew/bin/birdclaw
 ```
 
-The agent runs `jobs export-bookmarks`, uses `~/.birdclaw/locks/bookmark-export.lock` to prevent overlap, and appends one audit entry to `~/.birdclaw/audit/bookmark-export.jsonl`. Installing or loading it does not immediately export; the first automatic run waits for the next scheduled time.
+The agent runs `jobs export-bookmarks`, uses the same
+`~/.birdclaw/locks/bookmark-export.lock` as manual export to prevent overlap,
+and appends one audit entry to
+`~/.birdclaw/audit/bookmark-export.jsonl`. Installing or loading it does not
+immediately export; the first automatic run waits for the next scheduled time.
 
 This job is local-only and needs no X cookies or API credentials. Schedule `jobs sync-bookmarks` separately if the local database must also be refreshed from X.
 

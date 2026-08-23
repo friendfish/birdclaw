@@ -28,6 +28,8 @@ Object.defineProperty(
 
 vi.mock("./bookmark-export", () => ({
 	exportBookmarks: (...args: unknown[]) => exportBookmarksMock(...args),
+	getDefaultBookmarkExportLockPath: () =>
+		path.join(process.env.BIRDCLAW_HOME ?? "", "locks", "bookmark-export.lock"),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -95,6 +97,12 @@ describe("bookmark export job", () => {
 			account: "acct_primary",
 			archiveDir,
 			full: true,
+			lockPath: path.join(
+				process.env.BIRDCLAW_HOME ?? "",
+				"locks",
+				"bookmark-export.lock",
+			),
+			acquireLock: false,
 		});
 		expect(result).toMatchObject({
 			job: "bookmark-export",

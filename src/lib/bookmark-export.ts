@@ -9,9 +9,11 @@ import {
 	writeTextFileAtomically,
 	type BookmarkArchiveRecord,
 } from "./bookmark-markdown-archive";
-import { resolveBookmarkArchiveDir } from "./config";
+import { getBirdclawPaths, resolveBookmarkArchiveDir } from "./config";
 import { getNativeDb } from "./db";
+import { resolveUserPath } from "./launchd";
 import { parseJsonField } from "./query-read-model-shared";
+import { acquireScheduledJobLock } from "./scheduled-job";
 import type { Database } from "./sqlite";
 import type { TweetEntities, TweetMediaItem } from "./types";
 
@@ -35,6 +37,8 @@ export interface BookmarkExportOptions {
 	full?: boolean;
 	db?: Database;
 	now?: () => Date;
+	lockPath?: string;
+	acquireLock?: boolean;
 }
 
 export interface BookmarkExportError {
@@ -55,6 +59,13 @@ export interface BookmarkExportResult {
 	errors: BookmarkExportError[];
 	startedAt: string;
 	finishedAt: string;
+	skipped?: "already-running";
+}
+
+const DEFAULT_BOOKMARK_EXPORT_LOCK_STALE_MS = 6 * 60 * 60 * 1000;
+
+export function getDefaultBookmarkExportLockPath() {
+	return path.join(getBirdclawPaths().rootDir, "locks", "bookmark-export.lock");
 }
 
 function errorMessage(error: unknown) {
@@ -141,6 +152,42 @@ export async function exportBookmarks(
 	const now = options.now ?? (() => new Date());
 	const startedAt = now().toISOString();
 	const mode = options.full ? "full" : "incremental";
+	if (options.acquireLock !== false) {
+		const lockPath = resolveUserPath(
+			options.lockPath ?? getDefaultBookmarkExportLockPath(),
+		);
+		const releaseLock = await acquireScheduledJobLock(
+			lockPath,
+			DEFAULT_BOOKMARK_EXPORT_LOCK_STALE_MS,
+		);
+		if (!releaseLock) {
+			return {
+				ok: true,
+				accountId: account.id,
+				archiveDir,
+				mode,
+				created: 0,
+				updated: 0,
+				unchanged: 0,
+				conflicted: 0,
+				indexEntries: 0,
+				errors: [],
+				startedAt,
+				finishedAt: now().toISOString(),
+				skipped: "already-running",
+			};
+		}
+		try {
+			return await exportBookmarks({
+				...options,
+				account: account.id,
+				archiveDir,
+				acquireLock: false,
+			});
+		} finally {
+			await releaseLock().catch(() => undefined);
+		}
+	}
 	const errorsByPath = new Map<string, string>();
 	let created = 0;
 	let updated = 0;

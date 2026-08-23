@@ -453,7 +453,9 @@ birdclaw --json bookmarks export --account acct_primary
 The default directory is `~/.birdclaw/bookmark-archive`; configure
 `bookmarks.archiveDir` for a persistent override. See
 [Bookmark Markdown Archive](docs/bookmark-archive.md) for the layout and
-ownership contract.
+ownership contract. Manual and scheduled exports share
+`~/.birdclaw/locks/bookmark-export.lock`, so overlapping runs skip instead of
+writing concurrently.
 
 ### Discuss keyword searches
 

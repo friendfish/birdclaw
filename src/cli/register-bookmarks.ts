@@ -25,7 +25,9 @@ export function registerBookmarkCommands({
 			print(
 				asJson()
 					? result
-					: `Bookmark archive: ${String(result.created)} created, ${String(result.updated)} updated, ${String(result.unchanged)} unchanged, ${String(result.conflicted)} conflicted`,
+					: result.skipped
+						? `Bookmark archive: skipped (${result.skipped})`
+						: `Bookmark archive: ${String(result.created)} created, ${String(result.updated)} updated, ${String(result.unchanged)} unchanged, ${String(result.conflicted)} conflicted`,
 				asJson(),
 			);
 			if (!result.ok) process.exitCode = 1;

@@ -136,9 +136,10 @@ Each run appends a JSONL entry to:
 
 The entry includes host and timing metadata, the selected account/directory,
 the full export result, and any error. The lock at
-`~/.birdclaw/locks/bookmark-export.lock` prevents overlapping exports and logs
-an `already-running` skip. A partial export with conflicts exits non-zero but
-keeps every conflicting source file untouched.
+`~/.birdclaw/locks/bookmark-export.lock` is shared with the manual
+`bookmarks export` command. It prevents overlapping exports and logs an
+`already-running` skip. A partial export with conflicts exits non-zero but keeps
+every conflicting source file untouched.
 
 Install the daily macOS LaunchAgent:
 
