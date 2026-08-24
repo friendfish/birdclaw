@@ -594,9 +594,9 @@ between behavioral fixes, test corrections, and documented product boundaries:
 ### Final Re-Verification
 
 - [x] `pnpm check`
-- [x] `pnpm test` (186 files, 1907 tests)
-- [x] `pnpm coverage` (88.51% statements, 80.58% branches, 88.23%
-  functions, 90.07% lines)
+- [x] `pnpm test` (186 files, 1908 tests)
+- [x] `pnpm coverage` (88.5% statements, 80.55% branches, 88.21%
+  functions, 90.06% lines)
 - [x] `pnpm run build`
 - [x] `pnpm run pack:smoke` (149 packaged files)
 - [x] `pnpm run docs:site`
@@ -605,3 +605,13 @@ between behavioral fixes, test corrections, and documented product boundaries:
 
 All commands exited successfully on Node 26.4.0. pnpm reported the expected
 non-fatal engine warning because the repository declares Node 26.5.0 or newer.
+
+### Second Review Follow-Up
+
+- [x] Replace the semantically unrelated scheduled-job max-age constant with a
+  bookmark-export-specific heartbeat stale-window constant shared by the manual
+  exporter and scheduled wrapper.
+- [x] Clarify that any malformed same-account, same-tweet residual freezes all
+  matching files rather than describing only the single-file case.
+- [x] Re-run complete verification and request final independent review (no
+  remaining Critical, Important, or Minor findings; ready to merge).

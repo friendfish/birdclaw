@@ -12,7 +12,10 @@ import {
 	parseBookmarkArchiveFile,
 	scanBookmarkArchive,
 } from "./bookmark-markdown-archive";
-import { exportBookmarks } from "./bookmark-export";
+import {
+	DEFAULT_BOOKMARK_EXPORT_LOCK_STALE_MS,
+	exportBookmarks,
+} from "./bookmark-export";
 import type { Database } from "./sqlite";
 
 const USER_NOTES_START = "<!-- birdclaw:user-notes:start -->";
@@ -74,6 +77,10 @@ function archivePath(
 }
 
 describe("bookmark export", () => {
+	it("defines a bookmark-export-specific stale lock window", () => {
+		expect(DEFAULT_BOOKMARK_EXPORT_LOCK_STALE_MS).toBe(6 * 60 * 60 * 1000);
+	});
+
 	it("exports incrementally and retains files no longer present in bookmarks", async () => {
 		const home = seedDefaultAccount();
 		insertTestTweet(home.db, {

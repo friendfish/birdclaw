@@ -16,10 +16,7 @@ import { getBirdclawPaths, resolveBookmarkArchiveDir } from "./config";
 import { getNativeDb } from "./db";
 import { resolveUserPath } from "./launchd";
 import { parseJsonField } from "./query-read-model-shared";
-import {
-	acquireScheduledJobLock,
-	DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS,
-} from "./scheduled-job";
+import { acquireScheduledJobLock } from "./scheduled-job";
 import type { Database } from "./sqlite";
 import type { TweetEntities, TweetMediaItem } from "./types";
 
@@ -67,6 +64,8 @@ export interface BookmarkExportResult {
 	finishedAt: string;
 	skipped?: "already-running";
 }
+
+export const DEFAULT_BOOKMARK_EXPORT_LOCK_STALE_MS = 6 * 60 * 60 * 1000;
 
 export function getDefaultBookmarkExportLockPath() {
 	return path.join(getBirdclawPaths().rootDir, "locks", "bookmark-export.lock");
@@ -187,7 +186,7 @@ export async function exportBookmarks(
 		);
 		const releaseLock = await acquireScheduledJobLock(
 			lockPath,
-			DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS,
+			DEFAULT_BOOKMARK_EXPORT_LOCK_STALE_MS,
 		);
 		if (!releaseLock) {
 			return {

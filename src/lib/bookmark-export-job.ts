@@ -1,6 +1,7 @@
 import path from "node:path";
 import { Effect } from "effect";
 import {
+	DEFAULT_BOOKMARK_EXPORT_LOCK_STALE_MS,
 	exportBookmarks,
 	getDefaultBookmarkExportLockPath,
 	type BookmarkExportResult,
@@ -22,7 +23,6 @@ import {
 import {
 	acquireScheduledJobLockEffect,
 	appendScheduledJobAuditEffect,
-	DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS,
 	startScheduledJobRun,
 } from "./scheduled-job";
 
@@ -128,7 +128,7 @@ export function runBookmarkExportJobEffect({
 		};
 		const releaseLock = yield* acquireScheduledJobLockEffect(
 			resolvedLockPath,
-			DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS,
+			DEFAULT_BOOKMARK_EXPORT_LOCK_STALE_MS,
 		);
 		if (!releaseLock) {
 			const entry: BookmarkExportAuditEntry = {
