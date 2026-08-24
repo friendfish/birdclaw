@@ -29,6 +29,10 @@ birdclaw bookmarks export --full
 birdclaw --json bookmarks export --account acct_primary
 ```
 
+Each invocation exports one selected account. Without `--account`, Birdclaw
+uses the configured or default account. Run the command once per account when
+several accounts should contribute to the same archive.
+
 Normal incremental runs do not rewrite unchanged item files. `--full` re-renders the Birdclaw-managed parts of every current bookmark, while preserving valid user-note regions exactly. A current bookmark file that was deleted by hand is created again on the next run.
 
 The command reports `created`, `updated`, `unchanged`, `conflicted`, and `indexEntries`. A conflict or unindexed archive file makes `ok` false and sets a non-zero CLI exit code; the original item file is left untouched.
@@ -86,6 +90,26 @@ and appends one audit entry to
 `~/.birdclaw/audit/bookmark-export.jsonl`. Installing or loading it does not
 immediately export; the first automatic run waits for the next scheduled time.
 
+One installed agent exports one selected account. For multiple accounts,
+install one agent per account and give every agent a unique `--label` so their
+plist files do not replace each other:
+
+```bash
+birdclaw --json jobs install-bookmark-export-launchd \
+  --account acct_primary \
+  --label com.steipete.birdclaw.bookmark-export.primary \
+  --program /opt/homebrew/bin/birdclaw
+
+birdclaw --json jobs install-bookmark-export-launchd \
+  --account acct_secondary \
+  --label com.steipete.birdclaw.bookmark-export.secondary \
+  --program /opt/homebrew/bin/birdclaw
+```
+
+The agents may share one archive directory. Account subdirectories keep item
+paths distinct, and the shared export lock serializes archive and `INDEX.md`
+updates.
+
 This job is local-only and needs no X cookies or API credentials. Schedule `jobs sync-bookmarks` separately if the local database must also be refreshed from X.
 
 ## Directory layout
@@ -102,7 +126,7 @@ bookmark-archive/
         <encoded-tweet-id>.md
 ```
 
-Account and tweet IDs are encoded as path segments. The account level prevents the same tweet bookmarked by two accounts from colliding. Tweets without a valid creation date go under `unknown-date` rather than receiving a fabricated date.
+Account and tweet IDs are encoded as path segments. The account level prevents the same tweet bookmarked by two accounts from colliding. For a valid tweet timestamp, the year/month path, generated item heading, and `INDEX.md` date all use the machine's local calendar date. Tweets without a valid creation date go under `unknown-date` rather than receiving a fabricated date.
 
 Each item file contains controlled frontmatter, rendered tweet text, extracted links, media links, an X source link, and a notes section. Birdclaw records a content hash so unchanged files can be skipped without relying on file timestamps. Media is linked but not downloaded.
 
@@ -120,13 +144,19 @@ Your notes live here.
 
 Birdclaw preserves every byte between one valid start/end marker pair when it updates or fully rebuilds a current item. Content outside that region is managed output and may be replaced.
 
+Tweet text is rendered as Markdown-compatible source content. It can therefore
+contain text that looks like generated headings such as `## Source` or
+`## My Notes`. Those visible headings are presentation only: the exact HTML
+marker pair above is the ownership boundary for user notes, and controlled
+frontmatter identifies the archive item.
+
 If either marker is missing, duplicated, or reversed, Birdclaw treats the file as conflicted. It does not overwrite the file. The path and parse error appear under `Unindexed files` in `INDEX.md` and in the export result.
 
 ## Permanent retention and index
 
 Export never deletes item files. If a bookmark is later removed from X or from local SQLite, its existing Markdown file remains permanently in the archive. `--full` also does not prune historical files.
 
-The path chosen on first export remains stable. If a later local sync corrects the tweet timestamp into another month, Birdclaw updates the existing file in place and preserves its notes instead of moving or deleting it.
+The path chosen on first export remains stable. If a later local sync corrects the tweet timestamp into another month, Birdclaw updates the existing file in place and preserves its notes instead of moving or deleting it. Changing the machine timezone also does not move an already valid file. If the only same-account, same-tweet file is malformed and lives under an older date path, the exporter reports a conflict at that existing path instead of creating a second file.
 
 Every run rebuilds `INDEX.md` by scanning `accounts/**/*.md` on disk, not by listing only current database bookmarks. The index therefore remains a panoramic catalog of current and historical exports across accounts and months. It includes account totals, the known date range, newest-first monthly sections, unknown-date entries, and malformed files that could not be indexed.
 

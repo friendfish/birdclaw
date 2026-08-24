@@ -148,6 +148,28 @@ birdclaw --json jobs install-bookmark-export-launchd \
   --program /opt/homebrew/bin/birdclaw
 ```
 
+One export invocation and one installed agent select one account. To export
+multiple accounts, install a separate agent for each account with a unique
+`--label`; reusing the default label would replace the existing plist:
+
+```bash
+birdclaw --json jobs install-bookmark-export-launchd \
+  --account acct_primary \
+  --label com.steipete.birdclaw.bookmark-export.primary \
+  --program /opt/homebrew/bin/birdclaw
+
+birdclaw --json jobs install-bookmark-export-launchd \
+  --account acct_secondary \
+  --label com.steipete.birdclaw.bookmark-export.secondary \
+  --program /opt/homebrew/bin/birdclaw
+```
+
+These agents may use the same archive directory. Account subdirectories prevent
+item collisions, while the shared bookmark-export lock serializes writes and
+`INDEX.md` rebuilds. The default audit and stdout/stderr logs are also shared;
+pass distinct `--log`, `--stdout`, or `--stderr` paths when per-account logs are
+preferred.
+
 The calendar time comes from `bookmarks.exportSchedule` and defaults to 03:00
 local time. `--hour 4 --minute 15` overrides it for this agent. Installation
 does not run the exporter immediately: the plist uses `RunAtLoad=false` and

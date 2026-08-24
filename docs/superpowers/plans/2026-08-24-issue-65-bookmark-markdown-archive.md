@@ -35,7 +35,7 @@
 - Modify: `src/lib/config.ts`
 - Modify: `src/lib/config.test.ts`
 
-- [ ] **Step 1: Write failing configuration tests**
+- [x] **Step 1: Write failing configuration tests**
 
 Add tests that establish the public API and precedence:
 
@@ -49,7 +49,7 @@ expect(resolveBookmarkExportSchedule()).toEqual({ hour: 3, minute: 0 });
 
 Write a config fixture with `bookmarks.archiveDir` and `bookmarks.exportSchedule`, then assert valid hour/minute values are used and invalid values fall back independently to 03:00.
 
-- [ ] **Step 2: Run configuration tests and verify RED**
+- [x] **Step 2: Run configuration tests and verify RED**
 
 Run:
 
@@ -59,7 +59,7 @@ pnpm test src/lib/config.test.ts
 
 Expected: FAIL because `resolveBookmarkArchiveDir`, `resolveBookmarkExportSchedule`, and the `bookmarks` config shape do not exist.
 
-- [ ] **Step 3: Implement minimal configuration support**
+- [x] **Step 3: Implement minimal configuration support**
 
 Add this shape and resolvers:
 
@@ -95,7 +95,7 @@ export function resolveBookmarkExportSchedule() {
 
 Use the existing user-path expansion behavior without introducing an environment override that Issue #65 did not request.
 
-- [ ] **Step 4: Write failing protocol tests**
+- [x] **Step 4: Write failing protocol tests**
 
 Define the wished-for API with one complete fixture:
 
@@ -133,7 +133,7 @@ expect(rendered).toContain("<!-- birdclaw:user-notes:start -->\nKeep this exact.
 
 Add separate tests for stable paths, `unknown-date`, path containment, null `bookmarked_at`, YAML-safe quoted scalar values, and malformed/duplicate/reversed note markers.
 
-- [ ] **Step 5: Run protocol tests and verify RED**
+- [x] **Step 5: Run protocol tests and verify RED**
 
 Run:
 
@@ -143,7 +143,7 @@ pnpm test src/lib/bookmark-markdown-archive.test.ts
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 6: Implement the protocol and atomic writer**
+- [x] **Step 6: Implement the protocol and atomic writer**
 
 Implement these exported boundaries:
 
@@ -174,7 +174,7 @@ export async function writeTextFileAtomically(filePath: string, content: string)
 
 Use `renderTweetMarkdown`, SHA-256 over canonical Birdclaw-managed data, strict marker cardinality/order checks, adjacent temporary files, and `rename`. Validate account/tweet path segments before joining them beneath `<root>/accounts/...`.
 
-- [ ] **Step 7: Run focused tests and verify GREEN**
+- [x] **Step 7: Run focused tests and verify GREEN**
 
 Run:
 
@@ -184,7 +184,7 @@ pnpm test src/lib/config.test.ts src/lib/bookmark-markdown-archive.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/lib/config.ts src/lib/config.test.ts src/lib/bookmark-markdown-archive.ts src/lib/bookmark-markdown-archive.test.ts
@@ -201,7 +201,7 @@ git commit -m "feat: define bookmark markdown archive protocol"
 - Create: `src/lib/bookmark-export.ts`
 - Create: `src/lib/bookmark-export.test.ts`
 
-- [ ] **Step 1: Write failing index tests**
+- [x] **Step 1: Write failing index tests**
 
 Create archive fixtures for two accounts, multiple months, one `unknown-date` file, one retained file absent from the database, and one malformed file. Assert:
 
@@ -215,7 +215,7 @@ expect(index.markdown).toContain("accounts/acct_primary/2026/08/1950.md");
 
 Also assert newest-month/newest-tweet ordering, stable tweet-ID tie breaking, relative links, escaped excerpts, account totals, and preservation of historical disk-only files.
 
-- [ ] **Step 2: Run index tests and verify RED**
+- [x] **Step 2: Run index tests and verify RED**
 
 Run:
 
@@ -225,7 +225,7 @@ pnpm test src/lib/bookmark-markdown-archive.test.ts
 
 Expected: FAIL because archive scanning/index generation does not exist.
 
-- [ ] **Step 3: Implement archive scanning and index rendering**
+- [x] **Step 3: Implement archive scanning and index rendering**
 
 Add:
 
@@ -239,7 +239,7 @@ export async function buildBookmarkArchiveIndex(
 
 Scan only `accounts/**/*.md`, exclude `INDEX.md`, parse controlled metadata, keep malformed files in an `Unindexed files` section, and generate the complete deterministic index from disk rather than from the current bookmark query.
 
-- [ ] **Step 4: Write failing export integration tests**
+- [x] **Step 4: Write failing export integration tests**
 
 Using `createTestHome`, `insertTestAccount`, `insertTestProfile`, and `insertTestTweet`, insert bookmark collection rows and assert the public service:
 
@@ -253,7 +253,7 @@ expect(second).toMatchObject({ created: 0, updated: 0, unchanged: 2 });
 
 Add independent tests for source changes preserving notes, `full: true`, user-deleted file recreation, malformed-marker conflicts, no deletion of disk-only history, selected-account isolation, the same tweet in two accounts, and accurate null bookmark timestamps.
 
-- [ ] **Step 5: Run export tests and verify RED**
+- [x] **Step 5: Run export tests and verify RED**
 
 Run:
 
@@ -263,7 +263,7 @@ pnpm test src/lib/bookmark-export.test.ts
 
 Expected: FAIL because `exportBookmarks` does not exist.
 
-- [ ] **Step 6: Implement repository query and export orchestration**
+- [x] **Step 6: Implement repository query and export orchestration**
 
 Expose:
 
@@ -296,7 +296,7 @@ export async function exportBookmarks(options?: BookmarkExportOptions): Promise<
 
 Resolve exactly one account with `findOperationAccount`, query `tweet_collections` joined to live `tweets` and `profiles`, parse entities/media with `parseJsonField`, render current records, compare managed content hashes, preserve valid notes, never delete, build/write the index last, and continue after per-item failures while returning `ok: false` when conflicts/errors exist.
 
-- [ ] **Step 7: Run focused tests and verify GREEN**
+- [x] **Step 7: Run focused tests and verify GREEN**
 
 Run:
 
@@ -306,7 +306,7 @@ pnpm test src/lib/bookmark-markdown-archive.test.ts src/lib/bookmark-export.test
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/lib/bookmark-markdown-archive.ts src/lib/bookmark-markdown-archive.test.ts src/lib/bookmark-export.ts src/lib/bookmark-export.test.ts
@@ -322,7 +322,7 @@ git commit -m "feat: export bookmarks incrementally with permanent index"
 - Modify: `src/cli.ts`
 - Modify: `src/cli.test.ts`
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 Mock `exportBookmarks`, then assert:
 
@@ -343,7 +343,7 @@ expect(exportBookmarksMock).toHaveBeenCalledWith({
 
 Assert human output summarizes counts, global `--json` prints the full result, and a partial failure sets `process.exitCode = 1`.
 
-- [ ] **Step 2: Run CLI tests and verify RED**
+- [x] **Step 2: Run CLI tests and verify RED**
 
 Run:
 
@@ -353,7 +353,7 @@ pnpm test src/cli.test.ts
 
 Expected: FAIL because `bookmarks export` is unknown.
 
-- [ ] **Step 3: Register the command**
+- [x] **Step 3: Register the command**
 
 Create a focused registrar:
 
@@ -384,7 +384,7 @@ export function registerBookmarkCommands({ program, print, asJson }: CliCommandC
 
 Register it in `src/cli.ts`. Do not sync, query X, or call backup hooks.
 
-- [ ] **Step 4: Run CLI and export tests and verify GREEN**
+- [x] **Step 4: Run CLI and export tests and verify GREEN**
 
 Run:
 
@@ -394,7 +394,7 @@ pnpm test src/cli.test.ts src/lib/bookmark-export.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli.ts src/cli/register-bookmarks.ts src/cli.test.ts
@@ -411,7 +411,7 @@ git commit -m "feat: add manual bookmark archive command"
 - Modify: `src/cli/register-jobs.ts`
 - Modify: `src/cli.test.ts`
 
-- [ ] **Step 1: Write failing job tests**
+- [x] **Step 1: Write failing job tests**
 
 Cover one successful run, exporter failure audit, already-running skip, and launchd construction:
 
@@ -424,7 +424,7 @@ expect(agent.runAtLoad).toBe(false);
 
 Assert default paths use `audit/bookmark-export.jsonl`, `locks/bookmark-export.lock`, and `logs/bookmark-export.*.log`; assert archive/account/full/log options are safely forwarded.
 
-- [ ] **Step 2: Run job tests and verify RED**
+- [x] **Step 2: Run job tests and verify RED**
 
 Run:
 
@@ -434,7 +434,7 @@ pnpm test src/lib/bookmark-export-job.test.ts
 
 Expected: FAIL because the job module does not exist.
 
-- [ ] **Step 3: Implement the scheduled wrapper and installer**
+- [x] **Step 3: Implement the scheduled wrapper and installer**
 
 Expose:
 
@@ -447,7 +447,7 @@ export function installBookmarkExportLaunchAgent(options?: BookmarkExportLaunchA
 
 Reuse `startScheduledJobRun`, `acquireScheduledJobLockEffect`, `appendScheduledJobAuditEffect`, `buildLaunchAgent`, `buildLaunchProgramArguments`, and `installLaunchAgentEffect`. Calendar schedule defaults come from `resolveBookmarkExportSchedule`; set `runAtLoad: false` so installing a daily exporter does not unexpectedly run it immediately.
 
-- [ ] **Step 4: Write failing scheduled CLI tests**
+- [x] **Step 4: Write failing scheduled CLI tests**
 
 Assert argument forwarding for:
 
@@ -458,7 +458,7 @@ birdclaw --json jobs install-bookmark-export-launchd --hour 4 --minute 15 --prog
 
 Validate hour `0..23` and minute `0..59` before dispatch and set exit code for a failed export audit.
 
-- [ ] **Step 5: Run CLI tests and verify RED**
+- [x] **Step 5: Run CLI tests and verify RED**
 
 Run:
 
@@ -468,7 +468,7 @@ pnpm test src/cli.test.ts
 
 Expected: FAIL because the new `jobs` subcommands are unknown.
 
-- [ ] **Step 6: Register scheduled commands and verify GREEN**
+- [x] **Step 6: Register scheduled commands and verify GREEN**
 
 Add `jobs export-bookmarks` and `jobs install-bookmark-export-launchd` to `registerJobCommands`, forwarding only explicit overrides so config defaults remain effective.
 
@@ -480,7 +480,7 @@ pnpm test src/lib/bookmark-export-job.test.ts src/cli.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/lib/bookmark-export-job.ts src/lib/bookmark-export-job.test.ts src/cli/register-jobs.ts src/cli.test.ts
@@ -500,7 +500,7 @@ git commit -m "feat: schedule daily bookmark archive exports"
 - Modify: `scripts/build-docs-site.mjs`
 - Modify: `README.md`
 
-- [ ] **Step 1: Document the three separate workflows**
+- [x] **Step 1: Document the three separate workflows**
 
 Write exact examples for:
 
@@ -514,7 +514,7 @@ birdclaw research "codex" --out ~/research/codex.md
 
 Document config precedence, directory layout, permanent retention, the user-notes ownership boundary, null bookmark timestamps, daily local-only scheduling, audit/lock paths, multi-account isolation, and the absence of implicit X access or media downloads.
 
-- [ ] **Step 2: Build the docs site and run targeted checks**
+- [x] **Step 2: Build the docs site and run targeted checks**
 
 Run:
 
@@ -525,14 +525,14 @@ pnpm test src/lib/config.test.ts src/lib/bookmark-markdown-archive.test.ts src/l
 
 Expected: docs build succeeds and focused tests pass.
 
-- [ ] **Step 3: Commit documentation**
+- [x] **Step 3: Commit documentation**
 
 ```bash
 git add README.md docs/bookmark-archive.md docs/configuration.md docs/jobs.md docs/cli.md docs/index.md scripts/build-docs-site.mjs
 git commit -m "docs: explain bookmark markdown archives"
 ```
 
-- [ ] **Step 4: Run complete verification**
+- [x] **Step 4: Run complete verification**
 
 Run:
 
@@ -545,15 +545,15 @@ pnpm run pack:smoke
 
 Expected: every command exits 0. Record the Node engine warning separately if the host remains on 26.4.0.
 
-- [ ] **Step 5: Review the diff against Issue #65**
+- [x] **Step 5: Review the diff against Issue #65**
 
 Check every acceptance item: no deletes, no network calls, exact note preservation, disk-derived index, atomic writes, account isolation, lock/audit behavior, CLI JSON, schedule validation, and documentation. Run a placeholder scan and ensure no temporary files or generated docs output are tracked.
 
-- [ ] **Step 6: Request code review and fix findings with TDD**
+- [x] **Step 6: Request code review and fix findings with TDD**
 
 Use `superpowers:requesting-code-review`. For each valid finding, add or strengthen a failing regression test before changing production code, then rerun focused and full verification.
 
-- [ ] **Step 7: Push and create the PR**
+- [x] **Step 7: Push and create the PR**
 
 ```bash
 git push -u origin codex/issue-65-bookmark-markdown-archive
@@ -561,3 +561,42 @@ gh pr create --repo friendfish/birdclaw --base main --head codex/issue-65-bookma
 ```
 
 The PR body must link `Closes #65`, summarize the architecture and user-visible commands, list verification evidence, and call out the non-fatal Node 26.4.0 versus required 26.5.0 engine warning if it remains.
+
+---
+
+## Post-Review Hardening For PR #67
+
+The detailed review originally posted during PR #66 was re-evaluated against
+the successor PR #67 branch. The resulting changes are intentionally split
+between behavioral fixes, test corrections, and documented product boundaries:
+
+- [x] Treat an unparseable same-account, same-tweet file under an older date
+  path as a conflict instead of creating a duplicate archive item.
+- [x] Use the tweet timestamp's local calendar date consistently for the item
+  path, generated heading, index date, date range, and monthly grouping.
+- [x] Exercise the real default lock-path implementation in the scheduled-job
+  test rather than mocking the function under assertion.
+- [x] Document that source Markdown may resemble generated headings and that
+  the exact user-note marker pair remains the ownership boundary.
+- [x] Truncate index excerpts by Unicode code point so a surrogate pair is not
+  split.
+- [x] Reuse the shared scheduled-job lock expiry constant in manual and
+  scheduled bookmark exports.
+- [x] Replace schedule-validation sentinel expressions with a named field
+  resolver.
+- [x] Record the implementation checklist and this review follow-up in the
+  plan.
+- [x] Document one-account-per-run behavior and the unique-label requirement
+  for multi-account LaunchAgents.
+
+### Final Re-Verification
+
+- [x] `pnpm check`
+- [x] `pnpm test` (186 files, 1906 tests)
+- [x] `pnpm run build`
+- [x] `pnpm run pack:smoke` (149 packaged files)
+- [x] `pnpm run docs:site`
+- [ ] Independent review of the final PR #67 diff
+
+All commands exited successfully on Node 26.4.0. pnpm reported the expected
+non-fatal engine warning because the repository declares Node 26.5.0 or newer.
