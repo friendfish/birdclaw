@@ -5,7 +5,9 @@ description: "Scheduler-friendly sync and digest generation with launchd integra
 
 # Jobs
 
-`birdclaw jobs` is the scheduler-friendly subset of sync: short defaults, JSONL audit logs, lock files to prevent overlap, and launchd installers for macOS.
+`birdclaw jobs` provides scheduler-friendly sync, local export, and digest runs:
+short defaults, JSONL audit logs, lock files to prevent overlap, and launchd
+installers for macOS.
 
 ## `jobs sync-account`
 
@@ -114,6 +116,87 @@ birdclaw --json jobs install-bookmarks-launchd \
 ```
 
 The plist sources that file inside the scheduled process. The cookies stay on your machine, in your home directory, with mode `0600`. They are never written into the plist itself.
+
+## Daily bookmark Markdown export
+
+Bookmark sync and bookmark export are separate jobs. `jobs sync-bookmarks`
+contacts X and updates SQLite; `jobs export-bookmarks` reads SQLite and updates
+the permanent Markdown archive without any network request:
+
+```bash
+birdclaw --json jobs export-bookmarks
+birdclaw --json jobs export-bookmarks --account acct_primary --archive-dir ~/Documents/bookmarks --full
+```
+
+Each run appends a JSONL entry to:
+
+```text
+~/.birdclaw/audit/bookmark-export.jsonl
+```
+
+The entry includes host and timing metadata, the selected account/directory,
+the full export result, and any error. The lock at
+`~/.birdclaw/locks/bookmark-export.lock` is shared with the manual
+`bookmarks export` command. It prevents overlapping exports and logs an
+`already-running` skip. A partial export with conflicts exits non-zero but keeps
+every conflicting source file untouched.
+
+Install the daily macOS LaunchAgent:
+
+```bash
+birdclaw --json jobs install-bookmark-export-launchd \
+  --program /opt/homebrew/bin/birdclaw
+```
+
+One export invocation and one installed agent select one account. To export
+multiple accounts, install a separate agent for each account with a unique
+`--label` and a staggered schedule. Reusing the default label would replace the
+existing plist, while using the same calendar minute could make one export skip
+because another account still holds the shared lock:
+
+```bash
+birdclaw --json jobs install-bookmark-export-launchd \
+  --account acct_primary \
+  --label com.steipete.birdclaw.bookmark-export.primary \
+  --hour 3 \
+  --minute 0 \
+  --program /opt/homebrew/bin/birdclaw
+
+birdclaw --json jobs install-bookmark-export-launchd \
+  --account acct_secondary \
+  --label com.steipete.birdclaw.bookmark-export.secondary \
+  --hour 3 \
+  --minute 15 \
+  --program /opt/homebrew/bin/birdclaw
+```
+
+These agents may use the same archive directory. Account subdirectories prevent
+item collisions. The shared bookmark-export lock prevents concurrent writes and
+`INDEX.md` rebuilds, but it does not queue or retry a run: an agent that cannot
+acquire the lock records `already-running` and exits successfully. Give each
+account enough schedule separation for the preceding export to finish. The
+default audit and stdout/stderr logs are also shared; pass distinct `--log`,
+`--stdout`, or `--stderr` paths when per-account logs are preferred.
+
+The calendar time comes from `bookmarks.exportSchedule` and defaults to 03:00
+local time. `--hour 4 --minute 15` overrides it for this agent. Installation
+does not run the exporter immediately: the plist uses `RunAtLoad=false` and
+waits for the next calendar trigger.
+
+The installer writes:
+
+- `~/Library/LaunchAgents/com.steipete.birdclaw.bookmark-export.plist`
+- `~/.birdclaw/logs/bookmark-export.out.log`
+- `~/.birdclaw/logs/bookmark-export.err.log`
+
+No credential or env file is required for the export itself. Use `--env-path`
+only when the Birdclaw executable needs other process configuration. The
+archive directory defaults to `bookmarks.archiveDir`, then
+`~/.birdclaw/bookmark-archive`; an explicit `--archive-dir` is stored as an
+absolute launchd argument.
+
+See [Bookmark Markdown Archive](bookmark-archive.md) for permanent retention,
+the protected user-notes region, and `INDEX.md` behavior.
 
 ## Scheduled digests
 
@@ -244,6 +327,10 @@ After install:
 launchctl print gui/$(id -u)/com.steipete.birdclaw.bookmarks-sync
 launchctl kickstart -k gui/$(id -u)/com.steipete.birdclaw.bookmarks-sync
 tail -n 1 ~/.birdclaw/audit/bookmarks-sync.jsonl | jq .
+
+launchctl print gui/$(id -u)/com.steipete.birdclaw.bookmark-export
+launchctl kickstart -k gui/$(id -u)/com.steipete.birdclaw.bookmark-export
+tail -n 1 ~/.birdclaw/audit/bookmark-export.jsonl | jq .
 ```
 
 `kickstart -k` re-runs the job immediately, which is the fastest way to confirm cookies and config work end-to-end.
@@ -253,22 +340,29 @@ tail -n 1 ~/.birdclaw/audit/bookmarks-sync.jsonl | jq .
 ```bash
 launchctl bootout gui/$(id -u)/com.steipete.birdclaw.bookmarks-sync
 rm ~/Library/LaunchAgents/com.steipete.birdclaw.bookmarks-sync.plist
+
+launchctl bootout gui/$(id -u)/com.steipete.birdclaw.bookmark-export
+rm ~/Library/LaunchAgents/com.steipete.birdclaw.bookmark-export.plist
 ```
 
 The audit log and lock file are kept by design — remove them by hand if you really want them gone.
 
 ## Linux scheduling
 
-Linux is not yet a first-class target for `jobs install-*`. For now, run `jobs sync-bookmarks` from `cron` or a `systemd` user timer. The audit/lock semantics are platform-agnostic.
+Linux is not yet a first-class target for `jobs install-*`. For now, run
+`jobs sync-bookmarks` and/or `jobs export-bookmarks` from `cron` or a `systemd`
+user timer. The audit/lock semantics are platform-agnostic.
 
 Example crontab:
 
 ```text
 0 */3 * * * /usr/local/bin/birdclaw --json jobs sync-bookmarks --mode auto --max-pages 5 --refresh >> ~/.birdclaw/logs/cron.log 2>&1
+0 3 * * * /usr/local/bin/birdclaw --json jobs export-bookmarks >> ~/.birdclaw/logs/bookmark-export-cron.log 2>&1
 ```
 
 ## See also
 
 - [Sync](sync.md) — manual sync flow with the same flags
+- [Bookmark Markdown Archive](bookmark-archive.md) — local export layout and ownership rules
 - [Backup](backup.md) — the backup auto-sync path that runs after each scheduled bookmark refresh
 - [Configuration](configuration.md) — `backup.autoSync` and `BIRDCLAW_BACKUP_AUTO_SYNC`

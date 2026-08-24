@@ -7,6 +7,10 @@ import {
 	installBookmarkSyncLaunchAgent,
 	runBookmarkSyncJob,
 } from "#/lib/bookmark-sync-job";
+import {
+	installBookmarkExportLaunchAgent,
+	runBookmarkExportJob,
+} from "#/lib/bookmark-export-job";
 import { isCalendarDateString } from "#/lib/calendar-date";
 import {
 	installAllDigestArchiveLaunchAgents,
@@ -31,7 +35,7 @@ import {
 } from "#/lib/period-digest-orchestrator";
 import { resolveLiveSyncMode } from "#/lib/live-transport-policy";
 import type { TimelineCollectionMode } from "#/lib/timeline-collections-live";
-import type { CliCommandContext } from "./command-context";
+import { printError, type CliCommandContext } from "./command-context";
 
 function parsePeriod(value: string): PeriodDigestPreset {
 	if (
@@ -67,6 +71,27 @@ function parseOptionalJobMode(
 	mode: string | undefined,
 ): TimelineCollectionMode | undefined {
 	return mode === undefined ? undefined : resolveLiveSyncMode(mode);
+}
+
+function parseScheduleOverride(
+	value: string | undefined,
+	option: "--hour" | "--minute",
+	maximum: number,
+) {
+	if (value === undefined) return undefined;
+	const trimmed = value.trim();
+	if (!/^\d+$/.test(trimmed)) {
+		printError(`${option} must be an integer from 0 to ${String(maximum)}`);
+		process.exitCode = 1;
+		return undefined;
+	}
+	const parsed = Number.parseInt(trimmed, 10);
+	if (!Number.isSafeInteger(parsed) || parsed > maximum) {
+		printError(`${option} must be an integer from 0 to ${String(maximum)}`);
+		process.exitCode = 1;
+		return undefined;
+	}
+	return parsed;
 }
 
 export function registerJobCommands({ program, print }: CliCommandContext) {
@@ -226,6 +251,68 @@ export function registerJobCommands({ program, print }: CliCommandContext) {
 				maxPages: options.all ? undefined : Number(options.maxPages),
 				refresh: options.refresh,
 				cacheTtlSeconds: Number(options.cacheTtl),
+				logPath: options.log,
+				envFile: options.envPath ?? options.envFile,
+				stdoutPath: options.stdout,
+				stderrPath: options.stderr,
+				launchAgentsDir: options.launchAgentsDir,
+				load: options.load,
+			});
+			print(result, true);
+		});
+
+	jobsCommand
+		.command("export-bookmarks")
+		.description("Export local bookmarks to Markdown and append a JSONL audit")
+		.option("--account <username>", "Account username or id")
+		.option("--archive-dir <path>", "Override the configured archive directory")
+		.option("--full", "Re-render all current bookmark files")
+		.option("--log <path>", "Audit JSONL path")
+		.action(async (options) => {
+			const result = await runBookmarkExportJob({
+				account: options.account,
+				archiveDir: options.archiveDir,
+				full: Boolean(options.full),
+				logPath: options.log,
+			});
+			print(result, true);
+			if (!result.ok) process.exitCode = 1;
+		});
+
+	jobsCommand
+		.command("install-bookmark-export-launchd")
+		.description("Install a LaunchAgent that exports local bookmarks daily")
+		.option("--account <username>", "Account username or id")
+		.option("--archive-dir <path>", "Override the configured archive directory")
+		.option("--full", "Re-render all current bookmark files on every run")
+		.option("--hour <n>", "Hour (0-23); defaults to configuration")
+		.option("--minute <n>", "Minute (0-59); defaults to configuration")
+		.option("--label <label>", "LaunchAgent label")
+		.option("--program <path>", "birdclaw executable or command", "birdclaw")
+		.option("--log <path>", "Audit JSONL path")
+		.option("--env-path <path>", "Shell environment file to source")
+		.option("--env-file <path>", "Deprecated alias for --env-path")
+		.option("--stdout <path>", "launchd stdout path")
+		.option("--stderr <path>", "launchd stderr path")
+		.option("--launch-agents-dir <path>", "LaunchAgents directory")
+		.option("--no-load", "Write plist without loading it")
+		.action(async (options) => {
+			const hour = parseScheduleOverride(options.hour, "--hour", 23);
+			const minute = parseScheduleOverride(options.minute, "--minute", 59);
+			if (
+				(options.hour !== undefined && hour === undefined) ||
+				(options.minute !== undefined && minute === undefined)
+			) {
+				return;
+			}
+			const result = await installBookmarkExportLaunchAgent({
+				account: options.account,
+				archiveDir: options.archiveDir,
+				full: Boolean(options.full),
+				hour,
+				minute,
+				label: options.label,
+				program: options.program,
 				logPath: options.log,
 				envFile: options.envPath ?? options.envFile,
 				stdoutPath: options.stdout,

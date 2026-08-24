@@ -69,11 +69,13 @@ birdclaw sync mention-threads
 birdclaw sync followers
 birdclaw sync following
 birdclaw sync lists
+birdclaw bookmarks export
 birdclaw lists list
 birdclaw lists members [name]
 birdclaw search tweets <query>
 birdclaw search dms <query>
 birdclaw discuss <query>
+birdclaw research [query]
 birdclaw today
 birdclaw digest [today|24h|yesterday|week]
 birdclaw mentions export [query]
@@ -106,6 +108,8 @@ birdclaw backup export --repo <path>
 birdclaw backup sync --repo <path> --remote <url>
 birdclaw backup import <path>
 birdclaw backup validate <path>
+birdclaw jobs export-bookmarks
+birdclaw jobs install-bookmark-export-launchd
 birdclaw debug transport
 ```
 
@@ -169,6 +173,40 @@ See [Public tweet import](public-tweets.md) for the full privacy and capability 
 `live.dataSource`, legacy `BIRDCLAW_MENTIONS_DATA_SOURCE`, legacy
 `mentions.dataSource`, then the operation's capability default. The legacy
 mentions keys remain aliases for compatibility.
+
+### `bookmarks export`
+
+- reads the selected account's bookmark collection from local SQLite only
+- writes one Markdown file per current bookmark and rebuilds the disk-derived `INDEX.md`
+- never deletes historical files when bookmarks disappear from the current collection
+- preserves exact user-note bytes between the Birdclaw note markers
+- skips unchanged item files; `--full` re-renders every current managed item
+- accepts `--account <username-or-id>` and `--archive-dir <path>`
+- shares `~/.birdclaw/locks/bookmark-export.lock` with the scheduled job and
+  returns `skipped: "already-running"` without writing when it is held
+- emits `created`, `updated`, `unchanged`, `conflicted`, and `indexEntries` in JSON mode
+- exits non-zero on conflicts without overwriting the affected files
+- does not sync X, download media, invoke AI, or trigger backup hooks
+
+See [Bookmark Markdown Archive](bookmark-archive.md) for directory precedence,
+the item-file protocol, permanent retention, and index behavior.
+
+### `jobs export-bookmarks`
+
+- runs the same local exporter with a lock and JSONL audit entry
+- defaults to `~/.birdclaw/audit/bookmark-export.jsonl` and
+  `~/.birdclaw/locks/bookmark-export.lock`
+- accepts `--account`, `--archive-dir`, `--full`, and `--log`
+- exits non-zero when the audited export is not fully successful
+
+### `jobs install-bookmark-export-launchd`
+
+- installs a macOS calendar LaunchAgent for daily local bookmark export
+- reads the default hour/minute from `bookmarks.exportSchedule` (03:00 fallback)
+- accepts validated `--hour 0..23` and `--minute 0..59` overrides
+- accepts `--program`, `--account`, `--archive-dir`, `--full`, log paths,
+  env-file paths, `--launch-agents-dir`, and `--no-load`
+- uses `RunAtLoad=false`, so loading the agent does not immediately export
 
 ### `backup export`
 

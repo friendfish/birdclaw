@@ -10,6 +10,7 @@ import {
 	resetOperationAccountSelection,
 } from "#/cli/command-context";
 import { registerAnalysisCommands } from "#/cli/register-analysis";
+import { registerBookmarkCommands } from "#/cli/register-bookmarks";
 import { registerComposeCommands } from "#/cli/register-compose";
 import { registerCoreCommands } from "#/cli/register-core";
 import { registerDirectMessageCommands } from "#/cli/register-dms";
@@ -50,6 +51,7 @@ const commandContext = createCommandContext(program);
 configureOperationAccountSelection(program);
 
 registerCoreCommands(commandContext);
+registerBookmarkCommands(commandContext);
 registerSearchCommands(commandContext);
 registerAnalysisCommands(commandContext);
 registerMentionCommands(commandContext);

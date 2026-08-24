@@ -21,6 +21,7 @@ The default root is `~/.birdclaw`. It holds:
   config.json                  # user config
   credentials/bird.env         # Config-managed X credentials (mode 0600)
   prompts/                     # optional editable AI prompt templates
+  bookmark-archive/            # default permanent bookmark Markdown archive
   media/                       # original media cache
   media/thumbs/avatars/        # avatar cache
   audit/                       # JSONL audit logs (e.g. bookmarks-sync.jsonl)
@@ -53,6 +54,13 @@ The Playwright test home is `.playwright-home` in the repo, which is why CI neve
 	},
 	"mentions": {
 		"birdCommand": "/Users/steipete/Projects/bird/bird"
+	},
+	"bookmarks": {
+		"archiveDir": "~/Documents/birdclaw-bookmarks",
+		"exportSchedule": {
+			"hour": 3,
+			"minute": 0
+		}
 	},
 	"backup": {
 		"repoPath": "/Users/steipete/Projects/backup-birdclaw",
@@ -96,6 +104,24 @@ aliases. They should be used only for existing installations; they no longer
 describe a mentions-only global setting.
 
 `mentions.birdCommand` overrides the `bird` binary path when you want to point at a non-`PATH` build.
+
+### `bookmarks.*`
+
+`bookmarks.archiveDir` selects the permanent Markdown archive directory. A
+manual or scheduled `--archive-dir` flag wins; without either value Birdclaw
+uses `~/.birdclaw/bookmark-archive`. `~` is expanded before files are written or
+launchd arguments are created. There is no environment-variable override.
+
+`bookmarks.exportSchedule.hour` and `.minute` set the local calendar time used
+by `jobs install-bookmark-export-launchd`. Defaults are `3` and `0` (03:00).
+Hour must be an integer from 0 through 23 and minute from 0 through 59; an
+invalid config field falls back independently to its default. Explicit
+installer flags override only the provided fields.
+
+These settings control local Markdown export only. They do not refresh X,
+download media, run AI, or change `sync bookmarks` transport behavior. See
+[Bookmark Markdown Archive](bookmark-archive.md) for the file ownership and
+permanent-retention contract.
 
 ## Managed X credentials
 
@@ -235,7 +261,10 @@ birdclaw compose post --account acct_primary "Ship it."
 
 For a recurring choice, set `accounts.default` in `config.json`. Explicit flags remain reversible one-command overrides. xurl can select a named OAuth2 account; Bird has one active cookie identity, so Bird-backed operations verify that identity matches the selected Birdclaw account before reading or writing.
 
-Per-account state — cursors, transport preferences, last-sync watermarks, OpenAI score caches — lives inside the same `birdclaw.sqlite`. There is no per-account directory tree.
+Canonical per-account state — cursors, transport preferences, last-sync
+watermarks, OpenAI score caches — lives inside the same `birdclaw.sqlite`. The
+optional bookmark Markdown archive is derived output and uses account-ID
+subdirectories so identical tweets from different accounts cannot collide.
 
 ## Transport selection
 

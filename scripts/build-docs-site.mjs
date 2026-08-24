@@ -34,6 +34,7 @@ const sections = [
 			"archive.md",
 			"public-tweets.md",
 			"sync.md",
+			"bookmark-archive.md",
 			"media.md",
 			"backup.md",
 			"jobs.md",
