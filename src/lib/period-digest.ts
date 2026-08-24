@@ -1193,22 +1193,17 @@ function contentSourceDescription(contentSource: PeriodDigestContentSource) {
 	return "Full daily overview: Following + For You timeline, mentions, own posts, likes, and bookmarks.";
 }
 
-// The 7000-token default (see createAnalysisRequestBody) has to cover the
-// model's hidden reasoning tokens, the ~700-1100 word Markdown report, and a
-// full JSON restatement of every cited topic/link/person/tweet id. "all"
-// merges every content source (home + mentions + authored + likes +
-// bookmarks + dms + links), so it has by far the most to cite and is the
-// most likely of the three tabs to hit that ceiling mid-report — give it a
-// bigger budget. "following" sits in between (home[following] + authored +
-// likes + bookmarks); "for_you" is the narrowest (home[for_you] only) and
-// keeps the original default.
+// The budget must cover the model's hidden reasoning tokens, the ~700-1100
+// word Markdown report, and a full JSON restatement of every cited
+// topic/link/person/tweet id. For You gets extra headroom because its observed
+// reasoning spikes have repeatedly exhausted 30k before the JSON completed.
 const MAX_OUTPUT_TOKENS_BY_CONTENT_SOURCE: Record<
 	PeriodDigestContentSource,
 	number
 > = {
-	for_you: 7000,
-	following: 9000,
-	all: 12000,
+	for_you: 36000,
+	following: 30000,
+	all: 30000,
 };
 
 function maxOutputTokensForContentSource(

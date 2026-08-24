@@ -466,11 +466,7 @@ describe("period digest", () => {
 			);
 		});
 
-		it("gives the richest content source the biggest output token budget", () => {
-			// "all" merges every source (home + mentions + authored + likes +
-			// bookmarks + dms + links), so it has the most to cite in the
-			// trailing JSON and is the most likely to hit a fixed output-token
-			// ceiling mid-report; "for_you" only ever covers one narrow slice.
+		it("gives For You 36k and the other content sources 30k", () => {
 			const all = collectPeriodDigestContext(window);
 			const following = collectPeriodDigestContext({
 				...window,
@@ -501,8 +497,9 @@ describe("period digest", () => {
 				effectivePrompt(),
 			).max_output_tokens;
 
-			expect(allBudget).toBeGreaterThan(followingBudget);
-			expect(followingBudget).toBeGreaterThan(forYouBudget);
+			expect(forYouBudget).toBe(36_000);
+			expect(followingBudget).toBe(30_000);
+			expect(allBudget).toBe(30_000);
 		});
 	});
 
