@@ -255,6 +255,68 @@ describe("bookmark export", () => {
 		});
 	});
 
+	it("does not fork a malformed bookmark when its source path drifts", async () => {
+		const home = seedDefaultAccount();
+		insertTestTweet(home.db, {
+			id: "tweet:malformed-drift",
+			authorProfileId: "profile:author",
+			text: "A bookmark with irreplaceable notes",
+			createdAt: "2026-07-15T12:00:00.000Z",
+		});
+		insertBookmarkCollection(home.db, { tweetId: "tweet:malformed-drift" });
+		const archiveDir = home.makeTempDir("birdclaw-bookmarks-");
+		const now = () => new Date("2026-08-24T03:00:00.000Z");
+		await exportBookmarks({ archiveDir, db: home.db, now });
+		const oldPath = archivePath(
+			archiveDir,
+			"account:primary",
+			"2026",
+			"07",
+			"tweet:malformed-drift",
+		);
+		const malformed = (await fs.readFile(oldPath, "utf8"))
+			.replace(
+				`${USER_NOTES_START}\n\n${USER_NOTES_END}`,
+				`${USER_NOTES_START}\nMY IRREPLACEABLE NOTES\n${USER_NOTES_END}`,
+			)
+			.replace(USER_NOTES_END, "");
+		await fs.writeFile(oldPath, malformed, "utf8");
+		home.db
+			.prepare("update tweets set created_at = ? where id = ?")
+			.run("2026-08-15T12:00:00.000Z", "tweet:malformed-drift");
+
+		const result = await exportBookmarks({ archiveDir, db: home.db, now });
+		const driftedPath = archivePath(
+			archiveDir,
+			"account:primary",
+			"2026",
+			"08",
+			"tweet:malformed-drift",
+		);
+		const scan = await scanBookmarkArchive(archiveDir);
+
+		expect(result).toMatchObject({
+			ok: false,
+			created: 0,
+			updated: 0,
+			unchanged: 0,
+			conflicted: 1,
+			indexEntries: 0,
+		});
+		expect(result.errors).toEqual([
+			expect.objectContaining({
+				path: oldPath,
+				error: "Invalid Birdclaw user notes markers",
+			}),
+		]);
+		await expect(fs.readFile(oldPath, "utf8")).resolves.toBe(malformed);
+		await expect(fs.stat(driftedPath)).rejects.toMatchObject({
+			code: "ENOENT",
+		});
+		expect(scan.entries).toHaveLength(0);
+		expect(scan.unindexed.map((problem) => problem.path)).toEqual([oldPath]);
+	});
+
 	it("leaves malformed user-note regions untouched and reports a conflict", async () => {
 		const home = seedDefaultAccount();
 		insertTestTweet(home.db, {

@@ -104,10 +104,10 @@ function bookmarkContentHash(record: BookmarkArchiveRecord) {
 }
 
 function excerptForRecord(record: BookmarkArchiveRecord) {
-	return renderTweetPlainText(record.text, record.entities)
+	const plainText = renderTweetPlainText(record.text, record.entities)
 		.replaceAll(/\s+/g, " ")
-		.trim()
-		.slice(0, 160);
+		.trim();
+	return Array.from(plainText).slice(0, 160).join("");
 }
 
 function safePathSegment(value: string) {
@@ -120,12 +120,17 @@ function safePathSegment(value: string) {
 	return encoded;
 }
 
-function archiveDateParts(value: string) {
+function archiveCalendarDate(value: string) {
 	const date = new Date(value);
 	if (!Number.isFinite(date.getTime())) return null;
+	const year = String(date.getFullYear()).padStart(4, "0");
+	const month = String(date.getMonth() + 1).padStart(2, "0");
+	const day = String(date.getDate()).padStart(2, "0");
 	return {
-		year: String(date.getFullYear()).padStart(4, "0"),
-		month: String(date.getMonth() + 1).padStart(2, "0"),
+		year,
+		month,
+		yearMonth: `${year}-${month}`,
+		date: `${year}-${month}-${day}`,
 	};
 }
 
@@ -199,7 +204,7 @@ export function resolveBookmarkArchiveItemPath(
 	const root = path.resolve(archiveDir);
 	const accountSegment = safePathSegment(record.accountId);
 	const tweetSegment = safePathSegment(record.tweetId);
-	const date = archiveDateParts(record.tweetCreatedAt);
+	const date = archiveCalendarDate(record.tweetCreatedAt);
 	const candidate = date
 		? path.resolve(
 				root,
@@ -218,6 +223,19 @@ export function resolveBookmarkArchiveItemPath(
 			);
 	assertContainedPath(root, candidate);
 	return candidate;
+}
+
+export function isBookmarkArchiveItemPathForRecord(
+	relativePath: string,
+	record: BookmarkArchiveRecord,
+) {
+	const segments = relativePath.split("/");
+	return (
+		segments.length >= 3 &&
+		segments[0] === "accounts" &&
+		segments[1] === safePathSegment(record.accountId) &&
+		segments.at(-1) === `${safePathSegment(record.tweetId)}.md`
+	);
 }
 
 function yamlScalar(value: string | number | null) {
@@ -297,9 +315,8 @@ export function renderBookmarkArchiveFile(
 		`excerpt: ${yamlScalar(metadata.excerpt)}`,
 		"---",
 	];
-	const dateLabel = archiveDateParts(record.tweetCreatedAt)
-		? record.tweetCreatedAt.slice(0, 10)
-		: "Unknown date";
+	const dateLabel =
+		archiveCalendarDate(record.tweetCreatedAt)?.date ?? "Unknown date";
 	const lines = [
 		...frontmatter,
 		"",
@@ -539,15 +556,6 @@ export async function scanBookmarkArchive(
 	return result;
 }
 
-function indexDate(value: string) {
-	const date = new Date(value);
-	if (!Number.isFinite(date.getTime())) return null;
-	const year = String(date.getFullYear()).padStart(4, "0");
-	const month = String(date.getMonth() + 1).padStart(2, "0");
-	const day = String(date.getDate()).padStart(2, "0");
-	return { date: `${year}-${month}-${day}`, month: `${year}-${month}` };
-}
-
 function compareArchiveEntries(
 	left: BookmarkArchiveEntry,
 	right: BookmarkArchiveEntry,
@@ -561,7 +569,8 @@ function compareArchiveEntries(
 }
 
 function renderIndexEntry(entry: BookmarkArchiveEntry) {
-	const date = indexDate(entry.metadata.tweetCreatedAt)?.date ?? "Unknown date";
+	const date =
+		archiveCalendarDate(entry.metadata.tweetCreatedAt)?.date ?? "Unknown date";
 	const label = escapeMarkdownLabel(
 		`@${entry.metadata.authorHandle} — ${entry.metadata.excerpt}`,
 	);
@@ -595,15 +604,15 @@ export async function buildBookmarkArchiveIndex(
 			handle: entry.metadata.accountHandle,
 			count: (account?.count ?? 0) + 1,
 		});
-		const date = indexDate(entry.metadata.tweetCreatedAt);
+		const date = archiveCalendarDate(entry.metadata.tweetCreatedAt);
 		if (!date) {
 			unknown.push(entry);
 			continue;
 		}
 		calendarDates.push(date.date);
-		const monthEntries = dated.get(date.month) ?? [];
+		const monthEntries = dated.get(date.yearMonth) ?? [];
 		monthEntries.push(entry);
-		dated.set(date.month, monthEntries);
+		dated.set(date.yearMonth, monthEntries);
 	}
 	calendarDates.sort();
 	const dateRange =

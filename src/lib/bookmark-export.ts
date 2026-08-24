@@ -2,6 +2,7 @@ import path from "node:path";
 import { findOperationAccount } from "./account-selection";
 import {
 	buildBookmarkArchiveIndex,
+	isBookmarkArchiveItemPathForRecord,
 	parseBookmarkArchiveFile,
 	readTextFileWithinDirectory,
 	renderBookmarkArchiveFile,
@@ -15,7 +16,10 @@ import { getBirdclawPaths, resolveBookmarkArchiveDir } from "./config";
 import { getNativeDb } from "./db";
 import { resolveUserPath } from "./launchd";
 import { parseJsonField } from "./query-read-model-shared";
-import { acquireScheduledJobLock } from "./scheduled-job";
+import {
+	acquireScheduledJobLock,
+	DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS,
+} from "./scheduled-job";
 import type { Database } from "./sqlite";
 import type { TweetEntities, TweetMediaItem } from "./types";
 
@@ -63,8 +67,6 @@ export interface BookmarkExportResult {
 	finishedAt: string;
 	skipped?: "already-running";
 }
-
-const DEFAULT_BOOKMARK_EXPORT_LOCK_STALE_MS = 6 * 60 * 60 * 1000;
 
 export function getDefaultBookmarkExportLockPath() {
 	return path.join(getBirdclawPaths().rootDir, "locks", "bookmark-export.lock");
@@ -185,7 +187,7 @@ export async function exportBookmarks(
 		);
 		const releaseLock = await acquireScheduledJobLock(
 			lockPath,
-			DEFAULT_BOOKMARK_EXPORT_LOCK_STALE_MS,
+			DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS,
 		);
 		if (!releaseLock) {
 			return {
@@ -220,9 +222,8 @@ export async function exportBookmarks(
 	let updated = 0;
 	let unchanged = 0;
 	let conflicted = 0;
-	const existingEntries = groupArchiveEntriesByIdentity(
-		(await scanBookmarkArchive(archiveDir)).entries,
-	);
+	const initialScan = await scanBookmarkArchive(archiveDir);
+	const existingEntries = groupArchiveEntriesByIdentity(initialScan.entries);
 
 	for (const row of readBookmarkRows(db, account.id)) {
 		let errorPath = unresolvedBookmarkLocation(archiveDir, row);
@@ -230,6 +231,17 @@ export async function exportBookmarks(
 			const record = toArchiveRecord(row);
 			const filePath = resolveBookmarkArchiveItemPath(archiveDir, record);
 			errorPath = filePath;
+			const unindexedMatches = initialScan.unindexed.filter((problem) =>
+				isBookmarkArchiveItemPathForRecord(problem.relativePath, record),
+			);
+			if (unindexedMatches.length > 0) {
+				errorPath = unindexedMatches[0].path;
+				throw new Error(
+					unindexedMatches.length === 1
+						? unindexedMatches[0].error
+						: `Multiple unparseable archive files exist for account ${record.accountId} and tweet ${record.tweetId}: ${unindexedMatches.map((problem) => problem.path).join(", ")}`,
+				);
+			}
 			const matches =
 				existingEntries.get(
 					bookmarkIdentity(record.accountId, record.tweetId),

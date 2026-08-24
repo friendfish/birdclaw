@@ -22,11 +22,11 @@ import {
 import {
 	acquireScheduledJobLockEffect,
 	appendScheduledJobAuditEffect,
+	DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS,
 	startScheduledJobRun,
 } from "./scheduled-job";
 
 const DEFAULT_LAUNCHD_LABEL = "com.steipete.birdclaw.bookmark-export";
-const DEFAULT_LOCK_STALE_MS = 6 * 60 * 60 * 1000;
 
 export interface BookmarkExportJobOptions {
 	account?: string;
@@ -128,7 +128,7 @@ export function runBookmarkExportJobEffect({
 		};
 		const releaseLock = yield* acquireScheduledJobLockEffect(
 			resolvedLockPath,
-			DEFAULT_LOCK_STALE_MS,
+			DEFAULT_SCHEDULED_JOB_LOCK_MAX_AGE_MS,
 		);
 		if (!releaseLock) {
 			const entry: BookmarkExportAuditEntry = {

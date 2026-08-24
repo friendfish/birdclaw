@@ -26,10 +26,9 @@ Object.defineProperty(
 	{ value: execFileAsyncMock },
 );
 
-vi.mock("./bookmark-export", () => ({
+vi.mock("./bookmark-export", async (importOriginal) => ({
+	...(await importOriginal<typeof import("./bookmark-export")>()),
 	exportBookmarks: (...args: unknown[]) => exportBookmarksMock(...args),
-	getDefaultBookmarkExportLockPath: () =>
-		path.join(process.env.BIRDCLAW_HOME ?? "", "locks", "bookmark-export.lock"),
 }));
 
 vi.mock("node:child_process", () => ({

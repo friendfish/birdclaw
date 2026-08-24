@@ -276,21 +276,24 @@ export function resolveBookmarkArchiveDir(requested?: string): string {
 		: path.join(getBirdclawPaths().rootDir, "bookmark-archive");
 }
 
+function resolveScheduleField(
+	value: unknown,
+	maximum: number,
+	fallback: number,
+) {
+	return typeof value === "number" &&
+		Number.isInteger(value) &&
+		value >= 0 &&
+		value <= maximum
+		? value
+		: fallback;
+}
+
 export function resolveBookmarkExportSchedule() {
 	const configured = getBirdclawConfig().bookmarks?.exportSchedule;
 	return {
-		hour:
-			Number.isInteger(configured?.hour) &&
-			(configured?.hour ?? -1) >= 0 &&
-			(configured?.hour ?? 24) <= 23
-				? (configured?.hour ?? 3)
-				: 3,
-		minute:
-			Number.isInteger(configured?.minute) &&
-			(configured?.minute ?? -1) >= 0 &&
-			(configured?.minute ?? 60) <= 59
-				? (configured?.minute ?? 0)
-				: 0,
+		hour: resolveScheduleField(configured?.hour, 23, 3),
+		minute: resolveScheduleField(configured?.minute, 59, 0),
 	};
 }
 

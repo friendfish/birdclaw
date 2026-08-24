@@ -143,6 +143,37 @@ describe("bookmark markdown archive", () => {
 		);
 	});
 
+	it("uses one local calendar date for paths, headings, and the index", async () => {
+		const previousTimezone = process.env.TZ;
+		process.env.TZ = "America/Los_Angeles";
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "bookmark-archive-"));
+		tempRoots.push(root);
+		try {
+			const record = makeRecord({
+				tweetCreatedAt: "2026-08-01T00:30:00.000Z",
+			});
+			const filePath = resolveBookmarkArchiveItemPath(root, record);
+			const markdown = renderBookmarkArchiveFile(record, {
+				firstArchivedAt: "2026-08-24T03:00:01.000Z",
+				userNotes: "\n\n",
+			});
+			await writeTextFileAtomically(filePath, markdown);
+			const index = await buildBookmarkArchiveIndex(
+				root,
+				"2026-08-24T03:05:00.000Z",
+			);
+
+			expect(filePath).toContain(path.join("2026", "07"));
+			expect(markdown).toContain("# @author · 2026-07-31");
+			expect(index.markdown).toContain("## 2026-07 · 1");
+			expect(index.markdown).toContain("- 2026-07-31 ·");
+			expect(index.markdown).toContain("- Date range: 2026-07-31 — 2026-07-31");
+		} finally {
+			if (previousTimezone === undefined) delete process.env.TZ;
+			else process.env.TZ = previousTimezone;
+		}
+	});
+
 	it("encodes path segments and rejects control characters", () => {
 		const root = path.resolve("/tmp/bookmark-archive");
 		const resolved = resolveBookmarkArchiveItemPath(
@@ -208,6 +239,21 @@ describe("bookmark markdown archive", () => {
 		expect(parseBookmarkArchiveFile(markdown).userNotes).toBe(
 			"\nprotected notes\n",
 		);
+	});
+
+	it("does not split Unicode code points when truncating excerpts", () => {
+		const prefix = "a".repeat(159);
+		const parsed = parseBookmarkArchiveFile(
+			renderBookmarkArchiveFile(
+				makeRecord({ text: `${prefix}😀tail`, entities: {} }),
+				{
+					firstArchivedAt: "2026-08-24T03:00:01.000Z",
+					userNotes: "\n\n",
+				},
+			),
+		);
+
+		expect(parsed.metadata.excerpt).toBe(`${prefix}😀`);
 	});
 
 	it("atomically replaces a text file without leaving temporary files", async () => {
