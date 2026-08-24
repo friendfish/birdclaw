@@ -573,7 +573,9 @@ between behavioral fixes, test corrections, and documented product boundaries:
 - [x] Treat an unparseable same-account, same-tweet file under an older date
   path as a conflict instead of creating a duplicate archive item.
 - [x] Use the tweet timestamp's local calendar date consistently for the item
-  path, generated heading, index date, date range, and monthly grouping.
+  path, generated heading, index date, date range, and monthly grouping; compare
+  complete rendered output so a timezone change refreshes managed dates without
+  moving the stable file path.
 - [x] Exercise the real default lock-path implementation in the scheduled-job
   test rather than mocking the function under assertion.
 - [x] Document that source Markdown may resemble generated headings and that
@@ -586,17 +588,20 @@ between behavioral fixes, test corrections, and documented product boundaries:
   resolver.
 - [x] Record the implementation checklist and this review follow-up in the
   plan.
-- [x] Document one-account-per-run behavior and the unique-label requirement
-  for multi-account LaunchAgents.
+- [x] Document one-account-per-run behavior, unique labels, staggered schedules,
+  and the non-queuing lock behavior for multi-account LaunchAgents.
 
 ### Final Re-Verification
 
 - [x] `pnpm check`
-- [x] `pnpm test` (186 files, 1906 tests)
+- [x] `pnpm test` (186 files, 1907 tests)
+- [x] `pnpm coverage` (88.51% statements, 80.58% branches, 88.23%
+  functions, 90.07% lines)
 - [x] `pnpm run build`
 - [x] `pnpm run pack:smoke` (149 packaged files)
 - [x] `pnpm run docs:site`
-- [ ] Independent review of the final PR #67 diff
+- [x] Independent review of the final PR #67 diff (no remaining findings;
+  ready to merge)
 
 All commands exited successfully on Node 26.4.0. pnpm reported the expected
 non-fatal engine warning because the repository declares Node 26.5.0 or newer.

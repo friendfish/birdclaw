@@ -150,25 +150,33 @@ birdclaw --json jobs install-bookmark-export-launchd \
 
 One export invocation and one installed agent select one account. To export
 multiple accounts, install a separate agent for each account with a unique
-`--label`; reusing the default label would replace the existing plist:
+`--label` and a staggered schedule. Reusing the default label would replace the
+existing plist, while using the same calendar minute could make one export skip
+because another account still holds the shared lock:
 
 ```bash
 birdclaw --json jobs install-bookmark-export-launchd \
   --account acct_primary \
   --label com.steipete.birdclaw.bookmark-export.primary \
+  --hour 3 \
+  --minute 0 \
   --program /opt/homebrew/bin/birdclaw
 
 birdclaw --json jobs install-bookmark-export-launchd \
   --account acct_secondary \
   --label com.steipete.birdclaw.bookmark-export.secondary \
+  --hour 3 \
+  --minute 15 \
   --program /opt/homebrew/bin/birdclaw
 ```
 
 These agents may use the same archive directory. Account subdirectories prevent
-item collisions, while the shared bookmark-export lock serializes writes and
-`INDEX.md` rebuilds. The default audit and stdout/stderr logs are also shared;
-pass distinct `--log`, `--stdout`, or `--stderr` paths when per-account logs are
-preferred.
+item collisions. The shared bookmark-export lock prevents concurrent writes and
+`INDEX.md` rebuilds, but it does not queue or retry a run: an agent that cannot
+acquire the lock records `already-running` and exits successfully. Give each
+account enough schedule separation for the preceding export to finish. The
+default audit and stdout/stderr logs are also shared; pass distinct `--log`,
+`--stdout`, or `--stderr` paths when per-account logs are preferred.
 
 The calendar time comes from `bookmarks.exportSchedule` and defaults to 03:00
 local time. `--hour 4 --minute 15` overrides it for this agent. Installation

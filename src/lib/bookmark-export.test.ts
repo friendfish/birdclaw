@@ -255,6 +255,64 @@ describe("bookmark export", () => {
 		});
 	});
 
+	it("refreshes the managed date after a timezone change without moving the file", async () => {
+		const previousTimezone = process.env.TZ;
+		process.env.TZ = "UTC";
+		const home = seedDefaultAccount();
+		try {
+			insertTestTweet(home.db, {
+				id: "tweet:timezone-drift",
+				authorProfileId: "profile:author",
+				text: "A bookmark near a local date boundary",
+				createdAt: "2026-08-01T00:30:00.000Z",
+			});
+			insertBookmarkCollection(home.db, { tweetId: "tweet:timezone-drift" });
+			const archiveDir = home.makeTempDir("birdclaw-bookmarks-");
+			const now = () => new Date("2026-08-24T03:00:00.000Z");
+			await exportBookmarks({ archiveDir, db: home.db, now });
+			const originalPath = archivePath(
+				archiveDir,
+				"account:primary",
+				"2026",
+				"08",
+				"tweet:timezone-drift",
+			);
+			expect(await fs.readFile(originalPath, "utf8")).toContain(
+				"# @author · 2026-08-01",
+			);
+
+			process.env.TZ = "America/Los_Angeles";
+			const result = await exportBookmarks({ archiveDir, db: home.db, now });
+			const recalculatedPath = archivePath(
+				archiveDir,
+				"account:primary",
+				"2026",
+				"07",
+				"tweet:timezone-drift",
+			);
+
+			expect(result).toMatchObject({
+				created: 0,
+				updated: 1,
+				unchanged: 0,
+				conflicted: 0,
+				indexEntries: 1,
+			});
+			expect(await fs.readFile(originalPath, "utf8")).toContain(
+				"# @author · 2026-07-31",
+			);
+			expect(
+				await fs.readFile(path.join(archiveDir, "INDEX.md"), "utf8"),
+			).toContain("- 2026-07-31 ·");
+			await expect(fs.stat(recalculatedPath)).rejects.toMatchObject({
+				code: "ENOENT",
+			});
+		} finally {
+			if (previousTimezone === undefined) delete process.env.TZ;
+			else process.env.TZ = previousTimezone;
+		}
+	});
+
 	it("does not fork a malformed bookmark when its source path drifts", async () => {
 		const home = seedDefaultAccount();
 		insertTestTweet(home.db, {

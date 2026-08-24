@@ -284,7 +284,11 @@ export async function exportBookmarks(
 				userNotes: parsedExisting.userNotes,
 			});
 			const nextHash = parseBookmarkArchiveFile(rendered).metadata.contentHash;
-			if (!options.full && nextHash === parsedExisting.metadata.contentHash) {
+			if (
+				!options.full &&
+				nextHash === parsedExisting.metadata.contentHash &&
+				rendered === existing
+			) {
 				unchanged += 1;
 				continue;
 			}
