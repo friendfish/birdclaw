@@ -17,6 +17,7 @@ import {
 	resolveDigestFreshnessSeconds,
 	resolveDigestLaunchdExecution,
 	resolveMentionsDataSource,
+	resolveTodayMaxWidthPx,
 	setActionsTransport,
 	setDigestLaunchdExecution,
 } from "./config";
@@ -336,6 +337,30 @@ describe("config", () => {
 			);
 			resetBirdclawPathsForTests();
 			expect(resolveDigestFreshnessSeconds()).toBe(12 * 60 * 60);
+		}
+	});
+
+	it("resolves bounded integer Today widths and falls back for invalid config values", () => {
+		const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-config-"));
+		tempRoots.push(tempRoot);
+		process.env.BIRDCLAW_HOME = tempRoot;
+
+		expect(resolveTodayMaxWidthPx()).toBe(960);
+		for (const todayMaxWidthPx of [680, 923, 1200]) {
+			writeFileSync(
+				path.join(tempRoot, "config.json"),
+				JSON.stringify({ ui: { todayMaxWidthPx } }),
+			);
+			resetBirdclawPathsForTests();
+			expect(resolveTodayMaxWidthPx()).toBe(todayMaxWidthPx);
+		}
+		for (const todayMaxWidthPx of [679, 1201, 960.5, "wide", null]) {
+			writeFileSync(
+				path.join(tempRoot, "config.json"),
+				JSON.stringify({ ui: { todayMaxWidthPx } }),
+			);
+			resetBirdclawPathsForTests();
+			expect(resolveTodayMaxWidthPx()).toBe(960);
 		}
 	});
 

@@ -9,6 +9,13 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { resolveUserPath } from "./launchd";
+import { DEFAULT_TODAY_MAX_WIDTH_PX, todayMaxWidthPxSchema } from "./ui-layout";
+
+export {
+	DEFAULT_TODAY_MAX_WIDTH_PX,
+	MAX_TODAY_MAX_WIDTH_PX,
+	MIN_TODAY_MAX_WIDTH_PX,
+} from "./ui-layout";
 
 export interface BirdclawPaths {
 	rootDir: string;
@@ -96,6 +103,16 @@ export interface BirdclawConfig {
 		aiLanguage?: string;
 		uiLanguage?: string;
 	};
+	ui?: {
+		todayMaxWidthPx?: number;
+	};
+}
+
+export function resolveTodayMaxWidthPx() {
+	const configured = todayMaxWidthPxSchema.safeParse(
+		getBirdclawConfig().ui?.todayMaxWidthPx,
+	);
+	return configured.success ? configured.data : DEFAULT_TODAY_MAX_WIDTH_PX;
 }
 
 export function getDefaultAccountSelector() {

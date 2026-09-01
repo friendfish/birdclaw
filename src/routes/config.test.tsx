@@ -19,7 +19,7 @@ function jsonResponse(body: unknown, init?: ResponseInit) {
 	});
 }
 
-function configResponse() {
+function configResponse(todayMaxWidthPx = 960) {
 	return {
 		ok: true,
 		ai: {
@@ -29,6 +29,7 @@ function configResponse() {
 			model: "gpt-test",
 		},
 		language: { aiLanguage: "en", uiLanguage: "en" },
+		ui: { todayMaxWidthPx },
 	};
 }
 
@@ -115,6 +116,54 @@ afterEach(() => {
 	cleanup();
 	vi.restoreAllMocks();
 	vi.unstubAllGlobals();
+});
+
+describe("config UI settings", () => {
+	it("edits and saves the Today maximum width", async () => {
+		const savedBodies: unknown[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/config" && init?.method !== "POST") {
+					return jsonResponse(configResponse(1040));
+				}
+				if (url.pathname === "/api/config" && init?.method === "POST") {
+					savedBodies.push(JSON.parse(String(init.body)));
+					return jsonResponse(configResponse(1080));
+				}
+				if (url.pathname === "/api/digest-schedule") {
+					return jsonResponse(scheduleResponse());
+				}
+				throw new Error(`Unexpected request: ${url.pathname}`);
+			}),
+		);
+
+		render(<ConfigRoute />);
+		fireEvent.click(await screen.findByRole("button", { name: "界面配置" }));
+		const widthInput = screen.getByRole("spinbutton", {
+			name: "Today 最大宽度",
+		});
+		expect(widthInput).toHaveValue(1040);
+		expect(widthInput).toHaveAttribute("min", "680");
+		expect(widthInput).toHaveAttribute("max", "1200");
+
+		fireEvent.change(widthInput, { target: { value: "" } });
+		expect(widthInput).toHaveValue(null);
+		fireEvent.submit(widthInput.closest("form")!);
+		expect(
+			await screen.findByText("Today 最大宽度必须是 680 到 1200 之间的整数。"),
+		).toBeVisible();
+		expect(savedBodies).toEqual([]);
+
+		fireEvent.change(widthInput, { target: { value: "1080" } });
+		fireEvent.click(screen.getByRole("button", { name: "Save Config" }));
+
+		await waitFor(() =>
+			expect(savedBodies).toEqual([{ ui: { todayMaxWidthPx: 1080 } }]),
+		);
+		expect(await screen.findByText("界面配置已保存。")).toBeVisible();
+	});
 });
 
 describe("config prompt panel", () => {

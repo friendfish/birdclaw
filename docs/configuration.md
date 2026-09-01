@@ -62,6 +62,9 @@ The Playwright test home is `.playwright-home` in the repo, which is why CI neve
 			"minute": 0
 		}
 	},
+	"ui": {
+		"todayMaxWidthPx": 960
+	},
 	"backup": {
 		"repoPath": "/Users/steipete/Projects/backup-birdclaw",
 		"remote": "https://github.com/steipete/backup-birdclaw.git",
@@ -122,6 +125,19 @@ These settings control local Markdown export only. They do not refresh X,
 download media, run AI, or change `sync bookmarks` transport behavior. See
 [Bookmark Markdown Archive](bookmark-archive.md) for the file ownership and
 permanent-retention contract.
+
+### `ui.todayMaxWidthPx`
+
+Sets the maximum width of the Today page content column in CSS pixels. The
+default is `960`; accepted values are integers from `680` through `1200`.
+Missing or invalid values fall back to `960`. The column still shrinks to the
+available viewport width on smaller screens.
+
+This setting affects only Today. Feed pages keep their compact width, while DMs
+and Network Map keep their existing wide-workspace layout. You can edit the
+value directly or use **System Config → 界面配置**. Changes saved through System
+Config take effect immediately. After editing `config.json` by hand, restart the
+running `birdclaw serve` process so it reloads the cached configuration.
 
 ## Managed X credentials
 

@@ -53,6 +53,7 @@ import { Route as ApiQueryRouteImport } from './routes/api/query'
 import { Route as ApiSearchDiscussionRouteImport } from './routes/api/search-discussion'
 import { Route as ApiStatusRouteImport } from './routes/api/status'
 import { Route as ApiSyncRouteImport } from './routes/api/sync'
+import { Route as ApiUiConfigRouteImport } from './routes/api/ui-config'
 import { Route as ApiXurlRateLimitsRouteImport } from './routes/api/xurl-rate-limits'
 import { Route as ProfilesHandleRouteImport } from './routes/profiles.$handle'
 import { Route as ApiPromptPlaygroundPeriodDigestRouteImport } from './routes/api/prompt-playground.period-digest'
@@ -282,6 +283,11 @@ const ApiSyncRoute = ApiSyncRouteImport.update({
   path: '/api/sync',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiUiConfigRoute = ApiUiConfigRouteImport.update({
+  id: '/api/ui-config',
+  path: '/api/ui-config',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiXurlRateLimitsRoute = ApiXurlRateLimitsRouteImport.update({
   id: '/api/xurl-rate-limits',
   path: '/api/xurl-rate-limits',
@@ -361,6 +367,7 @@ export interface FileRoutesByFullPath {
   '/api/search-discussion': typeof ApiSearchDiscussionRoute
   '/api/status': typeof ApiStatusRoute
   '/api/sync': typeof ApiSyncRoute
+  '/api/ui-config': typeof ApiUiConfigRoute
   '/api/xurl-rate-limits': typeof ApiXurlRateLimitsRoute
   '/profiles/$handle': typeof ProfilesHandleRoute
   '/api/prompt-playground/period-digest': typeof ApiPromptPlaygroundPeriodDigestRoute
@@ -413,6 +420,7 @@ export interface FileRoutesByTo {
   '/api/search-discussion': typeof ApiSearchDiscussionRoute
   '/api/status': typeof ApiStatusRoute
   '/api/sync': typeof ApiSyncRoute
+  '/api/ui-config': typeof ApiUiConfigRoute
   '/api/xurl-rate-limits': typeof ApiXurlRateLimitsRoute
   '/profiles/$handle': typeof ProfilesHandleRoute
   '/api/prompt-playground/period-digest': typeof ApiPromptPlaygroundPeriodDigestRoute
@@ -466,6 +474,7 @@ export interface FileRoutesById {
   '/api/search-discussion': typeof ApiSearchDiscussionRoute
   '/api/status': typeof ApiStatusRoute
   '/api/sync': typeof ApiSyncRoute
+  '/api/ui-config': typeof ApiUiConfigRoute
   '/api/xurl-rate-limits': typeof ApiXurlRateLimitsRoute
   '/profiles/$handle': typeof ProfilesHandleRoute
   '/api/prompt-playground/period-digest': typeof ApiPromptPlaygroundPeriodDigestRoute
@@ -520,6 +529,7 @@ export interface FileRouteTypes {
     | '/api/search-discussion'
     | '/api/status'
     | '/api/sync'
+    | '/api/ui-config'
     | '/api/xurl-rate-limits'
     | '/profiles/$handle'
     | '/api/prompt-playground/period-digest'
@@ -572,6 +582,7 @@ export interface FileRouteTypes {
     | '/api/search-discussion'
     | '/api/status'
     | '/api/sync'
+    | '/api/ui-config'
     | '/api/xurl-rate-limits'
     | '/profiles/$handle'
     | '/api/prompt-playground/period-digest'
@@ -624,6 +635,7 @@ export interface FileRouteTypes {
     | '/api/search-discussion'
     | '/api/status'
     | '/api/sync'
+    | '/api/ui-config'
     | '/api/xurl-rate-limits'
     | '/profiles/$handle'
     | '/api/prompt-playground/period-digest'
@@ -677,6 +689,7 @@ export interface RootRouteChildren {
   ApiSearchDiscussionRoute: typeof ApiSearchDiscussionRoute
   ApiStatusRoute: typeof ApiStatusRoute
   ApiSyncRoute: typeof ApiSyncRoute
+  ApiUiConfigRoute: typeof ApiUiConfigRoute
   ApiXurlRateLimitsRoute: typeof ApiXurlRateLimitsRoute
   ProfilesHandleRoute: typeof ProfilesHandleRoute
   ApiPromptPlaygroundPeriodDigestRoute: typeof ApiPromptPlaygroundPeriodDigestRoute
@@ -994,6 +1007,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSyncRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/ui-config': {
+      id: '/api/ui-config'
+      path: '/api/ui-config'
+      fullPath: '/api/ui-config'
+      preLoaderRoute: typeof ApiUiConfigRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/xurl-rate-limits': {
       id: '/api/xurl-rate-limits'
       path: '/api/xurl-rate-limits'
@@ -1095,6 +1115,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSearchDiscussionRoute: ApiSearchDiscussionRoute,
   ApiStatusRoute: ApiStatusRoute,
   ApiSyncRoute: ApiSyncRoute,
+  ApiUiConfigRoute: ApiUiConfigRoute,
   ApiXurlRateLimitsRoute: ApiXurlRateLimitsRoute,
   ProfilesHandleRoute: ProfilesHandleRoute,
   ApiPromptPlaygroundPeriodDigestRoute: ApiPromptPlaygroundPeriodDigestRoute,
