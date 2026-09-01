@@ -135,7 +135,9 @@ available viewport width on smaller screens.
 
 This setting affects only Today. Feed pages keep their compact width, while DMs
 and Network Map keep their existing wide-workspace layout. You can edit the
-value directly or use **System Config → 界面配置**.
+value directly or use **System Config → 界面配置**. Changes saved through System
+Config take effect immediately. After editing `config.json` by hand, restart the
+running `birdclaw serve` process so it reloads the cached configuration.
 
 ## Managed X credentials
 

@@ -12,11 +12,10 @@ export const Route = createFileRoute("/api/ui-config")({
 		handlers: {
 			GET: ({ request }) =>
 				runRouteEffect(
-					Effect.gen(function* () {
+					Effect.sync(() => {
 						const denied = sensitiveRequestErrorResponse(request);
 						if (denied) return denied;
 
-						yield* Effect.void;
 						return jsonResponse({
 							ok: true,
 							ui: { todayMaxWidthPx: resolveTodayMaxWidthPx() },

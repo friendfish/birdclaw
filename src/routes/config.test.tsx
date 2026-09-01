@@ -148,6 +148,14 @@ describe("config UI settings", () => {
 		expect(widthInput).toHaveAttribute("min", "680");
 		expect(widthInput).toHaveAttribute("max", "1200");
 
+		fireEvent.change(widthInput, { target: { value: "" } });
+		expect(widthInput).toHaveValue(null);
+		fireEvent.submit(widthInput.closest("form")!);
+		expect(
+			await screen.findByText("Today 最大宽度必须是 680 到 1200 之间的整数。"),
+		).toBeVisible();
+		expect(savedBodies).toEqual([]);
+
 		fireEvent.change(widthInput, { target: { value: "1080" } });
 		fireEvent.click(screen.getByRole("button", { name: "Save Config" }));
 

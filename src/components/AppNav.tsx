@@ -1,4 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import type { CSSProperties } from "react";
 import {
 	Bell,
 	Bookmark,
@@ -35,6 +36,7 @@ import {
 	sidebarNavClass,
 	sidebarShellClass,
 } from "#/lib/ui";
+import { EXPANDED_SIDEBAR_WIDTH_PX } from "#/lib/ui-layout";
 import { AccountSwitcher } from "./AccountSwitcher";
 import { BirdclawMark } from "./BrandMark";
 import { ThemeSlider } from "./ThemeSlider";
@@ -57,13 +59,20 @@ const links = [
 	{ to: "/config", label: "Config", icon: Settings },
 ] as const;
 
+const expandedSidebarStyle = {
+	"--sidebar-expanded-width": `${EXPANDED_SIDEBAR_WIDTH_PX}px`,
+} as CSSProperties;
+
 export function AppNav({ compact = false }: { compact?: boolean }) {
 	const pathname = useRouterState({
 		select: (state) => state.location.pathname,
 	});
 
 	return (
-		<aside className={compact ? sidebarShellCompactClass : sidebarShellClass}>
+		<aside
+			className={compact ? sidebarShellCompactClass : sidebarShellClass}
+			style={compact ? undefined : expandedSidebarStyle}
+		>
 			<div className="flex min-h-0 flex-1 flex-col">
 				<Link to="/" search={{ feed: "for_you" }} className={sidebarBrandClass}>
 					<span className={sidebarBrandMarkClass}>

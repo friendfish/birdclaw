@@ -14,6 +14,8 @@ import {
 	DEFAULT_TODAY_MAX_WIDTH_PX,
 	MAX_TODAY_MAX_WIDTH_PX,
 	MIN_TODAY_MAX_WIDTH_PX,
+	todayMaxWidthPxSchema,
+	todayUiConfigSchema,
 } from "#/lib/ui-layout";
 import { z } from "zod";
 import {
@@ -47,15 +49,7 @@ const configResponseSchema = z.object({
 			uiLanguage: z.string().optional(),
 		})
 		.optional(),
-	ui: z
-		.object({
-			todayMaxWidthPx: z
-				.number()
-				.int()
-				.min(MIN_TODAY_MAX_WIDTH_PX)
-				.max(MAX_TODAY_MAX_WIDTH_PX),
-		})
-		.optional(),
+	ui: todayUiConfigSchema.optional(),
 });
 
 const modelsResponseSchema = z.object({
@@ -450,7 +444,7 @@ function ConfigRoute() {
 	// Language config state
 	const [aiLanguage, setAiLanguage] = useState("zh-CN");
 	const [uiLanguage, setUiLanguage] = useState("zh-CN");
-	const [todayMaxWidthPx, setTodayMaxWidthPx] = useState(
+	const [todayMaxWidthPx, setTodayMaxWidthPx] = useState<number | "">(
 		DEFAULT_TODAY_MAX_WIDTH_PX,
 	);
 
@@ -695,9 +689,14 @@ function ConfigRoute() {
 
 	const handleUiSave = async (event: React.FormEvent) => {
 		event.preventDefault();
-		setSaving(true);
 		setError(null);
 		setSuccess(false);
+		const width = todayMaxWidthPxSchema.safeParse(todayMaxWidthPx);
+		if (!width.success) {
+			setError("Today 最大宽度必须是 680 到 1200 之间的整数。");
+			return;
+		}
+		setSaving(true);
 
 		try {
 			const response = await fetchJson(
@@ -705,7 +704,7 @@ function ConfigRoute() {
 				{
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ ui: { todayMaxWidthPx } }),
+					body: JSON.stringify({ ui: { todayMaxWidthPx: width.data } }),
 				},
 				configResponseSchema,
 				"Failed to save UI config",
@@ -761,22 +760,6 @@ function ConfigRoute() {
 								onClick={() => {
 									setError(null);
 									setSuccess(false);
-									setActiveTab("ui");
-								}}
-								className={cx(
-									"px-4 py-2.5 font-bold text-[14px] border-b-2 transition-all cursor-pointer",
-									activeTab === "ui"
-										? "border-[var(--brand)] text-[var(--brand)]"
-										: "border-transparent text-[var(--ink-soft)] hover:text-[var(--ink)]",
-								)}
-							>
-								界面配置
-							</button>
-							<button
-								type="button"
-								onClick={() => {
-									setError(null);
-									setSuccess(false);
 									setActiveTab("ai");
 								}}
 								className={cx(
@@ -815,6 +798,22 @@ function ConfigRoute() {
 								)}
 							>
 								语言配置
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									setError(null);
+									setSuccess(false);
+									setActiveTab("ui");
+								}}
+								className={cx(
+									"px-4 py-2.5 font-bold text-[14px] border-b-2 transition-all cursor-pointer",
+									activeTab === "ui"
+										? "border-[var(--brand)] text-[var(--brand)]"
+										: "border-transparent text-[var(--ink-soft)] hover:text-[var(--ink)]",
+								)}
+							>
+								界面配置
 							</button>
 							<button
 								type="button"
@@ -1039,9 +1038,10 @@ function ConfigRoute() {
 											max={MAX_TODAY_MAX_WIDTH_PX}
 											step={20}
 											value={todayMaxWidthPx}
-											onChange={(event) =>
-												setTodayMaxWidthPx(Number(event.target.value))
-											}
+											onChange={(event) => {
+												const value = event.target.value;
+												setTodayMaxWidthPx(value === "" ? "" : Number(value));
+											}}
 											className={textFieldClass}
 											required
 										/>

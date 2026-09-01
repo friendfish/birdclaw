@@ -93,6 +93,66 @@ test("navigates across the primary surfaces", async ({ page }) => {
 	).toBeVisible();
 });
 
+test("applies the Today width without horizontal overflow across viewports", async ({
+	page,
+}) => {
+	await page.goto("/config");
+	await page.getByRole("button", { name: "界面配置" }).click();
+	const widthInput = page.getByLabel("Today 最大宽度");
+	const initialWidth = await widthInput.inputValue();
+	await widthInput.fill("1120");
+	await page.getByRole("button", { name: "Save Config" }).click();
+	await expect(page.getByText("界面配置已保存。")).toBeVisible();
+
+	try {
+		for (const viewport of [
+			{ width: 390, height: 844, sidebarWidth: 72 },
+			{ width: 1440, height: 900, sidebarWidth: 260 },
+			{ width: 1920, height: 1080, sidebarWidth: 260 },
+		]) {
+			await page.setViewportSize(viewport);
+			await page.goto("/today");
+			await expect(
+				page.getByRole("heading", { name: "What happened" }),
+			).toBeVisible();
+
+			const main = page.locator("main");
+			await expect(main).toHaveCSS("max-width", "1120px");
+			const metrics = await page.evaluate(() => {
+				const mainElement = document.querySelector("main");
+				const sidebar = document.querySelector("aside");
+				const shell = mainElement?.parentElement;
+				if (!mainElement || !sidebar || !shell) {
+					throw new Error("Today shell elements are missing");
+				}
+				return {
+					clientWidth: document.documentElement.clientWidth,
+					scrollWidth: document.documentElement.scrollWidth,
+					mainWidth: Math.round(mainElement.getBoundingClientRect().width),
+					sidebarWidth: Math.round(sidebar.getBoundingClientRect().width),
+					shellWidth: Math.round(shell.getBoundingClientRect().width),
+				};
+			});
+
+			expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
+			expect(metrics.sidebarWidth).toBe(viewport.sidebarWidth);
+			if (viewport.width === 390) {
+				expect(metrics.shellWidth).toBe(metrics.clientWidth);
+				expect(metrics.mainWidth).toBe(metrics.clientWidth - 72);
+			} else {
+				expect(metrics.mainWidth).toBe(1120);
+				expect(metrics.shellWidth).toBe(1380);
+			}
+		}
+	} finally {
+		await page.goto("/config");
+		await page.getByRole("button", { name: "界面配置" }).click();
+		await page.getByLabel("Today 最大宽度").fill(initialWidth);
+		await page.getByRole("button", { name: "Save Config" }).click();
+		await expect(page.getByText("界面配置已保存。")).toBeVisible();
+	}
+});
+
 test("manual sync controls are available on syncable surfaces", async ({
 	page,
 }) => {

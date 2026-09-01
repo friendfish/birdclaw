@@ -3,8 +3,6 @@ import { Effect } from "effect";
 import { z } from "zod";
 import {
 	getBirdclawConfig,
-	MAX_TODAY_MAX_WIDTH_PX,
-	MIN_TODAY_MAX_WIDTH_PX,
 	resolveTodayMaxWidthPx,
 	writeBirdclawConfig,
 } from "#/lib/config";
@@ -13,6 +11,7 @@ import {
 	runRouteEffect,
 	sensitiveRequestErrorResponse,
 } from "#/lib/http-effect";
+import { todayUiConfigSchema } from "#/lib/ui-layout";
 
 const configRequestSchema = z.object({
 	provider: z.string().optional(),
@@ -33,15 +32,7 @@ const configRequestSchema = z.object({
 			uiLanguage: z.string().optional(),
 		})
 		.optional(),
-	ui: z
-		.object({
-			todayMaxWidthPx: z
-				.number()
-				.int()
-				.min(MIN_TODAY_MAX_WIDTH_PX)
-				.max(MAX_TODAY_MAX_WIDTH_PX),
-		})
-		.optional(),
+	ui: todayUiConfigSchema.optional(),
 });
 
 export const Route = createFileRoute("/api/config")({

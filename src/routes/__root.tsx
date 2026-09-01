@@ -13,8 +13,8 @@ import { BirdclawQueryProvider } from "#/lib/query-client";
 import { ThemeProvider, themeScript } from "#/lib/theme";
 import {
 	DEFAULT_TODAY_MAX_WIDTH_PX,
-	MAX_TODAY_MAX_WIDTH_PX,
-	MIN_TODAY_MAX_WIDTH_PX,
+	EXPANDED_SIDEBAR_WIDTH_PX,
+	todayUiConfigSchema,
 } from "#/lib/ui-layout";
 import {
 	bodyClass,
@@ -27,13 +27,7 @@ import appCss from "../styles.css?url";
 
 const uiConfigResponseSchema = z.object({
 	ok: z.boolean(),
-	ui: z.object({
-		todayMaxWidthPx: z
-			.number()
-			.int()
-			.min(MIN_TODAY_MAX_WIDTH_PX)
-			.max(MAX_TODAY_MAX_WIDTH_PX),
-	}),
+	ui: todayUiConfigSchema,
 });
 
 export const Route = createRootRoute({
@@ -121,7 +115,7 @@ export function AppShell({
 			.catch(() => undefined);
 		return () => controller.abort();
 	}, [todayMode]);
-	const todayShellMaxWidthPx = todayMaxWidthPx + 260;
+	const todayShellMaxWidthPx = todayMaxWidthPx + EXPANDED_SIDEBAR_WIDTH_PX;
 
 	return (
 		<div
