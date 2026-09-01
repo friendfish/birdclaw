@@ -126,6 +126,7 @@ test("applies the Today width without horizontal overflow across viewports", asy
 					throw new Error("Today shell elements are missing");
 				}
 				return {
+					bodyClientWidth: document.body.clientWidth,
 					clientWidth: document.documentElement.clientWidth,
 					scrollWidth: document.documentElement.scrollWidth,
 					mainWidth: Math.round(mainElement.getBoundingClientRect().width),
@@ -137,8 +138,8 @@ test("applies the Today width without horizontal overflow across viewports", asy
 			expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
 			expect(metrics.sidebarWidth).toBe(viewport.sidebarWidth);
 			if (viewport.width === 390) {
-				expect(metrics.shellWidth).toBe(metrics.clientWidth);
-				expect(metrics.mainWidth).toBe(metrics.clientWidth - 72);
+				expect(metrics.shellWidth).toBe(metrics.bodyClientWidth);
+				expect(metrics.mainWidth).toBe(metrics.bodyClientWidth - 72);
 			} else {
 				expect(metrics.mainWidth).toBe(1120);
 				expect(metrics.shellWidth).toBe(1380);
