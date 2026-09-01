@@ -1,0 +1,3 @@
+export const DEFAULT_TODAY_MAX_WIDTH_PX = 960;
+export const MIN_TODAY_MAX_WIDTH_PX = 680;
+export const MAX_TODAY_MAX_WIDTH_PX = 1200;

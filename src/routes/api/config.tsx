@@ -1,7 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
 import { z } from "zod";
-import { getBirdclawConfig, writeBirdclawConfig } from "#/lib/config";
+import {
+	getBirdclawConfig,
+	MAX_TODAY_MAX_WIDTH_PX,
+	MIN_TODAY_MAX_WIDTH_PX,
+	resolveTodayMaxWidthPx,
+	writeBirdclawConfig,
+} from "#/lib/config";
 import {
 	jsonResponse,
 	runRouteEffect,
@@ -27,6 +33,15 @@ const configRequestSchema = z.object({
 			uiLanguage: z.string().optional(),
 		})
 		.optional(),
+	ui: z
+		.object({
+			todayMaxWidthPx: z
+				.number()
+				.int()
+				.min(MIN_TODAY_MAX_WIDTH_PX)
+				.max(MAX_TODAY_MAX_WIDTH_PX),
+		})
+		.optional(),
 });
 
 export const Route = createFileRoute("/api/config")({
@@ -47,6 +62,7 @@ export const Route = createFileRoute("/api/config")({
 								aiLanguage: "zh-CN",
 								uiLanguage: "zh-CN",
 							},
+							ui: { todayMaxWidthPx: resolveTodayMaxWidthPx() },
 						});
 					}),
 				),
@@ -61,7 +77,14 @@ export const Route = createFileRoute("/api/config")({
 							catch: (error) => error,
 						});
 
-						const parsed = configRequestSchema.parse(body);
+						const result = configRequestSchema.safeParse(body);
+						if (!result.success) {
+							return jsonResponse(
+								{ ok: false, message: "Invalid config payload" },
+								{ status: 400 },
+							);
+						}
+						const parsed = result.data;
 						const config = getBirdclawConfig();
 
 						const nextConfig = {
@@ -84,6 +107,7 @@ export const Route = createFileRoute("/api/config")({
 								...config.language,
 								...parsed.language,
 							},
+							...(parsed.ui ? { ui: { ...config.ui, ...parsed.ui } } : {}),
 						};
 
 						writeBirdclawConfig(nextConfig);
@@ -92,6 +116,7 @@ export const Route = createFileRoute("/api/config")({
 							ok: true,
 							ai: nextConfig.ai,
 							language: nextConfig.language,
+							ui: { todayMaxWidthPx: resolveTodayMaxWidthPx() },
 						});
 					}),
 				),

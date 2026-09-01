@@ -392,6 +392,9 @@ Home config lives in `~/.birdclaw/config.json`. Example:
 	},
 	"mentions": {
 		"birdCommand": "/Users/steipete/Projects/bird/bird"
+	},
+	"ui": {
+		"todayMaxWidthPx": 960
 	}
 }
 ```
@@ -405,6 +408,7 @@ Notes:
 - `live.dataSource` controls all live reads and syncs: `bird`, `xurl`, or `auto`
 - live-read precedence is explicit operation mode, `BIRDCLAW_LIVE_DATA_SOURCE`, `live.dataSource`, legacy `BIRDCLAW_MENTIONS_DATA_SOURCE`, legacy `mentions.dataSource`, then the capability default
 - `mentions.dataSource` and `BIRDCLAW_MENTIONS_DATA_SOURCE` are compatibility aliases for older installations
+- `ui.todayMaxWidthPx` sets the Today content width from 680 through 1200 CSS pixels (default 960); it does not change feed, DM, or Network Map widths
 - `actions.transport` controls compose writes (post, reply, and DM compose) and moderation writes that use the actions policy; compose commands reject `bird` because only xurl writes are implemented, so use `auto` or `xurl`
 - DM request mutations (`dms accept`, `dms reject`, and `dms block`) call Bird directly and do not use `actions.transport`
 - `bird` mode uses your local `bird` CLI and caches its mentions output into birdclaw's canonical store

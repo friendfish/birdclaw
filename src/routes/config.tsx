@@ -10,6 +10,11 @@ import {
 } from "lucide-react";
 import { PromptTemplatesPanel } from "#/components/PromptTemplatesPanel";
 import { fetchJson } from "#/lib/api-client";
+import {
+	DEFAULT_TODAY_MAX_WIDTH_PX,
+	MAX_TODAY_MAX_WIDTH_PX,
+	MIN_TODAY_MAX_WIDTH_PX,
+} from "#/lib/ui-layout";
 import { z } from "zod";
 import {
 	cx,
@@ -40,6 +45,15 @@ const configResponseSchema = z.object({
 		.object({
 			aiLanguage: z.string().optional(),
 			uiLanguage: z.string().optional(),
+		})
+		.optional(),
+	ui: z
+		.object({
+			todayMaxWidthPx: z
+				.number()
+				.int()
+				.min(MIN_TODAY_MAX_WIDTH_PX)
+				.max(MAX_TODAY_MAX_WIDTH_PX),
 		})
 		.optional(),
 });
@@ -424,7 +438,7 @@ function CredentialsPanel() {
 
 function ConfigRoute() {
 	const [activeTab, setActiveTab] = useState<
-		"ai" | "credentials" | "language" | "schedule" | "prompts"
+		"ai" | "credentials" | "language" | "ui" | "schedule" | "prompts"
 	>("ai");
 
 	// AI config state
@@ -436,6 +450,9 @@ function ConfigRoute() {
 	// Language config state
 	const [aiLanguage, setAiLanguage] = useState("zh-CN");
 	const [uiLanguage, setUiLanguage] = useState("zh-CN");
+	const [todayMaxWidthPx, setTodayMaxWidthPx] = useState(
+		DEFAULT_TODAY_MAX_WIDTH_PX,
+	);
 
 	// Digest scheduling state
 	const [todayTime, setTodayTime] = useState("08:00");
@@ -476,6 +493,9 @@ function ConfigRoute() {
 						setAiLanguage(response.language.aiLanguage || "zh-CN");
 						setUiLanguage(response.language.uiLanguage || "zh-CN");
 					}
+					setTodayMaxWidthPx(
+						response.ui?.todayMaxWidthPx ?? DEFAULT_TODAY_MAX_WIDTH_PX,
+					);
 				}
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Load failed");
@@ -672,6 +692,37 @@ function ConfigRoute() {
 			setScheduleSaving(false);
 		}
 	};
+
+	const handleUiSave = async (event: React.FormEvent) => {
+		event.preventDefault();
+		setSaving(true);
+		setError(null);
+		setSuccess(false);
+
+		try {
+			const response = await fetchJson(
+				"/api/config",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ ui: { todayMaxWidthPx } }),
+				},
+				configResponseSchema,
+				"Failed to save UI config",
+			);
+			if (response.ok) {
+				setTodayMaxWidthPx(
+					response.ui?.todayMaxWidthPx ?? DEFAULT_TODAY_MAX_WIDTH_PX,
+				);
+				setSuccess(true);
+				setTimeout(() => setSuccess(false), 3000);
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Save failed");
+		} finally {
+			setSaving(false);
+		}
+	};
 	const estimatedAutomaticBatches = automaticBatchEstimate(freshnessHours, [
 		parseTime(todayTime),
 		parseTime(hour24Time),
@@ -705,6 +756,22 @@ function ConfigRoute() {
 					>
 						{/* Tabs Selector */}
 						<div className="flex flex-wrap border-b border-[var(--line)] mb-2">
+							<button
+								type="button"
+								onClick={() => {
+									setError(null);
+									setSuccess(false);
+									setActiveTab("ui");
+								}}
+								className={cx(
+									"px-4 py-2.5 font-bold text-[14px] border-b-2 transition-all cursor-pointer",
+									activeTab === "ui"
+										? "border-[var(--brand)] text-[var(--brand)]"
+										: "border-transparent text-[var(--ink-soft)] hover:text-[var(--ink)]",
+								)}
+							>
+								界面配置
+							</button>
 							<button
 								type="button"
 								onClick={() => {
@@ -955,6 +1022,63 @@ function ConfigRoute() {
 							<PromptTemplatesPanel aiLanguage={aiLanguage} />
 						) : activeTab === "credentials" ? (
 							<CredentialsPanel />
+						) : activeTab === "ui" ? (
+							<form onSubmit={handleUiSave} className="flex flex-col gap-6">
+								<div className="flex flex-col gap-1.5">
+									<label
+										htmlFor="today-max-width"
+										className="text-[14px] font-bold text-[var(--ink)]"
+									>
+										Today 最大宽度
+									</label>
+									<div className="flex items-center gap-2">
+										<input
+											id="today-max-width"
+											type="number"
+											min={MIN_TODAY_MAX_WIDTH_PX}
+											max={MAX_TODAY_MAX_WIDTH_PX}
+											step={20}
+											value={todayMaxWidthPx}
+											onChange={(event) =>
+												setTodayMaxWidthPx(Number(event.target.value))
+											}
+											className={textFieldClass}
+											required
+										/>
+										<span className="shrink-0 text-[13px] text-[var(--ink-soft)]">
+											px
+										</span>
+									</div>
+								</div>
+
+								{error ? (
+									<div className="flex items-center gap-2 rounded-md border border-[var(--alert)] bg-[var(--alert-soft)] p-3 text-[14px] text-[var(--alert)]">
+										<AlertCircle className="size-4 shrink-0" />
+										<span>{error}</span>
+									</div>
+								) : null}
+
+								{success ? (
+									<div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-[14px] text-emerald-600">
+										<CheckCircle className="size-4 shrink-0" />
+										<span>界面配置已保存。</span>
+									</div>
+								) : null}
+
+								<div className="mt-2 flex">
+									<button
+										type="submit"
+										disabled={saving}
+										className={cx(
+											primaryButtonClass,
+											"w-full min-[480px]:w-auto",
+										)}
+									>
+										<Save className="size-4" />
+										{saving ? "Saving..." : "Save Config"}
+									</button>
+								</div>
+							</form>
 						) : (
 							<form onSubmit={handleSave} className="flex flex-col gap-6">
 								{activeTab === "ai" ? (
