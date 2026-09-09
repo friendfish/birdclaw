@@ -466,7 +466,7 @@ describe("period digest", () => {
 			);
 		});
 
-		it("gives For You 36k and the other content sources 30k", () => {
+		it("uses a uniform 40k output budget for every content source", () => {
 			const all = collectPeriodDigestContext(window);
 			const following = collectPeriodDigestContext({
 				...window,
@@ -497,9 +497,9 @@ describe("period digest", () => {
 				effectivePrompt(),
 			).max_output_tokens;
 
-			expect(forYouBudget).toBe(36_000);
-			expect(followingBudget).toBe(30_000);
-			expect(allBudget).toBe(30_000);
+			expect(forYouBudget).toBe(40_000);
+			expect(followingBudget).toBe(40_000);
+			expect(allBudget).toBe(40_000);
 		});
 	});
 

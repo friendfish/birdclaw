@@ -1193,24 +1193,8 @@ function contentSourceDescription(contentSource: PeriodDigestContentSource) {
 	return "Full daily overview: Following + For You timeline, mentions, own posts, likes, and bookmarks.";
 }
 
-// The budget must cover the model's hidden reasoning tokens, the ~700-1100
-// word Markdown report, and a full JSON restatement of every cited
-// topic/link/person/tweet id. For You gets extra headroom because its observed
-// reasoning spikes have repeatedly exhausted 30k before the JSON completed.
-const MAX_OUTPUT_TOKENS_BY_CONTENT_SOURCE: Record<
-	PeriodDigestContentSource,
-	number
-> = {
-	for_you: 36000,
-	following: 30000,
-	all: 30000,
-};
-
-function maxOutputTokensForContentSource(
-	contentSource: PeriodDigestContentSource,
-) {
-	return MAX_OUTPUT_TOKENS_BY_CONTENT_SOURCE[contentSource];
-}
+// Covers hidden reasoning, the Markdown report, and its structured JSON output.
+const MAX_OUTPUT_TOKENS = 40_000;
 
 function buildPrompt(
 	context: PeriodDigestContext,
@@ -1387,9 +1371,7 @@ function createOpenAIRequestBody(
 			effectivePrompt,
 		),
 		stream: true,
-		maxOutputTokens: maxOutputTokensForContentSource(
-			context.contentSource ?? "all",
-		),
+		maxOutputTokens: MAX_OUTPUT_TOKENS,
 	});
 }
 
