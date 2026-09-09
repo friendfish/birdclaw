@@ -11,7 +11,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DigestArchiveCalendarPicker } from "#/components/DigestArchiveCalendarPicker";
 import { DigestArchiveWeekPicker } from "#/components/DigestArchiveWeekPicker";
 import { MarkdownViewer } from "#/components/MarkdownViewer";
-import { useBirdAvailable } from "#/components/useBirdAvailable";
 import { useDigestArchiveStatus } from "#/components/useDigestArchiveStatus";
 import { usePeriodDigestMetadata } from "#/components/usePeriodDigestMetadata";
 import { useReadOnlyDigest } from "#/components/useReadOnlyDigest";
@@ -308,11 +307,7 @@ export function TodayRouteView({
 	const updateSearch: RouteSearchChange<TodayRouteSearch> = (next, options) =>
 		onSearchChange ? onSearchChange(next, options) : setLocalSearch(next);
 	const { period, contentSource, archiveDate } = searchState;
-	const birdAvailable = useBirdAvailable();
-	// For You requires bird; fall back to the safe "all" default when it
-	// isn't available, regardless of what the URL/local state currently says.
-	const effectiveContentSource =
-		contentSource === "for_you" && !birdAvailable ? "all" : contentSource;
+	// Reading saved digests does not require a live bird connection.
 	// Yesterday/Week are scheduled-only (no manual refresh, see the design
 	// discussion in issue #30/PR #31): their "current" view is just "the
 	// latest archived date," and picking an explicit historical date reads
@@ -321,14 +316,10 @@ export function TodayRouteView({
 	const archiveStatus = useDigestArchiveStatus();
 	const archiveRunning = archiveStatus.runningPeriods.has(period);
 	const activeArchiveRun = archiveStatus.activeRuns.get(period);
-	const current = useCurrentDigest(
-		period,
-		effectiveContentSource,
-		!isArchivedPeriod,
-	);
+	const current = useCurrentDigest(period, contentSource, !isArchivedPeriod);
 	const archived = useReadOnlyDigest({
 		period,
-		contentSource: effectiveContentSource,
+		contentSource,
 		archiveDate,
 		enabled: isArchivedPeriod,
 		running: archiveRunning,
@@ -362,7 +353,7 @@ export function TodayRouteView({
 			: "Loading archive"
 		: current.status;
 	const latestArchiveRun = archiveStatus.lastRuns.get(period);
-	const latestSourceRun = latestArchiveRun?.sources[effectiveContentSource];
+	const latestSourceRun = latestArchiveRun?.sources[contentSource];
 	const showingLatestArchiveRun = archiveDate
 		? latestArchiveRun?.runDate === archiveDate
 		: !archived.effectiveDate ||
@@ -454,10 +445,8 @@ export function TodayRouteView({
 				</div>
 				<div className="today-screen-only">
 					<div className={tabStripClass} aria-label="Digest content">
-						{CONTENT_SOURCES.filter(
-							(item) => item.value !== "for_you" || birdAvailable,
-						).map((item) => {
-							const active = effectiveContentSource === item.value;
+						{CONTENT_SOURCES.map((item) => {
+							const active = contentSource === item.value;
 							return (
 								<button
 									key={item.value}
@@ -592,7 +581,7 @@ export function TodayRouteView({
 										: useArchivedResult
 											? archived.neverArchived
 												? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
-												: `No archived ${effectiveContentSource === "all" ? "" : `${effectiveContentSource} `}digest for this date. Try a different content-source tab.`
+												: `No archived ${contentSource === "all" ? "" : `${contentSource} `}digest for this date. Try a different content-source tab.`
 											: "Waiting for the first tokens..."}
 				</div>
 			)}

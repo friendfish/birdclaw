@@ -115,6 +115,108 @@ describe("today route", () => {
 		vi.unstubAllGlobals();
 	});
 
+	describe.each(["unavailable", "loading", "failed"] as const)(
+		"when the bird status check is %s",
+		(status) => {
+			it.each([
+				{ period: "today", archiveDate: "" },
+				{ period: "24h", archiveDate: "" },
+				{ period: "yesterday", archiveDate: "" },
+				{ period: "week", archiveDate: "" },
+				{ period: "yesterday", archiveDate: "2026-08-05" },
+				{ period: "week", archiveDate: "2026-08-05" },
+			] as const)(
+				"keeps saved For You readable for $period ($archiveDate)",
+				async ({ period, archiveDate }) => {
+					const requestedSources: Array<string | null> = [];
+					const isCurrent = period === "today" || period === "24h";
+					vi.stubGlobal(
+						"fetch",
+						vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+							const url = new URL(String(input), "http://localhost");
+							if (url.pathname === "/api/data-sources") {
+								if (status === "loading")
+									return new Promise<Response>(() => {});
+								if (status === "failed")
+									throw new Error("Data source status failed");
+								const response = dataSourcesResponse();
+								response.sources[0].works = false;
+								return jsonResponse(response);
+							}
+							if (url.pathname === "/api/digest-archive-status") {
+								return jsonResponse({ ok: true, runningPeriods: [] });
+							}
+							if (url.pathname === "/api/digest-archive-dates") {
+								return jsonResponse({
+									ok: true,
+									dates: [{ date: "2026-08-05", contentSources: ["for_you"] }],
+								});
+							}
+							if (
+								url.pathname ===
+								(isCurrent
+									? "/api/period-digest-metadata"
+									: "/api/digest-archive-entry")
+							) {
+								const source = url.searchParams.get("contentSource");
+								requestedSources.push(source);
+								const result = digestResult(
+									period,
+									source === "for_you" ? "# Saved For You" : "# All digest",
+								);
+								result.context.contentSource = source ?? "all";
+								return jsonResponse(
+									isCurrent
+										? metadataResponse({ result })
+										: { ok: true, result },
+								);
+							}
+							if (url.pathname === "/api/period-digest-runs") {
+								requestedSources.push(
+									JSON.parse(String(init?.body)).requestedSource,
+								);
+								return new Response("bird unavailable", { status: 503 });
+							}
+							throw new Error(`Unexpected fetch ${url.pathname}`);
+						}),
+					);
+
+					render(
+						<TodayRoute
+							searchState={{
+								period,
+								archiveDate,
+								includeDms: false,
+								contentSource: "for_you",
+							}}
+						/>,
+					);
+
+					expect(
+						await screen.findByRole("heading", { name: "Saved For You" }),
+					).toBeVisible();
+					expect(
+						screen.getByRole("button", { name: "For You" }),
+					).toHaveAttribute("aria-pressed", "true");
+					expect(requestedSources).toEqual(["for_you"]);
+					if (isCurrent) {
+						fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+						await screen.findByRole("alert");
+					}
+					expect(screen.queryByRole("alert")?.textContent ?? "").toBe(
+						isCurrent ? "Digest request failed (503)Retry" : "",
+					);
+					expect(
+						screen.getByRole("heading", { name: "Saved For You" }),
+					).toBeVisible();
+					expect(requestedSources).toEqual(
+						isCurrent ? ["for_you", "for_you"] : ["for_you"],
+					);
+				},
+			);
+		},
+	);
+
 	it("renders the persistent current result and generation timestamp without Save or DMs", async () => {
 		const requestedPaths: string[] = [];
 		const requestedIncludeDms: Array<string | null> = [];
