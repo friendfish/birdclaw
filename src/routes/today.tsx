@@ -19,6 +19,7 @@ import type {
 	PeriodDigestContext,
 	PeriodDigestRunResult,
 } from "#/lib/period-digest";
+import type { DigestArchiveSyncResult } from "#/lib/digest-archive-sync";
 import type { ProfileRecord } from "#/lib/types";
 import {
 	hydrateProfileHandles,
@@ -252,16 +253,39 @@ function useCurrentDigest(
 		};
 	}, [queryClient, result?.updatedAt]);
 
-	const runError = metadata.runState as {
+	const runState = metadata.runState as {
 		phase?: string;
 		error?: string;
+		sources?: Partial<
+			Record<PeriodDigestContentSource, { state?: string; error?: string }>
+		>;
+		sync?: DigestArchiveSyncResult;
 	} | null;
+	const sourceRun = runState?.sources?.[contentSource];
+	const generationError =
+		sourceRun?.state === "failed"
+			? sourceRun.error || "Digest generation failed"
+			: runState?.phase === "failed"
+				? runState.error || "Digest generation failed"
+				: null;
+	// Runs refresh all sources; only report sync failures relevant to this tab.
+	const syncErrors =
+		runState?.sync?.steps
+			.filter(
+				(step) =>
+					step.status === "degraded" &&
+					(contentSource === "all" || step.operation === contentSource),
+			)
+			.map((step) => step.error || `${step.operation} sync failed`) ?? [];
+	const syncError =
+		syncErrors.length > 0
+			? `Live sync incomplete; local data may be outdated. ${syncErrors.join("; ")}`
+			: null;
+	const runError = [generationError, syncError].filter(Boolean).join("; ");
 	const error =
 		refreshMutation.error ??
 		metadata.error ??
-		(runError?.phase === "failed" && runError.error
-			? new Error(runError.error)
-			: null);
+		(runError ? new Error(runError) : null);
 	const status = metadata.isGenerating
 		? metadata.activeStatus?.detail
 			? `${metadata.activeStatus.label} · ${metadata.activeStatus.detail}`
@@ -307,7 +331,6 @@ export function TodayRouteView({
 	const updateSearch: RouteSearchChange<TodayRouteSearch> = (next, options) =>
 		onSearchChange ? onSearchChange(next, options) : setLocalSearch(next);
 	const { period, contentSource, archiveDate } = searchState;
-	// Reading saved digests does not require a live bird connection.
 	// Yesterday/Week are scheduled-only (no manual refresh, see the design
 	// discussion in issue #30/PR #31): their "current" view is just "the
 	// latest archived date," and picking an explicit historical date reads
@@ -547,7 +570,7 @@ export function TodayRouteView({
 							: loading
 								? status
 								: result && hasDisplayableMarkdown
-									? `${result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
+									? `${digestError ? "Refresh incomplete" : result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
 									: digestError
 										? "Digest failed"
 										: "Waiting"}
@@ -582,7 +605,7 @@ export function TodayRouteView({
 											? archived.neverArchived
 												? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
 												: `No archived ${contentSource === "all" ? "" : `${contentSource} `}digest for this date. Try a different content-source tab.`
-											: "Waiting for the first tokens..."}
+											: "No digest yet. Select Refresh to generate one."}
 				</div>
 			)}
 		</div>
