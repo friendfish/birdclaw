@@ -115,6 +115,249 @@ describe("today route", () => {
 		vi.unstubAllGlobals();
 	});
 
+	it.each([
+		{ period: "today", archiveDate: "" },
+		{ period: "24h", archiveDate: "" },
+		{ period: "yesterday", archiveDate: "" },
+		{ period: "week", archiveDate: "" },
+		{ period: "yesterday", archiveDate: "2026-08-05" },
+		{ period: "week", archiveDate: "2026-08-05" },
+	] as const)(
+		"reads saved For You without checking live sources for $period ($archiveDate)",
+		async ({ period, archiveDate }) => {
+			const requestedPaths: string[] = [];
+			const requestedSources: Array<string | null> = [];
+			const isCurrent = period === "today" || period === "24h";
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (input: RequestInfo | URL) => {
+					const url = new URL(String(input), "http://localhost");
+					requestedPaths.push(url.pathname);
+					if (url.pathname === "/api/digest-archive-status")
+						return jsonResponse({ ok: true, runningPeriods: [] });
+					if (url.pathname === "/api/digest-archive-dates")
+						return jsonResponse({
+							ok: true,
+							dates: [{ date: "2026-08-05", contentSources: ["for_you"] }],
+						});
+					if (
+						url.pathname ===
+						(isCurrent
+							? "/api/period-digest-metadata"
+							: "/api/digest-archive-entry")
+					) {
+						const source = url.searchParams.get("contentSource");
+						requestedSources.push(source);
+						const result = digestResult(
+							period,
+							source === "for_you" ? "# Saved For You" : "# All digest",
+						);
+						result.context.contentSource = source ?? "all";
+						return jsonResponse(
+							isCurrent ? metadataResponse({ result }) : { ok: true, result },
+						);
+					}
+					throw new Error(`Unexpected fetch ${url.pathname}`);
+				}),
+			);
+			render(
+				<TodayRoute
+					searchState={{
+						period,
+						archiveDate,
+						includeDms: false,
+						contentSource: "for_you",
+					}}
+				/>,
+			);
+			expect(
+				await screen.findByRole("heading", { name: "Saved For You" }),
+			).toBeVisible();
+			expect(screen.getByRole("button", { name: "For You" })).toHaveAttribute(
+				"aria-pressed",
+				"true",
+			);
+			expect(requestedSources).toEqual(["for_you"]);
+			expect(requestedPaths).not.toContain("/api/data-sources");
+		},
+	);
+
+	it.each([
+		{
+			contentSource: "for_you",
+			syncOperation: "for_you",
+			failedSource: null,
+			phase: "degraded",
+			message:
+				"Live sync incomplete; local data may be outdated. bird command unavailable",
+		},
+		{
+			contentSource: "all",
+			syncOperation: "for_you",
+			failedSource: null,
+			phase: "degraded",
+			message:
+				"Live sync incomplete; local data may be outdated. bird command unavailable",
+		},
+		{
+			contentSource: "following",
+			syncOperation: "for_you",
+			failedSource: null,
+			phase: "degraded",
+			message: "",
+		},
+		{
+			contentSource: "for_you",
+			syncOperation: null,
+			failedSource: "for_you",
+			phase: "degraded",
+			message: "Model generation failed",
+		},
+		{
+			contentSource: "for_you",
+			syncOperation: null,
+			failedSource: "following",
+			phase: "degraded",
+			message: "",
+		},
+		{
+			contentSource: "for_you",
+			syncOperation: null,
+			failedSource: "for_you",
+			phase: "failed",
+			message: "Model generation failed",
+		},
+	] as const)(
+		"shows relevant async errors after 202: $contentSource / $syncOperation / $failedSource / $phase",
+		async ({ contentSource, syncOperation, failedSource, phase, message }) => {
+			let accepted = false;
+			let finished = false;
+			let requestedSource: string | undefined;
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+					const url = new URL(String(input), "http://localhost");
+					if (url.pathname === "/api/digest-archive-status")
+						return jsonResponse({ ok: true, runningPeriods: [] });
+					if (url.pathname === "/api/period-digest-runs") {
+						requestedSource = JSON.parse(String(init?.body)).requestedSource;
+						accepted = true;
+						return new Response(
+							JSON.stringify({ ok: true, runId: "refresh-run", joined: false }),
+							{ status: 202, headers: { "content-type": "application/json" } },
+						);
+					}
+					if (url.pathname === "/api/period-digest-metadata") {
+						const result = digestResult("Today", "# Saved digest");
+						result.context.contentSource = contentSource;
+						return jsonResponse(
+							metadataResponse({
+								result,
+								isGenerating: accepted && !finished,
+								activeStatus:
+									accepted && !finished
+										? { label: "Generating current digest" }
+										: null,
+								runState: accepted
+									? {
+											runId: "refresh-run",
+											phase: finished ? phase : "generating",
+											sources: Object.fromEntries(
+												["all", "following", "for_you"].map((source) => [
+													source,
+													{
+														state: !finished
+															? "running"
+															: phase === "failed" || source === failedSource
+																? "failed"
+																: "completed",
+														attempts: 1,
+														...(finished &&
+														(phase === "failed" || source === failedSource)
+															? { error: "Model generation failed" }
+															: {}),
+													},
+												]),
+											),
+											sync: {
+												status: syncOperation ? "degraded" : "fresh",
+												steps: syncOperation
+													? [
+															{
+																operation: syncOperation,
+																status: "degraded",
+																transport: "bird",
+																error: "bird command unavailable",
+															},
+														]
+													: [],
+											},
+										}
+									: null,
+							}),
+						);
+					}
+					throw new Error(`Unexpected fetch ${url.pathname}`);
+				}),
+			);
+			render(
+				<TodayRoute searchState={{ ...currentSearch(), contentSource }} />,
+			);
+			await screen.findByRole("heading", { name: "Saved digest" });
+			fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+			await screen.findByText("Generating current digest");
+			expect(requestedSource).toBe(contentSource);
+			focusManager.setFocused(false);
+			finished = true;
+			focusManager.setFocused(true);
+			await waitFor(() =>
+				expect(screen.queryByText("Generating current digest")).toBeNull(),
+			);
+			expect(screen.queryByRole("alert")?.textContent ?? "").toBe(
+				message ? `${message}Retry` : "",
+			);
+			expect(
+				screen.getByText(
+					message ? "Refresh incomplete · Today" : "Cached · Today",
+				),
+			).toBeVisible();
+			expect(
+				screen.getByRole("heading", { name: "Saved digest" }),
+			).toBeVisible();
+		},
+	);
+
+	it("offers Refresh when no digest exists and automatic freshness is disabled", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(String(input), "http://localhost");
+				if (url.pathname === "/api/digest-archive-status")
+					return jsonResponse({ ok: true, runningPeriods: [] });
+				if (url.pathname === "/api/period-digest-metadata")
+					return jsonResponse(
+						metadataResponse({ result: null, isStale: true }),
+					);
+				if (url.pathname === "/api/period-digest-freshness")
+					return jsonResponse({
+						ok: true,
+						triggered: false,
+						reason: "disabled",
+					});
+				throw new Error(`Unexpected fetch ${url.pathname}`);
+			}),
+		);
+		render(
+			<TodayRoute
+				searchState={{ ...currentSearch(), contentSource: "for_you" }}
+			/>,
+		);
+		expect(
+			await screen.findByText("No digest yet. Select Refresh to generate one."),
+		).toBeVisible();
+		expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+	});
+
 	it("renders the persistent current result and generation timestamp without Save or DMs", async () => {
 		const requestedPaths: string[] = [];
 		const requestedIncludeDms: Array<string | null> = [];
@@ -440,7 +683,9 @@ describe("today route", () => {
 		const { container } = render(<TodayRoute searchState={currentSearch()} />);
 
 		expect(await screen.findByText("Waiting")).toBeVisible();
-		expect(screen.getByText("Waiting for the first tokens...")).toBeVisible();
+		expect(
+			screen.getByText("No digest yet. Select Refresh to generate one."),
+		).toBeVisible();
 		expect(screen.queryByText(/Cached/)).toBeNull();
 		expect(screen.queryByLabelText("Generated at")).toBeNull();
 		expect(container.querySelector("article")).toBeNull();

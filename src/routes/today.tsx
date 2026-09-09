@@ -11,7 +11,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DigestArchiveCalendarPicker } from "#/components/DigestArchiveCalendarPicker";
 import { DigestArchiveWeekPicker } from "#/components/DigestArchiveWeekPicker";
 import { MarkdownViewer } from "#/components/MarkdownViewer";
-import { useBirdAvailable } from "#/components/useBirdAvailable";
 import { useDigestArchiveStatus } from "#/components/useDigestArchiveStatus";
 import { usePeriodDigestMetadata } from "#/components/usePeriodDigestMetadata";
 import { useReadOnlyDigest } from "#/components/useReadOnlyDigest";
@@ -20,6 +19,7 @@ import type {
 	PeriodDigestContext,
 	PeriodDigestRunResult,
 } from "#/lib/period-digest";
+import type { DigestArchiveSyncResult } from "#/lib/digest-archive-sync";
 import type { ProfileRecord } from "#/lib/types";
 import {
 	hydrateProfileHandles,
@@ -253,16 +253,39 @@ function useCurrentDigest(
 		};
 	}, [queryClient, result?.updatedAt]);
 
-	const runError = metadata.runState as {
+	const runState = metadata.runState as {
 		phase?: string;
 		error?: string;
+		sources?: Partial<
+			Record<PeriodDigestContentSource, { state?: string; error?: string }>
+		>;
+		sync?: DigestArchiveSyncResult;
 	} | null;
+	const sourceRun = runState?.sources?.[contentSource];
+	const generationError =
+		sourceRun?.state === "failed"
+			? sourceRun.error || "Digest generation failed"
+			: runState?.phase === "failed"
+				? runState.error || "Digest generation failed"
+				: null;
+	// Runs refresh all sources; only report sync failures relevant to this tab.
+	const syncErrors =
+		runState?.sync?.steps
+			.filter(
+				(step) =>
+					step.status === "degraded" &&
+					(contentSource === "all" || step.operation === contentSource),
+			)
+			.map((step) => step.error || `${step.operation} sync failed`) ?? [];
+	const syncError =
+		syncErrors.length > 0
+			? `Live sync incomplete; local data may be outdated. ${syncErrors.join("; ")}`
+			: null;
+	const runError = [generationError, syncError].filter(Boolean).join("; ");
 	const error =
 		refreshMutation.error ??
 		metadata.error ??
-		(runError?.phase === "failed" && runError.error
-			? new Error(runError.error)
-			: null);
+		(runError ? new Error(runError) : null);
 	const status = metadata.isGenerating
 		? metadata.activeStatus?.detail
 			? `${metadata.activeStatus.label} · ${metadata.activeStatus.detail}`
@@ -308,11 +331,6 @@ export function TodayRouteView({
 	const updateSearch: RouteSearchChange<TodayRouteSearch> = (next, options) =>
 		onSearchChange ? onSearchChange(next, options) : setLocalSearch(next);
 	const { period, contentSource, archiveDate } = searchState;
-	const birdAvailable = useBirdAvailable();
-	// For You requires bird; fall back to the safe "all" default when it
-	// isn't available, regardless of what the URL/local state currently says.
-	const effectiveContentSource =
-		contentSource === "for_you" && !birdAvailable ? "all" : contentSource;
 	// Yesterday/Week are scheduled-only (no manual refresh, see the design
 	// discussion in issue #30/PR #31): their "current" view is just "the
 	// latest archived date," and picking an explicit historical date reads
@@ -321,14 +339,10 @@ export function TodayRouteView({
 	const archiveStatus = useDigestArchiveStatus();
 	const archiveRunning = archiveStatus.runningPeriods.has(period);
 	const activeArchiveRun = archiveStatus.activeRuns.get(period);
-	const current = useCurrentDigest(
-		period,
-		effectiveContentSource,
-		!isArchivedPeriod,
-	);
+	const current = useCurrentDigest(period, contentSource, !isArchivedPeriod);
 	const archived = useReadOnlyDigest({
 		period,
-		contentSource: effectiveContentSource,
+		contentSource,
 		archiveDate,
 		enabled: isArchivedPeriod,
 		running: archiveRunning,
@@ -362,7 +376,7 @@ export function TodayRouteView({
 			: "Loading archive"
 		: current.status;
 	const latestArchiveRun = archiveStatus.lastRuns.get(period);
-	const latestSourceRun = latestArchiveRun?.sources[effectiveContentSource];
+	const latestSourceRun = latestArchiveRun?.sources[contentSource];
 	const showingLatestArchiveRun = archiveDate
 		? latestArchiveRun?.runDate === archiveDate
 		: !archived.effectiveDate ||
@@ -454,10 +468,8 @@ export function TodayRouteView({
 				</div>
 				<div className="today-screen-only">
 					<div className={tabStripClass} aria-label="Digest content">
-						{CONTENT_SOURCES.filter(
-							(item) => item.value !== "for_you" || birdAvailable,
-						).map((item) => {
-							const active = effectiveContentSource === item.value;
+						{CONTENT_SOURCES.map((item) => {
+							const active = contentSource === item.value;
 							return (
 								<button
 									key={item.value}
@@ -558,7 +570,7 @@ export function TodayRouteView({
 							: loading
 								? status
 								: result && hasDisplayableMarkdown
-									? `${result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
+									? `${digestError ? "Refresh incomplete" : result.cached ? "Cached" : "Ready"} · ${result.context.window.label}`
 									: digestError
 										? "Digest failed"
 										: "Waiting"}
@@ -592,8 +604,8 @@ export function TodayRouteView({
 										: useArchivedResult
 											? archived.neverArchived
 												? `This period hasn't run on a schedule yet. It will generate automatically at the next scheduled time.`
-												: `No archived ${effectiveContentSource === "all" ? "" : `${effectiveContentSource} `}digest for this date. Try a different content-source tab.`
-											: "Waiting for the first tokens..."}
+												: `No archived ${contentSource === "all" ? "" : `${contentSource} `}digest for this date. Try a different content-source tab.`
+											: "No digest yet. Select Refresh to generate one."}
 				</div>
 			)}
 		</div>
