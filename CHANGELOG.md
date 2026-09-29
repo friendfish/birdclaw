@@ -2,6 +2,10 @@
 
 ## 0.15.1 - Unreleased
 
+### Fork rebuild
+
+- Add the managed Bird credential store and shared command injection (R4.1, #74), with literal parsing, atomic restricted-permission writes, explicit environment precedence, read-only guards and redacted subprocess errors. Invalid managed files now reject execution instead of silently falling back. Configuration UI and native-web DM integration remain separate follow-ups.
+
 ## 0.15.0 - 2026-09-22
 
 **Highlights:** Search local tweets by author and keep archive imports safe from malformed data and split UTF-8 text.

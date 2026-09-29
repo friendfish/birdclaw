@@ -10,6 +10,8 @@
 
 Birdclaw imports Twitter/X archives into local SQLite, adds explicit cached live reads, and exposes the result through a web app, CLI, and optional read-only MCP server. It is for people who want their own searchable history, DMs, saved posts, and follow graph without a cloud backend.
 
+Fork rebuild: Bird calls can use a local [managed credential file](docs/managed-bird-credentials.md). This initial backend slice does not yet include the fork's credential configuration UI.
+
 ![Birdclaw's local Home timeline populated with demo data](docs/birdclaw-app.png)
 
 ## Install
