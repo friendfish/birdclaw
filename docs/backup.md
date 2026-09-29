@@ -109,6 +109,20 @@ Validates the backup first (unless `--no-validate`), then merge-imports rows int
 
 The FTS5 shadow tables for tweets and DMs are rebuilt from the JSONL text after import, so search is immediately available.
 
+The portable database fingerprint is computed after the write transaction commits,
+streaming rows in canonical order inside a read snapshot. Fingerprinting no longer
+materializes every table or holds the SQLite write lock. Import validation and row
+loading still use memory proportional to the backup size. If fingerprinting fails,
+the imported data has already committed; retrying a merge import is safe.
+
+Revision topology reconciliation skips canonical singleton revisions. Multi-revision
+chains, nonzero singleton ranks, and explicitly connected revisions are still
+normalized. Merge imports also check existing database edges and revision membership,
+so an incoming singleton can complete an existing component.
+
+For a reproducible synthetic benchmark, run `pnpm exec tsx scripts/benchmark-backup-import.ts`.
+It uses temporary databases, validates fingerprints, and removes its fixtures on exit.
+
 ## `backup validate`
 
 ```bash

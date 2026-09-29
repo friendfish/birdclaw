@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## Unreleased
+
+### Fixed
+
+- Accelerate text backup imports by streaming verification fingerprints after commit
+  and skipping redundant singleton revision reconciliation. Preserve existing merge
+  topology and deterministic schema-v7 fingerprints (upstream #112; fork #72 A1).
+
 ## 2026.08.10 - friendfish fork (baseline: upstream v0.11.1)
 
 This is the first standalone release of the `friendfish/birdclaw` fork. It is based on
